@@ -161,6 +161,17 @@ void MapBgfx2dImageryAtlas::remove(quint64 key)
     this->tile_slots.erase(existing);
 }
 
+int MapBgfx2dImageryAtlas::tilesUsedIn(quint64 frame) const
+{
+    int used = 0;
+    for (const Slot &slot : this->tile_slots)
+    {
+        if (slot.last_used_frame == frame)
+            ++used;
+    }
+    return used;
+}
+
 QVector<int> MapBgfx2dImageryAtlas::trim(int budget, quint64 frame)
 {
     QVector<int> dropped;

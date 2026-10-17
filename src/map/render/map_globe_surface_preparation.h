@@ -60,8 +60,8 @@ struct MapGlobeSurfaceTile
     bool terrain_mesh_applied = false;
     bool terrain_mesh_has_relief = false;
     // While the tile's own DEM is loading, its mesh is built from the
-    // nearest cached coarser DEM tile (applyAncestorTerrainStandIns()): the
-    // zoom of that tile, -1 when the mesh is flat or from the own DEM.
+    // nearest cached coarser DEM tile (scheduleAncestorTerrainStandIns()):
+    // the zoom of that tile, -1 when the mesh is flat or from the own DEM.
     int terrain_stand_in_zoom = -1;
 
     QVector3D terrain_ray_bounds_min;
@@ -115,6 +115,23 @@ public:
         const QVector3D &ray_direction_ecef,
         GeoWgs84Ellipsoid::EcefPositionD *intersection_ecef,
         double *distance_m) const;
+    // The drawn surface's height at a coordinate without a scan over all
+    // tiles: the window tile covering it, then a vertical ray (from
+    // start_height_m down the ellipsoid normal) against the two triangles of
+    // its grid cell (and the neighbouring cells at an edge). Relief: height
+    // set; Flat: no relief drawn there (the covering tile lies on the
+    // ellipsoid, or no window tile covers the coordinate); Unknown: the
+    // ray missed the cell and its neighbours (use
+    // visibleTerrainRayIntersection()). Demand points are draped with this
+    // after every terrain change, thousands of them per frame.
+    enum class DrawnSurfaceHeight
+    {
+        Relief,
+        Flat,
+        Unknown
+    };
+    DrawnSurfaceHeight drawnSurfaceHeightAt(
+        const CoordinateWGS84 &coordinate, double start_height_m, double *height_m) const;
     bool visibleTerrainSamplingAtCoordinate(
         const CoordinateWGS84 &coordinate,
         int *terrain_zoom,
@@ -155,10 +172,10 @@ private:
     MapTerrainMeshRequest terrainMeshRequest(
         const MapGlobeSurfaceTile &tile, const MapTerrainTile &terrain_tile) const;
     // Tiles whose own DEM is not cached yet get their mesh from the nearest
-    // cached coarser DEM tile, built here on the GUI thread and written in
-    // place (patches appended), and again when a finer one arrives. The own
-    // DEM's mesh replaces it as usual (scheduleReadyTerrainMeshes()).
-    bool applyAncestorTerrainStandIns(QVector<MapGlobeSurfaceVertexPatch> *vertex_patches);
+    // cached coarser DEM tile (again when a finer one arrives), built on the
+    // mesh thread and applied like any mesh (applyReadyTerrainMeshes()), but
+    // without finishing the tile: its own DEM's mesh replaces it.
+    void scheduleAncestorTerrainStandIns();
     bool currentTerrainLodMatches(const QSize &viewport_size) const;
     void appendWireframeEdges(
         const QVector<MapGlobeSurfaceVertex> &vertices,

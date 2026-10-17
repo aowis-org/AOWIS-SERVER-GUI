@@ -325,8 +325,10 @@ only the owner positions or hides it.
   and by resident children on top; never a hole while tiles stream in.
 * `map_bgfx_2d_imagery_gpu.*` with `map_bgfx_2d_imagery_atlas.*`: tiles are
   cells of a few atlas pages (edge-replicating 1-texel gutters, so bilinear
-  sampling equals clamp-to-edge), LRU budget of 384 tiles, at most 8 uploads
-  per frame (nearest first), one draw per run of quads on the same page
+  sampling equals clamp-to-edge), LRU budget of 384 tiles or the tiles a
+  frame draws plus 128 (the coarser fallbacks of not yet uploaded tiles;
+  the globe draws 400+), at most 8 uploads per frame in 2D, 12 on the
+  globe (nearest first), one draw per run of quads on the same page
   (normally a single draw call for all imagery). The globe shares the atlas.
 * Requests go to the shared `MapTileRepository` only when the visible tile set
   changes or a failed tile becomes retryable. Provider switches and deleted
@@ -362,23 +364,27 @@ Slice 1, the terrain surface (`map_bgfx_globe_surface.*`):
 * Imagery from the shared 2D atlas: a tile samples its own cell, or the
   covering part of its nearest resident ancestor (`map_bgfx_globe_imagery.h`,
   texture coordinates mapped into the ancestor's cell, no CPU compositing),
-  or a solid colour (nothing loaded; polar caps). Uploads share the 8 per
-  frame budget; requests go to the tile repository in one batch per window.
+  or a solid colour (nothing loaded; polar caps). At most 12 uploads per
+  frame (at 8 the backlog while zooming or turning showed as blank tiles);
+  requests go to the tile repository in one batch per window.
 * View-cone culling covers the frustum's corners: the cone's half-angle is
   the vertical half FOV widened by the aspect ratio, a node is kept when its
   direction is off-axis by at most that plus its angular radius asin(r/d)
-  (also with its centre behind the eye), plus 0.25 rad slack for rotation
-  until the next window rebuild. With the vertical FOV only, wide viewports
+  (also with its centre behind the eye), plus 0.1 rad slack (the leaves
+  are selected every frame; the slack only prefetches). With the vertical FOV only, wide viewports
   lost terrain sections at their left and right edges.
 * DEM still loading: culling bounds a quadtree node by its own DEM tile's
   elevation range, else by its nearest cached ancestor's, else by the whole
-  possible range (ellipsoid to 9 km). A node bounded on the ellipsoid under
+  possible range (ellipsoid to 9 km). The selection runs every frame:
+  each DEM tile is looked up once per selection (by position; a repository
+  lookup builds a string key), and the bounding spheres use the closed-form
+  geodetic conversion. A node bounded on the ellipsoid under
   high terrain used to leave the view cone close to the camera, was never
   refined, so its DEM was never requested (a permanent hole next to the eye).
   A leaf whose own DEM is not cached is drawn from the nearest cached
   coarser DEM tile, resampled at its own DEM address
-  (`mapTerrainTileFromAncestor()`, built on the GUI thread in
-  `applyAncestorTerrainStandIns()`, again when a finer one arrives): same
+  (`mapTerrainTileFromAncestor()`, the mesh built on the mesh thread,
+  `scheduleAncestorTerrainStandIns()`, again when a finer one arrives): same
   grid as the final mesh, which then replaces it in place; flat on the
   ellipsoid only where no DEM is cached at all.
 * Globe shaders (`vs/fs_globe_surface`, `vs/fs_globe_wireframe`) declare
@@ -435,9 +441,12 @@ Slice 3, the network on the globe (`map_bgfx_globe_network.*`):
   have no extra depth bias (bgfx has no depth-bias state).
 * Demand points have no elevation (not part of the EPANET model): they lie
   on the terrain exactly as it is drawn, the network lift above it
-  (`MapGlobeNetworkScene::setSurfaceHeightResolver()`, a vertical ray
-  against the retained DEM meshes; the bare ellipsoid where no relief is
-  drawn yet). Whenever the drawn terrain changes (window, applied meshes:
+  (`MapGlobeNetworkScene::setSurfaceHeightResolver()`: the window tile
+  covering the point, then a vertical ray against the two triangles of its
+  grid cell, `MapGlobeSurfacePreparation::drawnSurfaceHeightAt()`; the bare
+  ellipsoid where no relief is drawn yet). The former ray against every
+  tile's mesh cost ~40 ms per frame for 3000 demand points while terrain
+  was loading. Whenever the drawn terrain changes (window, applied meshes:
   `MapBgfxGlobeSurface::surfaceRevision()`) they are moved in place before
   the network is drawn in that same frame, without a network rebuild. Their
   attachment lines end on the junction / pipe at its own elevation
@@ -480,7 +489,9 @@ Slice 5, the globe HUD (`map_bgfx_hud.*`, `map_bgfx_globe_hud_controller.*`):
 the QWidget globe HUD drawn by the native HUD, with the same behaviour.
 
 * Layout: "wireframe" and "map" toggles next to the 2D/3D switch, the
-  "Terrain mesh" progress next to the downloads (x / y, or "building..."),
+  "Terrain mesh" progress next to the downloads (x / y, or "building...";
+  only after 0.6 s of continuous mesh building, gone 0.4 s after it ended,
+  the HUD animating meanwhile so an idle surface presents that frame),
   and bottom left the four camera sliders (network height, tilt, distance,
   vertical exaggeration; maximum, value and minimum labels in the user's
   units, the QWidget tooltips), the X-Ray / Hide / Solid buttons, the compass
@@ -569,7 +580,11 @@ Wayland locks the pointer and reads relative motion
 `MapWidget::setOrbitPointerLockWindow`), because compositors differ in which
 of the two they honour while the pointer is over a subsurface (KWin and
 older mutter only the main surface). The log names the surface the
-compositor activated, once per run, or warns when it activated none. Frames are not rendered
+compositor activated, once per run, or warns when it activated none.
+A pan or zoom key is released by its physical key (native scan code, else
+virtual key, else Qt key), remembered at the press: other keys pressed in
+between change the release's modifiers or layout level (Ctrl, Alt, AltGr
+turning E into the euro sign), which left the motion running. Frames are not rendered
 while the native window is unexposed, so the vsync swap cannot block the GUI
 thread on a hidden Wayland surface.
 

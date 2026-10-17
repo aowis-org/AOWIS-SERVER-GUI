@@ -288,9 +288,27 @@ QVector3D globeTerrainMeshVertexPosition(
 
 MapTerrainMeshResult buildTerrainMeshResult(const MapTerrainMeshRequest &request)
 {
+    // A stand-in carries its coarser ancestor DEM tile: resampled at the
+    // tile's own DEM address first (here, on the mesh thread; 4225 bilinear
+    // samples per tile cost the GUI thread frames while loading).
+    if (request.terrain_tile.elevations_m.size() == MapTerrainTileSampleCount
+        && request.terrain_tile.address.zoom < request.terrain_zoom
+        && request.imagery_zoom >= request.terrain_zoom)
+    {
+        const int zoom_delta = request.imagery_zoom - request.terrain_zoom;
+        MapTerrainTileAddress address;
+        address.zoom = request.terrain_zoom;
+        address.x = quint32(request.tile_x) >> zoom_delta;
+        address.y = quint32(request.y) >> zoom_delta;
+        MapTerrainMeshRequest resampled = request;
+        resampled.terrain_tile = mapTerrainTileFromAncestor(request.terrain_tile, address);
+        return buildTerrainMeshResult(resampled);
+    }
+
     MapTerrainMeshResult result;
     result.request_id = request.request_id;
     result.terrain_key = request.terrain_key;
+    result.stand_in_zoom = request.stand_in_zoom;
     result.virtual_x = request.virtual_x;
     result.y = request.y;
     result.terrain_available = request.terrain_available

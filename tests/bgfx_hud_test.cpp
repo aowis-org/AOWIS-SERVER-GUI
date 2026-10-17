@@ -1159,15 +1159,45 @@ void testGlobe()
     }
     req(scale_drawn, "globe scale is right of the compass");
 
-    // Terrain meshes: progress panel and animation while building.
+    // Terrain meshes: progress panel only for sustained building, gone a
+    // short while after it ended (also when nothing else draws a frame).
+    const double panel_y = MapBgfxHud::MarginPx + 4.0;
+    MapBgfxHud::FrameInputs at = frameInputs(false);
     MapBgfxHud::Globe building = globeState();
     building.mesh_active = true;
     building.mesh_completed = 3;
     building.mesh_total = 10;
     hud.setGlobe(building);
     req(hud.animating(), "building terrain meshes keep the HUD animating");
-    hud.build(&canvas, &cache, frameInputs(false), palette);
-    req(hud.blocksInput(0.5 * ViewportWidth, MapBgfxHud::MarginPx + 4.0), "terrain-mesh panel is top centre");
+    at.time_s = 10.0;
+    hud.build(&canvas, &cache, at, palette);
+    req(!hud.blocksInput(0.5 * ViewportWidth, panel_y), "a mesh burst shows no panel yet");
+    // A short burst ends before the show delay: never shown, no animation.
+    hud.setGlobe(globeState());
+    at.time_s = 10.3;
+    hud.build(&canvas, &cache, at, palette);
+    req(!hud.blocksInput(0.5 * ViewportWidth, panel_y) && !hud.animating(), "short mesh bursts never show the panel");
+    // Sustained building: shown after the delay.
+    hud.setGlobe(building);
+    at.time_s = 11.0;
+    hud.build(&canvas, &cache, at, palette);
+    at.time_s = 11.0 + MapBgfxHud::MeshPanelShowDelayS + 0.01;
+    hud.build(&canvas, &cache, at, palette);
+    req(hud.blocksInput(0.5 * ViewportWidth, panel_y), "sustained mesh building shows the panel top centre");
+    // Done: kept for the hide delay (still animating, so an idle surface
+    // presents the frame that removes it), then gone.
+    MapBgfxHud::Globe done = globeState();
+    done.mesh_completed = 10;
+    done.mesh_total = 10;
+    hud.setGlobe(done);
+    at.time_s += 0.1;
+    hud.build(&canvas, &cache, at, palette);
+    req(hud.blocksInput(0.5 * ViewportWidth, panel_y) && hud.animating(),
+        "finished meshes keep the panel for the hide delay and keep frames coming");
+    at.time_s += MapBgfxHud::MeshPanelHideDelayS + 0.01;
+    hud.build(&canvas, &cache, at, palette);
+    req(!hud.blocksInput(0.5 * ViewportWidth, panel_y) && !hud.animating(),
+        "the panel is gone after the hide delay and the HUD stops animating");
     hud.setGlobe(MapBgfxHud::Globe());
     req(!hud.animating(), "hidden globe controls do not animate");
 }

@@ -254,6 +254,36 @@ void MapBgfxHud::setViewMode(bool two_d, bool globe_available)
 void MapBgfxHud::setGlobe(const Globe &globe)
 {
     this->globe = globe;
+    // Without the globe there is no panel to fade out.
+    if (!globe.visible)
+    {
+        this->mesh_busy_since_s = -1.0;
+        this->mesh_idle_since_s = -1.0;
+        this->mesh_panel_shown = false;
+    }
+}
+
+void MapBgfxHud::updateMeshPanel(double time_s)
+{
+    if (this->globe.visible && this->globe.mesh_active)
+    {
+        this->mesh_idle_since_s = -1.0;
+        if (this->mesh_busy_since_s < 0.0)
+            this->mesh_busy_since_s = time_s;
+        if (time_s - this->mesh_busy_since_s >= MeshPanelShowDelayS)
+            this->mesh_panel_shown = true;
+        return;
+    }
+    this->mesh_busy_since_s = -1.0;
+    if (!this->mesh_panel_shown)
+        return;
+    if (this->mesh_idle_since_s < 0.0)
+        this->mesh_idle_since_s = time_s;
+    if (time_s - this->mesh_idle_since_s >= MeshPanelHideDelayS)
+    {
+        this->mesh_panel_shown = false;
+        this->mesh_idle_since_s = -1.0;
+    }
 }
 
 QVector<MapBgfxHud::Command> MapBgfxHud::takeCommands()
@@ -296,6 +326,7 @@ void MapBgfxHud::setLegend(const Legend &legend)
 void MapBgfxHud::build(MapBgfxHudCanvas *canvas, MapBgfxHudTextCache *cache,
                        const FrameInputs &inputs, const Palette &palette)
 {
+    updateMeshPanel(inputs.time_s);
     cache->beginFrame();
     canvas->clear();
     buildOnce(canvas, cache, inputs, palette);
@@ -534,8 +565,10 @@ void MapBgfxHud::buildOnce(MapBgfxHudCanvas *canvas, MapBgfxHudTextCache *cache,
                             this->terrain_active, this->terrain_queued, Element::CancelTerrain,
                             this->terrain_cancel_pending, inputs.time_s, palette)
             : 0.0;
-        // Terrain meshes being built (globe): third panel of the row.
-        const bool mesh_busy = this->globe.visible && this->globe.mesh_active;
+        // Terrain meshes being built (globe): third panel of the row, only
+        // for sustained work (updateMeshPanel()); in the hide delay it shows
+        // the last numbers (completed = total once the work is done).
+        const bool mesh_busy = this->globe.visible && this->mesh_panel_shown;
         const double mesh_width = mesh_busy
             ? meshPanel(nullptr, cache, 0.0, 0.0, inputs.time_s, palette) : 0.0;
         const int panels = int(tiles_busy) + int(terrain_busy) + int(mesh_busy);

@@ -55,6 +55,11 @@ void appendIndexedGridIndices(
 
     const quint32 first = quint32(first_vertex);
     const quint32 grid_width = quint32(cell_count + 1);
+    // Written in place after one resize (window rebuilds append hundreds of
+    // thousands of indices while the camera moves).
+    const qsizetype begin = indices->size();
+    indices->resize(begin + qsizetype(cell_count) * qsizetype(cell_count) * 6);
+    quint32 *target = indices->data() + begin;
     for (int row = 0; row < cell_count; ++row)
     {
         for (int column = 0; column < cell_count; ++column)
@@ -64,12 +69,12 @@ void appendIndexedGridIndices(
             const quint32 p10 = p00 + 1;
             const quint32 p01 = p00 + grid_width;
             const quint32 p11 = p01 + 1;
-            indices->append(p00);
-            indices->append(p01);
-            indices->append(p10);
-            indices->append(p10);
-            indices->append(p01);
-            indices->append(p11);
+            *target++ = p00;
+            *target++ = p01;
+            *target++ = p10;
+            *target++ = p10;
+            *target++ = p01;
+            *target++ = p11;
         }
     }
 }
@@ -167,6 +172,35 @@ bool mapGlobeTerrainDatumUsable(MapTerrainVerticalDatum datum)
     return datum == MapTerrainVerticalDatum::Wgs84Ellipsoid
         || datum == MapTerrainVerticalDatum::Egm96
         || datum == MapTerrainVerticalDatum::Egm2008;
+}
+
+namespace
+{
+// Orders tiles by mapGlobeSurfaceTileRequestPriority() (nearest the map
+// centre first), then by tie_before. The priority is trigonometry: computed
+// once per tile, not on every comparison of the sort (thousands per frame).
+template <typename Tile>
+void sortByRequestPriority(QVector<Tile *> *tiles, double center_lon_deg, double center_lat_deg,
+                           const std::function<bool(const Tile *, const Tile *)> &tie_before)
+{
+    QVector<QPair<int, Tile *>> keyed;
+    keyed.reserve(tiles->size());
+    for (Tile *tile : *tiles)
+    {
+        keyed.append(qMakePair(mapGlobeSurfaceTileRequestPriority(
+                                   tile->tile_x, tile->tile_y, tile->zoom, center_lon_deg, center_lat_deg),
+                               tile));
+    }
+    std::sort(keyed.begin(), keyed.end(),
+              [&tie_before](const QPair<int, Tile *> &first, const QPair<int, Tile *> &second)
+              {
+                  if (first.first != second.first)
+                      return first.first < second.first;
+                  return tie_before && tie_before(first.second, second.second);
+              });
+    for (qsizetype index = 0; index < keyed.size(); ++index)
+        (*tiles)[index] = keyed.at(index).second;
+}
 }
 
 MapGlobeSurfacePreparation::MapGlobeSurfacePreparation(MapModel *map_model)
@@ -271,7 +305,7 @@ void MapGlobeSurfacePreparation::invalidateTerrain()
         tile.terrain_mesh_request_id = 0;
         tile.terrain_mesh_applied = false;
         // Stand-in meshes are rebuilt as well (the next
-        // applyAncestorTerrainStandIns()).
+        // scheduleAncestorTerrainStandIns()).
         tile.terrain_stand_in_zoom = -1;
     }
 }
@@ -690,8 +724,12 @@ void MapGlobeSurfacePreparation::rebuildWindow(
             {
                 const MapGlobeSurfaceVertex *source =
                     previous_vertices.constData() + previous_tile.first_vertex;
-                for (int index = 0; index < previous_tile.vertex_count; ++index)
-                    this->window_vertices.append(source[index]);
+                // One block, not vertex by vertex (window rebuilds while
+                // moving copy tens of thousands of reused vertices).
+                const qsizetype first = this->window_vertices.size();
+                this->window_vertices.resize(first + previous_tile.vertex_count);
+                std::copy(source, source + previous_tile.vertex_count,
+                          this->window_vertices.data() + first);
                 tile.vertex_count = previous_tile.vertex_count;
                 tile.terrain_mesh_request_id =
                     previous_tile.terrain_mesh_request_id;
@@ -934,19 +972,10 @@ void MapGlobeSurfacePreparation::requestMissingTerrainTiles()
         candidates.append(&tile);
     }
 
-    std::sort(
-        candidates.begin(), candidates.end(),
-        [this](const MapGlobeSurfaceTile *first,
-               const MapGlobeSurfaceTile *second)
+    sortByRequestPriority<const MapGlobeSurfaceTile>(
+        &candidates, this->map_model->centerLon(), this->map_model->centerLat(),
+        [](const MapGlobeSurfaceTile *first, const MapGlobeSurfaceTile *second)
         {
-            const int first_priority = mapGlobeSurfaceTileRequestPriority(
-                first->tile_x, first->tile_y, first->zoom,
-                this->map_model->centerLon(), this->map_model->centerLat());
-            const int second_priority = mapGlobeSurfaceTileRequestPriority(
-                second->tile_x, second->tile_y, second->zoom,
-                this->map_model->centerLon(), this->map_model->centerLat());
-            if (first_priority != second_priority)
-                return first_priority < second_priority;
             if (first->terrain_zoom != second->terrain_zoom)
                 return first->terrain_zoom > second->terrain_zoom;
             if (first->tile_y != second->tile_y)
@@ -1000,19 +1029,8 @@ void MapGlobeSurfacePreparation::scheduleReadyTerrainMeshes()
         candidates.append(&tile);
     }
 
-    std::sort(
-        candidates.begin(), candidates.end(),
-        [this](const MapGlobeSurfaceTile *first,
-               const MapGlobeSurfaceTile *second)
-        {
-            const int first_priority = mapGlobeSurfaceTileRequestPriority(
-                first->tile_x, first->tile_y, first->zoom,
-                this->map_model->centerLon(), this->map_model->centerLat());
-            const int second_priority = mapGlobeSurfaceTileRequestPriority(
-                second->tile_x, second->tile_y, second->zoom,
-                this->map_model->centerLon(), this->map_model->centerLat());
-            return first_priority < second_priority;
-        });
+    sortByRequestPriority<MapGlobeSurfaceTile>(
+        &candidates, this->map_model->centerLon(), this->map_model->centerLat(), nullptr);
 
     for (MapGlobeSurfaceTile *tile : candidates)
     {
@@ -1054,6 +1072,9 @@ void MapGlobeSurfacePreparation::scheduleReadyTerrainMeshes()
         tile->terrain_mesh_request_id = request.request_id;
         this->terrain_mesh_scheduler->submit(request);
     }
+
+    // Tiles whose own DEM is not there yet: stand-ins after the real meshes.
+    scheduleAncestorTerrainStandIns();
 }
 
 MapTerrainMeshRequest MapGlobeSurfacePreparation::terrainMeshRequest(
@@ -1082,38 +1103,52 @@ MapTerrainMeshRequest MapGlobeSurfacePreparation::terrainMeshRequest(
     return request;
 }
 
-bool MapGlobeSurfacePreparation::applyAncestorTerrainStandIns(
-    QVector<MapGlobeSurfaceVertexPatch> *vertex_patches)
+void MapGlobeSurfacePreparation::scheduleAncestorTerrainStandIns()
 {
-    if (this->terrain_repository == nullptr)
-        return false;
-
-    bool geometry_changed = false;
+    // Candidates: meshes still waiting for their own DEM, nothing in flight.
+    QVector<MapGlobeSurfaceTile *> candidates;
     for (MapGlobeSurfaceTile &tile : this->window_tiles)
     {
-        // Only meshes still waiting for their own DEM (not yet requested as
-        // a mesh, so the DEM is not cached).
-        if (tile.terrain_key.isEmpty() || tile.terrain_mesh_applied
-            || tile.terrain_mesh_request_id != 0 || tile.vertex_count <= 0
-            || this->terrain_repository->tile(tile.terrain_key) != nullptr)
+        if (!tile.terrain_key.isEmpty() && !tile.terrain_mesh_applied
+            && tile.terrain_mesh_request_id == 0 && tile.vertex_count > 0
+            && tile.terrain_zoom - 1 > tile.terrain_stand_in_zoom
+            && this->terrain_repository->tile(tile.terrain_key) == nullptr)
         {
-            continue;
+            candidates.append(&tile);
         }
+    }
+    if (candidates.isEmpty())
+        return;
+    sortByRequestPriority<MapGlobeSurfaceTile>(
+        &candidates, this->map_model->centerLon(), this->map_model->centerLat(), nullptr);
 
+    // Leaves share ancestors: each repository lookup (a string key) once.
+    QHash<quint64, const MapTerrainTile *> ancestors;
+    for (MapGlobeSurfaceTile *tile : candidates)
+    {
         // The finest cached ancestor, if finer than the current stand-in.
         MapTerrainTileAddress address;
-        address.zoom = tile.terrain_zoom;
-        address.x = quint32(tile.tile_x) >> (tile.zoom - tile.terrain_zoom);
-        address.y = quint32(tile.tile_y) >> (tile.zoom - tile.terrain_zoom);
+        address.zoom = tile->terrain_zoom;
+        address.x = quint32(tile->tile_x) >> (tile->zoom - tile->terrain_zoom);
+        address.y = quint32(tile->tile_y) >> (tile->zoom - tile->terrain_zoom);
         const MapTerrainTile *ancestor = nullptr;
-        for (int ancestor_zoom = tile.terrain_zoom - 1;
+        for (int ancestor_zoom = tile->terrain_zoom - 1;
              ancestor_zoom >= GlobeTerrainReliefMinimumZoom
-             && ancestor_zoom > tile.terrain_stand_in_zoom;
+             && ancestor_zoom > tile->terrain_stand_in_zoom;
              --ancestor_zoom)
         {
-            const int shift = tile.terrain_zoom - ancestor_zoom;
-            const MapTerrainTile *candidate = this->terrain_repository->tile(
-                mapGlobeTerrainDatasetId(), ancestor_zoom, address.x >> shift, address.y >> shift);
+            const int shift = tile->terrain_zoom - ancestor_zoom;
+            const quint32 ancestor_x = address.x >> shift;
+            const quint32 ancestor_y = address.y >> shift;
+            const quint64 key = MapGlobeSurfaceScene::positionKey(
+                ancestor_zoom, int(ancestor_x), int(ancestor_y));
+            QHash<quint64, const MapTerrainTile *>::const_iterator found = ancestors.constFind(key);
+            if (found == ancestors.cend())
+            {
+                found = ancestors.insert(key, this->terrain_repository->tile(
+                    mapGlobeTerrainDatasetId(), ancestor_zoom, ancestor_x, ancestor_y));
+            }
+            const MapTerrainTile *candidate = found.value();
             if (candidate != nullptr
                 && candidate->elevations_m.size() == MapTerrainTileSampleCount
                 && mapGlobeTerrainDatumUsable(candidate->vertical_datum))
@@ -1126,29 +1161,13 @@ bool MapGlobeSurfacePreparation::applyAncestorTerrainStandIns(
             continue;
 
         // Same grid, stitching and LOD as the final mesh: only the source
-        // heights are coarser.
-        const MapTerrainMeshResult result = buildTerrainMeshResult(
-            terrainMeshRequest(tile, mapTerrainTileFromAncestor(*ancestor, address)));
-        if (result.vertices.size() != tile.vertex_count)
-            continue;
-
-        for (qsizetype index = 0; index < result.vertices.size(); ++index)
-        {
-            const MapTerrainMeshVertex &vertex = result.vertices.at(index);
-            this->window_vertices[tile.first_vertex + index] =
-                MapGlobeSurfaceVertex{vertex.x, vertex.y, vertex.z, vertex.u, vertex.v};
-        }
-        tile.terrain_mesh_has_relief = true;
-        tile.terrain_stand_in_zoom = ancestor->address.zoom;
-        updateTerrainRayBounds(&tile);
-        geometry_changed = true;
-        if (vertex_patches != nullptr)
-        {
-            vertex_patches->append(MapGlobeSurfaceVertexPatch{
-                tile.first_vertex, result.vertices.size()});
-        }
+        // heights are coarser. Resampled and built on the mesh thread.
+        MapTerrainMeshRequest request = terrainMeshRequest(*tile, *ancestor);
+        request.stand_in_zoom = ancestor->address.zoom;
+        request.request_id = this->next_terrain_mesh_request_id++;
+        tile->terrain_mesh_request_id = request.request_id;
+        this->terrain_mesh_scheduler->submit(request);
     }
-    return geometry_changed;
 }
 
 bool MapGlobeSurfacePreparation::applyReadyTerrainMeshes(
@@ -1215,9 +1234,11 @@ bool MapGlobeSurfacePreparation::applyReadyTerrainMeshes(
                 target.v = vertex.v;
             }
 
-            tile.terrain_mesh_applied = true;
+            // A stand-in lies at the right height but is not the tile's own
+            // mesh: that one is still scheduled once its DEM arrives.
+            tile.terrain_mesh_applied = result.stand_in_zoom < 0;
             tile.terrain_mesh_has_relief = true;
-            tile.terrain_stand_in_zoom = -1;
+            tile.terrain_stand_in_zoom = result.stand_in_zoom;
             this->updateTerrainRayBounds(&tile);
             geometry_changed = true;
             if (vertex_patches != nullptr)
@@ -1229,8 +1250,6 @@ bool MapGlobeSurfacePreparation::applyReadyTerrainMeshes(
         }
     }
 
-    if (applyAncestorTerrainStandIns(vertex_patches))
-        geometry_changed = true;
 
     if (geometry_changed && this->wireframe_visible)
         this->rebuildWireframeVertices();
@@ -1255,7 +1274,11 @@ void MapGlobeSurfacePreparation::terrainMeshProgress(
 {
     int completed_count = 0;
     int total_count = 0;
-    bool build_active = this->terrain_lod_rebuild_pending;
+    // Only meshes really being built count as activity: the LOD rebuild
+    // throttle (terrain_lod_rebuild_pending) is armed for 120 ms on every
+    // camera move and made the HUD panel blink (it still keeps frames
+    // coming, hasPendingTerrainMeshes()).
+    bool build_active = false;
 
     for (const MapGlobeSurfaceTile &tile : this->window_tiles)
     {
@@ -1420,6 +1443,102 @@ bool MapGlobeSurfacePreparation::visibleTerrainRayIntersection(
         + double(direction.z()) * nearest_distance_m;
     *distance_m = nearest_distance_m;
     return true;
+}
+
+MapGlobeSurfacePreparation::DrawnSurfaceHeight MapGlobeSurfacePreparation::drawnSurfaceHeightAt(
+    const CoordinateWGS84 &coordinate, double start_height_m, double *height_m) const
+{
+    // Normalised Web Mercator position (zoom 0); the tile at a zoom and the
+    // position inside it follow by scaling.
+    const double unit_x = GeoWebMercator::lonToTileX(
+        GeoWebMercator::normalizeLongitude(coordinate.longitude_deg), 0);
+    const double unit_y = GeoWebMercator::latToTileY(coordinate.latitude_deg, 0);
+    if (!std::isfinite(unit_x) || !std::isfinite(unit_y))
+        return DrawnSurfaceHeight::Unknown;
+
+    for (int zoom = GlobeImageryMaxZoom; zoom >= 0; --zoom)
+    {
+        const double scale = std::ldexp(1.0, zoom);
+        const double tile_position_x = unit_x * scale;
+        const double tile_position_y = unit_y * scale;
+        const int tile_count = 1 << zoom;
+        const int tile_x = GeoWebMercator::wrapTileX(int(std::floor(tile_position_x)), zoom);
+        const int tile_y = qBound(0, int(std::floor(tile_position_y)), tile_count - 1);
+        const QHash<quint64, qsizetype>::const_iterator found =
+            this->window_tile_indices_by_position.constFind(
+                MapGlobeSurfaceScene::positionKey(zoom, tile_x, tile_y));
+        if (found == this->window_tile_indices_by_position.cend())
+            continue;
+
+        const MapGlobeSurfaceTile &tile = this->window_tiles.at(found.value());
+        if (!tile.terrain_mesh_has_relief)
+            return DrawnSurfaceHeight::Flat;
+        // The mesh is a row-major (cells + 1)^2 grid, uniform in the tile's
+        // Mercator coordinates (appendIndexedGridIndices()).
+        const int grid_width = int(std::lround(std::sqrt(double(tile.vertex_count))));
+        const int cell_count = grid_width - 1;
+        if (cell_count < 1 || grid_width * grid_width != tile.vertex_count
+            || tile.first_vertex + tile.vertex_count > this->window_vertices.size())
+        {
+            return DrawnSurfaceHeight::Unknown;
+        }
+        const double u = tile_position_x - std::floor(tile_position_x);
+        const double v = qBound(0.0, tile_position_y - double(tile_y), 1.0);
+        const int column = qBound(0, int(std::floor(u * cell_count)), cell_count - 1);
+        const int row = qBound(0, int(std::floor(v * cell_count)), cell_count - 1);
+
+        const GeoWgs84Ellipsoid::EcefPositionD start = GeoWgs84Ellipsoid::geodeticToEcefD(
+            coordinate.longitude_deg, coordinate.latitude_deg, start_height_m);
+        const QVector3D origin(float(start.x - this->render_origin_ecef.x),
+                               float(start.y - this->render_origin_ecef.y),
+                               float(start.z - this->render_origin_ecef.z));
+        const QVector3D down = -GeoWgs84Ellipsoid::localFrameAtGeodetic(
+            coordinate.longitude_deg, coordinate.latitude_deg, 0.0).up;
+        const std::function<QVector3D(int, int)> vertex = [this, &tile, grid_width](int vertex_row, int vertex_column)
+        {
+            const MapGlobeSurfaceVertex &entry =
+                this->window_vertices.at(tile.first_vertex + vertex_row * grid_width + vertex_column);
+            return QVector3D(entry.x, entry.y, entry.z);
+        };
+        // The cell first; at a cell or tile edge (stitching moves edge
+        // vertices along the edge) its neighbours.
+        double nearest_distance_m = std::numeric_limits<double>::infinity();
+        for (int ring = 0; ring <= 1 && !std::isfinite(nearest_distance_m); ++ring)
+        {
+            for (int cell_row = qMax(0, row - ring); cell_row <= qMin(cell_count - 1, row + ring); ++cell_row)
+            {
+                for (int cell_column = qMax(0, column - ring);
+                     cell_column <= qMin(cell_count - 1, column + ring); ++cell_column)
+                {
+                    if (ring > 0 && cell_row == row && cell_column == column)
+                        continue;
+                    const QVector3D p00 = vertex(cell_row, cell_column);
+                    const QVector3D p10 = vertex(cell_row, cell_column + 1);
+                    const QVector3D p01 = vertex(cell_row + 1, cell_column);
+                    const QVector3D p11 = vertex(cell_row + 1, cell_column + 1);
+                    double distance_m = 0.0;
+                    if (mapGlobeRayTriangleIntersectionDistance(origin, down, p00, p01, p10, &distance_m)
+                        && distance_m > 0.0)
+                    {
+                        nearest_distance_m = std::min(nearest_distance_m, distance_m);
+                    }
+                    if (mapGlobeRayTriangleIntersectionDistance(origin, down, p10, p01, p11, &distance_m)
+                        && distance_m > 0.0)
+                    {
+                        nearest_distance_m = std::min(nearest_distance_m, distance_m);
+                    }
+                }
+            }
+        }
+        if (!std::isfinite(nearest_distance_m))
+            return DrawnSurfaceHeight::Unknown;
+        *height_m = start_height_m - nearest_distance_m;
+        return DrawnSurfaceHeight::Relief;
+    }
+    // No window tile covers the coordinate: nothing is drawn there (each
+    // mesh is a height field over its own tile, so no other tile can be
+    // above it either).
+    return DrawnSurfaceHeight::Flat;
 }
 
 bool MapGlobeSurfacePreparation::visibleTerrainSamplingAtCoordinate(

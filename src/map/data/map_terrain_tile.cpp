@@ -83,24 +83,25 @@ bool finiteFloat(float value)
 
 bool isValidMapTerrainDatasetId(const QString &dataset)
 {
-    if (dataset.isEmpty() || dataset != dataset.trimmed() || dataset != dataset.toLower())
+    // Lower-case ASCII letters, digits, '-', '_' and '.', so one UTF-8
+    // byte per character (also no surrounding white space and nothing upper
+    // case). Checked per character without temporary strings: the globe
+    // builds tile keys thousands of times per frame.
+    if (dataset.isEmpty() || dataset.size() > MapTerrainTileMaximumDatasetIdBytes)
         return false;
 
-    const QByteArray utf8 = dataset.toUtf8();
-    if (utf8.isEmpty() || utf8.size() > MapTerrainTileMaximumDatasetIdBytes)
-        return false;
-
-    for (char value : utf8)
+    for (const QChar character : dataset)
     {
-        const bool lower_letter = value >= 'a' && value <= 'z';
-        const bool digit = value >= '0' && value <= '9';
-        const bool punctuation = value == '-' || value == '_' || value == '.';
+        const char16_t value = character.unicode();
+        const bool lower_letter = value >= u'a' && value <= u'z';
+        const bool digit = value >= u'0' && value <= u'9';
+        const bool punctuation = value == u'-' || value == u'_' || value == u'.';
         if (!lower_letter && !digit && !punctuation)
             return false;
     }
 
-    const char first = utf8.at(0);
-    return (first >= 'a' && first <= 'z') || (first >= '0' && first <= '9');
+    const char16_t first = dataset.at(0).unicode();
+    return (first >= u'a' && first <= u'z') || (first >= u'0' && first <= u'9');
 }
 
 bool isValidMapTerrainTileAddress(const MapTerrainTileAddress &address)
@@ -117,12 +118,21 @@ QString mapTerrainTileKey(const QString &dataset, const MapTerrainTileAddress &a
     if (!isValidMapTerrainDatasetId(dataset) || !isValidMapTerrainTileAddress(address))
         return QString();
 
-    return QStringLiteral("terrain/v%1/%2/%3/%4/%5")
-        .arg(MapTerrainTileFormatVersion)
-        .arg(dataset)
-        .arg(address.zoom)
-        .arg(address.x)
-        .arg(address.y);
+    // Appended directly ("terrain/v1/<dataset>/<z>/<x>/<y>"): a chain of
+    // QString::arg() parses the pattern once per argument.
+    QString key;
+    key.reserve(24 + dataset.size());
+    key += QStringLiteral("terrain/v");
+    key += QString::number(MapTerrainTileFormatVersion);
+    key += QLatin1Char('/');
+    key += dataset;
+    key += QLatin1Char('/');
+    key += QString::number(address.zoom);
+    key += QLatin1Char('/');
+    key += QString::number(address.x);
+    key += QLatin1Char('/');
+    key += QString::number(address.y);
+    return key;
 }
 
 QString mapTerrainTileEndpoint(const QString &dataset, const MapTerrainTileAddress &address)

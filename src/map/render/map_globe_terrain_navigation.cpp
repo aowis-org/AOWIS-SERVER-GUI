@@ -347,6 +347,19 @@ bool MapGlobeTerrainNavigation::drawnSurfaceHeightAtCoordinate(const CoordinateW
     // triangle the ray meets.
     constexpr double HighestTerrainM = 9000.0;
     const double start_height_m = HighestTerrainM * MapModel::MaxView3dVerticalExaggeration + 1000.0;
+    // The tile under the coordinate directly (cheap: demand points are
+    // draped after every terrain change); the scan over all tiles only when
+    // that cannot place the coordinate.
+    switch (this->surface_preparation->drawnSurfaceHeightAt(coordinate, start_height_m, height_m))
+    {
+    case MapGlobeSurfacePreparation::DrawnSurfaceHeight::Relief:
+        return true;
+    case MapGlobeSurfacePreparation::DrawnSurfaceHeight::Flat:
+        *height_m = 0.0;
+        return false;
+    case MapGlobeSurfacePreparation::DrawnSurfaceHeight::Unknown:
+        break;
+    }
     const GeoWgs84Ellipsoid::EcefPositionD ray_origin = GeoWgs84Ellipsoid::geodeticToEcefD(
         coordinate.longitude_deg, coordinate.latitude_deg, start_height_m);
     const GeoWgs84Ellipsoid::LocalFrame frame = GeoWgs84Ellipsoid::localFrameAtGeodetic(

@@ -481,43 +481,64 @@ EM_BOOL MapWidget::browserMouseLeaveCallback(int event_type, const EmscriptenMou
 }
 #endif
 
-bool MapWidget::setKeyboardPanKey(QKeyEvent *event, bool pressed)
+MapWidget::NavigationKeyIdentity MapWidget::navigationKeyIdentity(const QKeyEvent *event)
 {
-    if (event == nullptr)
-        return false;
+    NavigationKeyIdentity identity;
+    identity.scan_code = event->nativeScanCode();
+    identity.virtual_key = event->nativeVirtualKey();
+    identity.key = event->key();
+    return identity;
+}
 
+bool MapWidget::sameNavigationKey(const NavigationKeyIdentity &first,
+                                  const NavigationKeyIdentity &second)
+{
+    // The most physical identity both events carry: the scan code (X11,
+    // Wayland, Windows), the virtual key (macOS), else the Qt key (browser).
+    if (first.scan_code != 0 && second.scan_code != 0)
+        return first.scan_code == second.scan_code;
+    if (first.virtual_key != 0 && second.virtual_key != 0)
+        return first.virtual_key == second.virtual_key;
+    return first.key == second.key;
+}
+
+bool MapWidget::pressKeyboardPanKey(QKeyEvent *event)
+{
     const Qt::KeyboardModifiers arrow_modifiers =
         event->modifiers() & ~(Qt::ShiftModifier | Qt::KeypadModifier);
 
+    bool *pressed = nullptr;
+    NavigationKeyIdentity *identity = nullptr;
     if ((event->key() == Qt::Key_Left && arrow_modifiers == Qt::NoModifier)
         || guiShortcutMatches(event, guiShortcutRegistry().shortcut(GuiShortcutId::MapPanLeft), Qt::ShiftModifier))
     {
-        this->pan_key_left_pressed = pressed;
-        return true;
+        pressed = &this->pan_key_left_pressed;
+        identity = &this->pan_key_left_identity;
     }
-
-    if ((event->key() == Qt::Key_Right && arrow_modifiers == Qt::NoModifier)
-        || guiShortcutMatches(event, guiShortcutRegistry().shortcut(GuiShortcutId::MapPanRight), Qt::ShiftModifier))
+    else if ((event->key() == Qt::Key_Right && arrow_modifiers == Qt::NoModifier)
+             || guiShortcutMatches(event, guiShortcutRegistry().shortcut(GuiShortcutId::MapPanRight), Qt::ShiftModifier))
     {
-        this->pan_key_right_pressed = pressed;
-        return true;
+        pressed = &this->pan_key_right_pressed;
+        identity = &this->pan_key_right_identity;
     }
-
-    if ((event->key() == Qt::Key_Up && arrow_modifiers == Qt::NoModifier)
-        || guiShortcutMatches(event, guiShortcutRegistry().shortcut(GuiShortcutId::MapPanUp), Qt::ShiftModifier))
+    else if ((event->key() == Qt::Key_Up && arrow_modifiers == Qt::NoModifier)
+             || guiShortcutMatches(event, guiShortcutRegistry().shortcut(GuiShortcutId::MapPanUp), Qt::ShiftModifier))
     {
-        this->pan_key_up_pressed = pressed;
-        return true;
+        pressed = &this->pan_key_up_pressed;
+        identity = &this->pan_key_up_identity;
     }
-
-    if ((event->key() == Qt::Key_Down && arrow_modifiers == Qt::NoModifier)
-        || guiShortcutMatches(event, guiShortcutRegistry().shortcut(GuiShortcutId::MapPanDown), Qt::ShiftModifier))
+    else if ((event->key() == Qt::Key_Down && arrow_modifiers == Qt::NoModifier)
+             || guiShortcutMatches(event, guiShortcutRegistry().shortcut(GuiShortcutId::MapPanDown), Qt::ShiftModifier))
     {
-        this->pan_key_down_pressed = pressed;
-        return true;
+        pressed = &this->pan_key_down_pressed;
+        identity = &this->pan_key_down_identity;
     }
+    if (pressed == nullptr)
+        return false;
 
-    return false;
+    *pressed = true;
+    *identity = navigationKeyIdentity(event);
+    return true;
 }
 
 bool MapWidget::hasKeyboardPanInput() const
@@ -772,7 +793,7 @@ bool MapWidget::handleKeyPressEvent(QKeyEvent *event)
         return true;
     }
 
-    if (this->setKeyboardPanKey(event, true))
+    if (pressKeyboardPanKey(event))
     {
         this->pan_fast_modifier_pressed = event->modifiers().testFlag(Qt::ShiftModifier);
         this->mouse_pan_inertia_active = false;
@@ -791,6 +812,10 @@ bool MapWidget::handleKeyPressEvent(QKeyEvent *event)
         // auto-repeat (isAutoRepeat) never adds zoom.
         this->pan_fast_modifier_pressed = event->modifiers().testFlag(Qt::ShiftModifier);
         bool &pressed = zoom_in ? this->zoom_in_key_pressed : this->zoom_out_key_pressed;
+        if (zoom_in)
+            this->zoom_in_key_identity = navigationKeyIdentity(event);
+        else
+            this->zoom_out_key_identity = navigationKeyIdentity(event);
         if (!event->isAutoRepeat() || !pressed)
         {
             pressed = true;
@@ -836,42 +861,55 @@ bool MapWidget::handleKeyReleaseEvent(QKeyEvent *event)
         return true;
     }
 
-    if (this->setKeyboardPanKey(event, event->isAutoRepeat()))
+    // Every held pan / zoom key whose physical key this is (the press's
+    // modifiers and layout level do not have to hold any more). An
+    // auto-repeat release keeps it held.
+    struct HeldKey
     {
+        bool *pressed;
+        const NavigationKeyIdentity *identity;
+        bool zoom;
+    };
+    const HeldKey held_keys[] = {
+        {&this->pan_key_left_pressed, &this->pan_key_left_identity, false},
+        {&this->pan_key_right_pressed, &this->pan_key_right_identity, false},
+        {&this->pan_key_up_pressed, &this->pan_key_up_identity, false},
+        {&this->pan_key_down_pressed, &this->pan_key_down_identity, false},
+        {&this->zoom_in_key_pressed, &this->zoom_in_key_identity, true},
+        {&this->zoom_out_key_pressed, &this->zoom_out_key_identity, true},
+    };
+    const NavigationKeyIdentity released = navigationKeyIdentity(event);
+    bool pan_released = false;
+    bool zoom_released = false;
+    for (const HeldKey &held_key : held_keys)
+    {
+        if (!*held_key.pressed || !sameNavigationKey(*held_key.identity, released))
+            continue;
+        if (held_key.zoom)
+            zoom_released = true;
+        else
+            pan_released = true;
         if (!event->isAutoRepeat())
-            this->ensurePanAnimationRunning();
-
-        event->accept();
-        return true;
+            *held_key.pressed = false;
     }
+    if (!pan_released && !zoom_released)
+        return false;
 
-    // Release by the configured physical key even if modifiers changed while
-    // it was held (for example, Shift or Ctrl pressed before key-up). Otherwise
-    // keyboard zoom can remain stuck indefinitely after the real key release.
-    const QKeySequence zoom_in_sequence = guiShortcutRegistry().keySequence(GuiShortcutId::MapZoomIn);
-    const QKeySequence zoom_out_sequence = guiShortcutRegistry().keySequence(GuiShortcutId::MapZoomOut);
-    const bool zoom_in = zoom_in_sequence.count() == 1
-        && zoom_in_sequence[0].key() == event->key();
-    const bool zoom_out = zoom_out_sequence.count() == 1
-        && zoom_out_sequence[0].key() == event->key();
-    if (zoom_in || zoom_out)
+    if (!event->isAutoRepeat())
     {
-        if (!event->isAutoRepeat())
+        // Pan decelerates in the animation; a zoom release ends the hold
+        // (the motion decelerates over its spring lag and completes a short
+        // press to one tap step).
+        if (pan_released)
+            ensurePanAnimationRunning();
+        if (zoom_released)
         {
-            if (zoom_in)
-                this->zoom_in_key_pressed = false;
-            else
-                this->zoom_out_key_pressed = false;
-            // Release ends the hold; the motion decelerates over its spring
-            // lag (and completes a short press to one tap step).
             synchronizeKeyboardZoomHold();
             stopPanAnimationIfIdle();
         }
-        event->accept();
-        return true;
     }
-
-    return false;
+    event->accept();
+    return true;
 }
 
 void MapWidget::clearKeyboardPanInput()

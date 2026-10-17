@@ -73,6 +73,8 @@ public:
     bool contains(quint64 key) const { return this->tile_slots.contains(key); }
     Slot *slot(quint64 key);
     int tileCount() const { return int(this->tile_slots.size()); }
+    // Tiles used (drawn or uploaded) in `frame`.
+    int tilesUsedIn(quint64 frame) const;
     int pageCount() const;
     const Page &page(int index) const { return this->pages.at(index); }
     int pageSlots() const { return int(this->pages.size()); }

@@ -23,11 +23,11 @@ constexpr int GlobeQuadtreeRootZoom = 0;
 constexpr double GlobeQuadtreeSubdivideScreenPx = 512.0;
 constexpr double GlobeQuadtreeMergeScreenPx = 256.0;
 constexpr int GlobeQuadtreeMaxVisitedNodes = 20000;
-// Slack around the exact view cone (quadtreeNodeInViewCone()) for camera
-// rotation until the next window rebuild. It was 0.5 while the cone ignored
-// the aspect ratio; with the corners included, 0.25 keeps a 4:3 view at the
-// same leaf count.
-constexpr double GlobeQuadtreeViewConeMarginRad = 0.25;
+// Slack around the exact view cone (quadtreeNodeInViewCone()): the leaves
+// are selected again every frame, so this only prefetches tiles about to
+// rotate into view. It was 0.5 while the cone ignored the aspect ratio;
+// every extra leaf costs a mesh, imagery and atlas space.
+constexpr double GlobeQuadtreeViewConeMarginRad = 0.1;
 constexpr double GlobeQuadtreeHorizonOcclusionMarginFactor = 3.0;
 constexpr int GlobeQuadtreeViewConeCullMinZoom = 2;
 constexpr int GlobeTerrainMinimumLodCellCount = 1;
@@ -58,6 +58,24 @@ bool terrainDatumUsable(MapTerrainVerticalDatum datum)
         || datum == MapTerrainVerticalDatum::Egm2008;
 }
 
+// Closed-form WGS84 geodetic -> ECEF, the same formula GeographicLib
+// evaluates, without its exact-degree trigonometry (sub-millimetre apart):
+// the bounding spheres need ten conversions per visited node, every frame.
+QVector3D boundsEcef(double lon_deg, double lat_deg, double height_m)
+{
+    constexpr double SemiMajorM = GeoWgs84Ellipsoid::EquatorialRadiusM;
+    constexpr double Flattening = 1.0 / GeoWgs84Ellipsoid::FlatteningInverse;
+    constexpr double EccentricitySquared = Flattening * (2.0 - Flattening);
+    const double lat_rad = qDegreesToRadians(lat_deg);
+    const double lon_rad = qDegreesToRadians(lon_deg);
+    const double sin_lat = std::sin(lat_rad);
+    const double cos_lat = std::cos(lat_rad);
+    const double prime_vertical_m = SemiMajorM / std::sqrt(1.0 - EccentricitySquared * sin_lat * sin_lat);
+    const double horizontal_m = (prime_vertical_m + height_m) * cos_lat;
+    return QVector3D(float(horizontal_m * std::cos(lon_rad)), float(horizontal_m * std::sin(lon_rad)),
+                     float((prime_vertical_m * (1.0 - EccentricitySquared) + height_m) * sin_lat));
+}
+
 void quadtreeNodeBoundingSphere(
     int zoom,
     int tile_x,
@@ -85,11 +103,11 @@ void quadtreeNodeBoundingSphere(
     const double lat_mid = 0.5 * (lat0 + lat1);
 
     const QVector3D samples[5] = {
-        GeoWgs84Ellipsoid::geodeticToEcef(lon0, lat0, reference_elevation_m),
-        GeoWgs84Ellipsoid::geodeticToEcef(lon1, lat0, reference_elevation_m),
-        GeoWgs84Ellipsoid::geodeticToEcef(lon0, lat1, reference_elevation_m),
-        GeoWgs84Ellipsoid::geodeticToEcef(lon1, lat1, reference_elevation_m),
-        GeoWgs84Ellipsoid::geodeticToEcef(lon_mid, lat_mid, reference_elevation_m),
+        boundsEcef(lon0, lat0, reference_elevation_m),
+        boundsEcef(lon1, lat0, reference_elevation_m),
+        boundsEcef(lon0, lat1, reference_elevation_m),
+        boundsEcef(lon1, lat1, reference_elevation_m),
+        boundsEcef(lon_mid, lat_mid, reference_elevation_m),
     };
 
     constexpr int SampleCount = int(sizeof(samples) / sizeof(samples[0]));
@@ -106,6 +124,32 @@ void quadtreeNodeBoundingSphere(
     *radius_m = max_distance;
 }
 
+// DEM tiles looked up during one leaf selection, by position. A repository
+// lookup builds a string key; the selection asks for the same tiles over and
+// over (nodes beyond the DEM zoom share their terrain tile, every uncached
+// node walks the same ancestors), which cost up to 16 ms per frame.
+class TerrainTileLookup
+{
+public:
+    explicit TerrainTileLookup(const MapTerrainRepository *terrain_repository)
+        : terrain_repository(terrain_repository)
+    {
+    }
+
+    const MapTerrainTile *tile(int zoom, quint32 x, quint32 y)
+    {
+        const quint64 key = MapGlobeSurfaceScene::positionKey(zoom, int(x), int(y));
+        QHash<quint64, const MapTerrainTile *>::const_iterator found = this->tiles.constFind(key);
+        if (found == this->tiles.cend())
+            found = this->tiles.insert(key, this->terrain_repository->tile(terrainDatasetId(), zoom, x, y));
+        return found.value();
+    }
+
+private:
+    const MapTerrainRepository *terrain_repository = nullptr;
+    QHash<quint64, const MapTerrainTile *> tiles;
+};
+
 // Elevation range (raw DEM metres) of the finest cached DEM tile covering a
 // node: its own terrain tile, else the nearest cached ancestor, whose range
 // contains that of every descendant. False when none is cached.
@@ -113,7 +157,7 @@ bool cachedTerrainElevationRange(
     int zoom,
     int tile_x,
     int tile_y,
-    const MapTerrainRepository *terrain_repository,
+    TerrainTileLookup *terrain_tiles,
     double *minimum_elevation_m,
     double *maximum_elevation_m)
 {
@@ -123,9 +167,8 @@ bool cachedTerrainElevationRange(
          --candidate_zoom)
     {
         const int shift = zoom - candidate_zoom;
-        const MapTerrainTile *terrain_tile = terrain_repository->tile(
-            terrainDatasetId(), candidate_zoom,
-            quint32(tile_x) >> shift, quint32(tile_y) >> shift);
+        const MapTerrainTile *terrain_tile = terrain_tiles->tile(
+            candidate_zoom, quint32(tile_x) >> shift, quint32(tile_y) >> shift);
         if (terrain_tile != nullptr
             && terrainDatumUsable(terrain_tile->vertical_datum)
             && std::isfinite(terrain_tile->minimum_elevation_m)
@@ -148,11 +191,12 @@ bool cachedTerrainElevationRange(
 // never refined into leaves, so its DEM was never requested either: a
 // permanent hole next to the camera. Hence the nearest cached ancestor's
 // range, and without any cached DEM the whole possible range.
+// terrain_tiles: nullptr without a terrain repository (no relief drawn).
 void quadtreeNodeVisibilityBoundingSphere(
     int zoom,
     int tile_x,
     int tile_y,
-    const MapTerrainRepository *terrain_repository,
+    TerrainTileLookup *terrain_tiles,
     double vertical_exaggeration,
     QVector3D *center,
     double *radius_m)
@@ -161,13 +205,13 @@ void quadtreeNodeVisibilityBoundingSphere(
     double minimum_elevation_m = 0.0;
     double maximum_elevation_m = 0.0;
 
-    if (terrain_repository != nullptr
+    if (terrain_tiles != nullptr
         && zoom >= MapGlobeSurfaceScene::TerrainReliefMinimumZoom)
     {
         double dem_minimum_m = 0.0;
         double dem_maximum_m = UnknownTerrainMaximumElevationM;
         cachedTerrainElevationRange(
-            zoom, tile_x, tile_y, terrain_repository, &dem_minimum_m, &dem_maximum_m);
+            zoom, tile_x, tile_y, terrain_tiles, &dem_minimum_m, &dem_maximum_m);
         const double first_elevation_m = vertical_transform.terrainHeightM(dem_minimum_m);
         const double second_elevation_m = vertical_transform.terrainHeightM(dem_maximum_m);
         // The flat ellipsoid stays inside: drawn where relief is not
@@ -257,15 +301,22 @@ struct QuadtreeChild
     int x = 0;
     int y = 0;
     double distance_sq = 0.0;
+    QVector3D visibility_center;
+    double visibility_radius_m = 0.0;
 };
 
+// visibility_node_center / _radius_m: the node's
+// quadtreeNodeVisibilityBoundingSphere(), computed by the caller (the parent
+// needs it anyway to order its children).
 void collectQuadtreeLeaves(
     int zoom,
     int tile_x,
     int tile_y,
+    const QVector3D &visibility_node_center,
+    double visibility_node_radius_m,
     const GeoWgs84Ellipsoid::OrbitCameraBasis &visibility_camera_basis,
     const GeoWgs84Ellipsoid::OrbitCameraBasis &lod_camera_basis,
-    const MapTerrainRepository *terrain_repository,
+    TerrainTileLookup *terrain_tiles,
     double vertical_exaggeration,
     double viewport_height_px,
     double tan_half_fov,
@@ -282,12 +333,6 @@ void collectQuadtreeLeaves(
         return;
     }
     --(*visit_budget);
-
-    QVector3D visibility_node_center;
-    double visibility_node_radius_m = 0.0;
-    quadtreeNodeVisibilityBoundingSphere(
-        zoom, tile_x, tile_y, terrain_repository, vertical_exaggeration,
-        &visibility_node_center, &visibility_node_radius_m);
 
     if (quadtreeNodeOccludedByHorizon(
             visibility_node_center,
@@ -355,14 +400,16 @@ void collectQuadtreeLeaves(
                 child_zoom,
                 child_x + dx,
                 cy,
-                terrain_repository,
+                terrain_tiles,
                 vertical_exaggeration,
                 &child_center,
                 &child_radius_m);
             children[child_count] = QuadtreeChild{
                 child_x + dx,
                 cy,
-                double((child_center - visibility_camera_basis.eye).lengthSquared())};
+                double((child_center - visibility_camera_basis.eye).lengthSquared()),
+                child_center,
+                child_radius_m};
             ++child_count;
         }
     }
@@ -381,9 +428,11 @@ void collectQuadtreeLeaves(
             child_zoom,
             children[index].x,
             children[index].y,
+            children[index].visibility_center,
+            children[index].visibility_radius_m,
             visibility_camera_basis,
             lod_camera_basis,
-            terrain_repository,
+            terrain_tiles,
             vertical_exaggeration,
             viewport_height_px,
             tan_half_fov,
@@ -443,13 +492,22 @@ QVector<MapGlobeQuadtreeLeaf> MapGlobeSurfaceScene::selectVisibleLeaves(
 
     QSet<quint64> currently_subdivided_nodes;
     int visit_budget = GlobeQuadtreeMaxVisitedNodes;
+    TerrainTileLookup terrain_tile_lookup(terrain_repository);
+    TerrainTileLookup *terrain_tiles = terrain_repository != nullptr ? &terrain_tile_lookup : nullptr;
+    QVector3D root_center;
+    double root_radius_m = 0.0;
+    quadtreeNodeVisibilityBoundingSphere(
+        GlobeQuadtreeRootZoom, 0, 0, terrain_tiles, map_model.view3dVerticalExaggeration(),
+        &root_center, &root_radius_m);
     collectQuadtreeLeaves(
         GlobeQuadtreeRootZoom,
         0,
         0,
+        root_center,
+        root_radius_m,
         visibility_camera_basis,
         lod_camera_basis,
-        terrain_repository,
+        terrain_tiles,
         map_model.view3dVerticalExaggeration(),
         viewport_height_px,
         tan_half_fov,

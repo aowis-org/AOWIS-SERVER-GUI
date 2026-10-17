@@ -696,7 +696,7 @@ void testTerrainMeshGenerationAndStitching()
 }
 
 // Stand-in DEM while a tile's own DEM is loading
-// (MapGlobeSurfacePreparation::applyAncestorTerrainStandIns()): the matching
+// (MapGlobeSurfacePreparation::scheduleAncestorTerrainStandIns()): the matching
 // part of a cached coarser tile, resampled at the tile's own address.
 void testTerrainStandInFromAncestor()
 {
@@ -791,6 +791,22 @@ void testTerrainStandInFromAncestor()
         "stand-in mesh corner lies on the ancestor relief");
     expectNear(height_m(result.vertices.constLast()), plane(0.875, 0.375), 0.05,
         "stand-in mesh opposite corner lies on the ancestor relief");
+
+    // The preparation hands the mesh thread the ancestor itself; the
+    // builder resamples it there: the very same mesh.
+    MapTerrainMeshRequest from_ancestor = request;
+    from_ancestor.terrain_tile = ancestor;
+    from_ancestor.stand_in_zoom = ancestor.address.zoom;
+    const MapTerrainMeshResult built_from_ancestor = buildTerrainMeshResult(from_ancestor);
+    bool same_mesh = built_from_ancestor.vertices.size() == result.vertices.size()
+        && built_from_ancestor.stand_in_zoom == ancestor.address.zoom;
+    for (qsizetype index = 0; same_mesh && index < result.vertices.size(); ++index)
+    {
+        same_mesh = built_from_ancestor.vertices.at(index).x == result.vertices.at(index).x
+            && built_from_ancestor.vertices.at(index).y == result.vertices.at(index).y
+            && built_from_ancestor.vertices.at(index).z == result.vertices.at(index).z;
+    }
+    expectTrue(same_mesh, "a request carrying the ancestor builds the same mesh as the resampled stand-in");
 }
 }
 

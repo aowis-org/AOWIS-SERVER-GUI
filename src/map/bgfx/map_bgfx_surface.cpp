@@ -99,6 +99,10 @@ constexpr uint32_t kTransientIndexBytes = 8u << 20;
 // a screen within a few frames, small enough to never cost a frame while
 // streaming.
 constexpr int kImageryUploadsPerFrame = 8;
+// The globe replaces far more tiles per frame while zooming or turning
+// (300-400 leaves at a tilted view): at 8 the uploads fell behind and the
+// backlog showed as blank tiles; 12 keeps up (measured; 16 gained nothing).
+constexpr int kGlobeImageryUploadsPerFrame = 12;
 // VSYNC: presentation pacing (see MapFramePacer). MSAA x4: antialiased thick
 // line and marker edges; bgfx clamps it to what the renderer supports.
 #ifdef Q_OS_WASM
@@ -1240,7 +1244,7 @@ void MapBgfxSurface::renderGlobe(const QSizeF &logical)
     inputs.logical_viewport = viewport;
     inputs.background = palette().color(QPalette::Window);
     inputs.background_opacity = double(this->background_opacity) / 100.0;
-    inputs.upload_budget = kImageryUploadsPerFrame;
+    inputs.upload_budget = kGlobeImageryUploadsPerFrame;
     inputs.heatmap_opacity = this->symbology.visual_heatmap != VisualHeatmap::None
         ? double(this->symbology.heatmap_opacity) / 100.0 : 0.0;
     const MapBgfxGlobeSurface::FrameResult result =

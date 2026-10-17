@@ -37,6 +37,11 @@ struct MapTerrainMeshRequest
     QString terrain_key;
     MapTerrainTile terrain_tile;
     bool terrain_available = false;
+    // While the tile's own DEM is loading: terrain_tile is the cached coarser
+    // DEM tile at this zoom, resampled at terrain_zoom by
+    // buildTerrainMeshResult() (mapTerrainTileFromAncestor()); -1: the
+    // tile's own DEM.
+    int stand_in_zoom = -1;
 
     // Identifies the rendered imagery tile. virtual_x remains unwrapped so
     // tiles on opposite sides of the antimeridian stay distinct even when
@@ -76,6 +81,8 @@ struct MapTerrainMeshResult
     int virtual_x = 0;
     int y = 0;
     bool terrain_available = false;
+    // The request's stand_in_zoom.
+    int stand_in_zoom = -1;
     int cell_count = 0;
     int stitch_top_cell_count = 0;
     int stitch_right_cell_count = 0;

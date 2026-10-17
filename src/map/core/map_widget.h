@@ -126,7 +126,22 @@ private:
     static EM_BOOL browserMouseLeaveCallback(int event_type, const EmscriptenMouseEvent *event, void *user_data);
 #endif
 
-    bool setKeyboardPanKey(QKeyEvent *event, bool pressed);
+    // The physical key behind a key event. A release is paired with the press
+    // that started a motion by this, not by key + modifiers: other keys pressed
+    // meanwhile (Ctrl, Alt, AltGr, Shift turning '+' into '*') change both,
+    // and an unmatched release left the motion running.
+    struct NavigationKeyIdentity
+    {
+        quint32 scan_code = 0;
+        quint32 virtual_key = 0;
+        int key = 0;
+    };
+    static NavigationKeyIdentity navigationKeyIdentity(const QKeyEvent *event);
+    static bool sameNavigationKey(const NavigationKeyIdentity &first,
+                                  const NavigationKeyIdentity &second);
+    // A press of a pan key (arrows or the configured shortcuts): marks it
+    // held and remembers its physical key.
+    bool pressKeyboardPanKey(QKeyEvent *event);
     bool hasKeyboardPanInput() const;
     bool hasFastKeyboardPanInput() const;
     void advanceNavigation(qreal elapsed_seconds);
@@ -190,12 +205,18 @@ private:
     bool pan_key_right_pressed = false;
     bool pan_key_up_pressed = false;
     bool pan_key_down_pressed = false;
+    NavigationKeyIdentity pan_key_left_identity;
+    NavigationKeyIdentity pan_key_right_identity;
+    NavigationKeyIdentity pan_key_up_identity;
+    NavigationKeyIdentity pan_key_down_identity;
     bool pan_fast_modifier_pressed = false;
     ScreenCoordinateResolver render_surface_screen_coordinate_resolver;
     GlobeTerrainPanResolver render_surface_globe_terrain_pan_resolver;
     CachedTerrainElevationResolver cached_terrain_elevation_resolver;
     bool zoom_in_key_pressed = false;
     bool zoom_out_key_pressed = false;
+    NavigationKeyIdentity zoom_in_key_identity;
+    NavigationKeyIdentity zoom_out_key_identity;
     bool keyboard_pan_motion_active = false;
     bool external_navigation_frame_driver = false;
 

@@ -305,7 +305,8 @@ void MapBgfx2dImageryGpu::draw(bgfx::ViewId view, const MapBgfx2dImagery::Layout
 
 void MapBgfx2dImageryGpu::endFrame()
 {
-    const QVector<int> dropped = this->atlas.trim(TextureBudget, this->frame);
+    const int budget = std::max(TextureBudget, this->atlas.tilesUsedIn(this->frame) + FallbackReserve);
+    const QVector<int> dropped = this->atlas.trim(budget, this->frame);
     for (const int page : dropped)
         destroyPage(page);
     ++this->frame;

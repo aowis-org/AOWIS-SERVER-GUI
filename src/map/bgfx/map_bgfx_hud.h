@@ -225,6 +225,7 @@ public:
         // Globe scale bar (MapMonitorScaleHudWidget's globe formula).
         ScaleBar scale;
         // Terrain meshes being built: completed / total (0: unknown yet).
+        // The panel shows only for sustained work (MeshPanelShowDelayS).
         bool mesh_active = false;
         int mesh_completed = 0;
         int mesh_total = 0;
@@ -260,7 +261,7 @@ public:
     {
         return this->tiles_active > 0 || this->tiles_queued > 0 || this->terrain_active > 0
             || this->terrain_queued > 0 || this->tooltip_waiting
-            || (this->globe.visible && this->globe.mesh_active);
+            || (this->globe.visible && this->globe.mesh_active) || this->mesh_panel_shown;
     }
     void setFullscreen(bool available, bool active);
     // Replaces the legend content. Open popups stay open when their group
@@ -316,6 +317,12 @@ public:
 
     // Layout constants (logical px) of the QWidget HUD.
     static constexpr double MarginPx = 12.0;
+    // Terrain-mesh panel: mesh builds come in short bursts whenever the
+    // camera moves; the panel appears only after this much continuous
+    // building and disappears this long after it ended (frames continue
+    // until then: animating()).
+    static constexpr double MeshPanelShowDelayS = 0.6;
+    static constexpr double MeshPanelHideDelayS = 0.4;
     static constexpr double ScaleWidthPx = 116.0;
     static constexpr double ScaleHeightPx = 42.0;
     static constexpr double ScalePaddingPx = 6.0;
@@ -547,6 +554,11 @@ private:
     bool tooltip_suppressed = false;
     // The last build found a tooltip target still inside its delay.
     bool tooltip_waiting = false;
+    // Terrain-mesh panel debounce (frame times; -1 = not running).
+    double mesh_busy_since_s = -1.0;
+    double mesh_idle_since_s = -1.0;
+    bool mesh_panel_shown = false;
+    void updateMeshPanel(double time_s);
 };
 
 #endif // MAP_BGFX_HUD_H

@@ -25,6 +25,11 @@ public:
     // Tiles kept resident. ~256 KiB each for 256x256 RGBA8: a 4K viewport
     // needs ~190 target tiles plus fallbacks, so this keeps one extra level.
     static constexpr int TextureBudget = 384;
+    // Kept beyond the tiles a frame draws when that exceeds the budget (the
+    // globe at a tilted, wide view draws 400+): the coarser tiles that new
+    // tiles show until their own image is uploaded. Trimming down to the
+    // budget there evicted exactly those, and new tiles were drawn blank.
+    static constexpr int FallbackReserve = 128;
 
     bool initialize();
     void release();
@@ -50,7 +55,8 @@ public:
               double viewport_width, double viewport_height,
               const QColor &background, double background_opacity);
 
-    // Evicts least recently drawn tiles above TextureBudget.
+    // Evicts least recently drawn tiles above
+    // max(TextureBudget, tiles drawn in this frame + FallbackReserve).
     void endFrame();
 
     int textureCount() const { return this->atlas.tileCount(); }

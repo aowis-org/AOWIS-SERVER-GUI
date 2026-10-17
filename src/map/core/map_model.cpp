@@ -200,13 +200,15 @@ double MapModel::view2dWorldSizePx() const
 QString MapModel::tileCachePrefix(int zoom) const
 {
     const int bounded_zoom = std::clamp(zoom, MinZoom, MaxZoom);
-    return tileSourcePath(bounded_zoom) + QString("/%1/").arg(bounded_zoom);
+    return tileSourcePath(bounded_zoom) + QLatin1Char('/') + QString::number(bounded_zoom) + QLatin1Char('/');
 }
 
 QString MapModel::tileCacheKey(int x, int y, int zoom) const
 {
+    // Appended directly: the globe builds a key per window tile on every
+    // window rebuild, and QString::arg() parses its pattern per argument.
     const int wrapped_x = GeoWebMercator::wrapTileX(x, zoom);
-    return tileCachePrefix(zoom) + QString("%1/%2").arg(wrapped_x).arg(y);
+    return tileCachePrefix(zoom) + QString::number(wrapped_x) + QLatin1Char('/') + QString::number(y);
 }
 
 QString MapModel::tileEndpoint(int x, int y, int zoom) const
