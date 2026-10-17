@@ -167,7 +167,9 @@ public:
     void setHudGpsPosition(bool valid, double longitude_deg, double latitude_deg);
     void setHudDownloadActivity(int tiles_active, int tiles_queued,
                                 int terrain_active, int terrain_queued);
-    void setHudFullscreen(bool available, bool active);
+    void setHudFullscreen(bool active);
+    // The pan joystick's knob (MapWidget::joystickChanged()).
+    void setHudJoystick(const QPointF &deflection, bool active);
     // Map legend content (map_bgfx_legend_content.h); visible=false hides it.
     void setHudLegend(const MapBgfxHud::Legend &legend);
     // Closes an open HUD popup (combo list, palette menu).

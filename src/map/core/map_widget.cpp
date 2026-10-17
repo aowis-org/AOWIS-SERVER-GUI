@@ -317,7 +317,7 @@ void MapWidget::setOrbitPointerLockWindow(QWindow *window)
 
 void MapWidget::stopPanAnimationIfIdle()
 {
-    if (this->zoom_motion.active() || hasKeyboardPanInput() || hasKeyboardZoomInput()
+    if (this->zoom_motion.active() || hasKeyboardPanInput() || hasKeyboardZoomInput() || joystickPanActive()
         || vectorLength(this->pan_velocity) >= PanVelocityStopThreshold)
     {
         return;
@@ -380,6 +380,23 @@ void MapWidget::advanceNavigation(qreal elapsed_seconds)
     {
         this->pan_velocity = QPointF();
         this->pan_fractional_delta = QPointF();
+        return;
+    }
+
+    if (joystickPanActive())
+    {
+        // Pushing the knob up moves the view up: the map content moves
+        // the other way (a pan delta is the content's motion).
+        const QPointF deflection = joystickDeflection();
+        const double strength = std::hypot(deflection.x(), deflection.y());
+        this->pan_velocity = -deflection * (strength * JoystickMaximumSpeedPixelsPerSecond);
+        this->mouse_pan_inertia_active = false;
+        this->keyboard_pan_motion_active = false;
+        const QPointF precise_delta = this->pan_velocity * elapsed_seconds + this->pan_fractional_delta;
+        const QPoint delta(int(std::trunc(precise_delta.x())), int(std::trunc(precise_delta.y())));
+        this->pan_fractional_delta = precise_delta - QPointF(delta);
+        if (!delta.isNull())
+            panMapByPixels(delta);
         return;
     }
 
@@ -1112,7 +1129,8 @@ void MapWidget::beginView3dOrbit(
 
     this->view_3d_orbit_active = true;
     this->view_3d_orbit_input = input;
-    this->m_model->beginView3dRotateInteraction();
+    if (input != View3dOrbitInput::HudJoystick)
+        this->m_model->beginView3dRotateInteraction();
 #ifdef Q_OS_WASM
     this->view_3d_orbit_last_position = position;
 #else
@@ -1201,9 +1219,19 @@ void MapWidget::endView3dOrbit(bool restore_cursor_position)
         return;
     }
 
+    const bool joystick = this->view_3d_orbit_input == View3dOrbitInput::HudJoystick;
     this->view_3d_orbit_active = false;
     this->view_3d_orbit_input = View3dOrbitInput::None;
-    this->m_model->endView3dRotateInteraction();
+    if (joystick)
+    {
+        // The knob springs back; the pan glides out (advanceNavigation()).
+        this->joystick_offset_px = QPointF();
+        emit joystickChanged(QPointF(), false);
+    }
+    else
+    {
+        this->m_model->endView3dRotateInteraction();
+    }
 #ifndef Q_OS_WASM
     if (qApp != nullptr)
         qApp->removeEventFilter(this);
@@ -1233,8 +1261,45 @@ void MapWidget::applyView3dOrbitPointerDelta(const QPoint &delta)
     if (delta.isNull())
         return;
 
+    if (this->view_3d_orbit_input == View3dOrbitInput::HudJoystick)
+    {
+        // The virtual knob follows the captured motion, held at its reach.
+        this->joystick_offset_px += QPointF(delta);
+        const double length = std::hypot(this->joystick_offset_px.x(), this->joystick_offset_px.y());
+        if (length > JoystickTravelPx)
+            this->joystick_offset_px *= JoystickTravelPx / length;
+        emit joystickChanged(joystickDeflection(), true);
+        return;
+    }
+
     if (this->m_model->viewMode() == MapViewMode::Globe)
         this->m_model->orbitViewGlobeByPointerDelta(delta, true);
+}
+
+bool MapWidget::joystickPanActive() const
+{
+    return this->view_3d_orbit_active && this->view_3d_orbit_input == View3dOrbitInput::HudJoystick;
+}
+
+QPointF MapWidget::joystickDeflection() const
+{
+    return this->joystick_offset_px / JoystickTravelPx;
+}
+
+void MapWidget::beginJoystickPan(const QPointF &position)
+{
+    // The press may already be over (a quick click: the HUD's command is
+    // queued); then there is nothing to hold.
+    if (this->view_3d_orbit_active || !QGuiApplication::mouseButtons().testFlag(Qt::LeftButton))
+        return;
+    this->mouse_pan_active = false;
+    this->mouse_pan_inertia_active = false;
+    this->keyboard_pan_motion_active = false;
+    this->joystick_offset_px = QPointF();
+    const QPoint local = position.toPoint();
+    beginView3dOrbit(local, mapToGlobal(local), View3dOrbitInput::HudJoystick);
+    emit joystickChanged(QPointF(), true);
+    ensurePanAnimationRunning();
 }
 
 bool MapWidget::eventFilter(QObject *watched, QEvent *event)
@@ -1248,6 +1313,17 @@ bool MapWidget::eventFilter(QObject *watched, QEvent *event)
             QMouseEvent *mouse_event = static_cast<QMouseEvent *>(event);
             if (mouse_event->button() == Qt::MiddleButton)
                 endView3dOrbit();
+        }
+        else if (this->view_3d_orbit_input == View3dOrbitInput::HudJoystick
+                 && event->type() == QEvent::MouseButtonRelease
+                 && static_cast<QMouseEvent *>(event)->button() == Qt::LeftButton
+                 && qobject_cast<QWidget *>(watched) != nullptr)
+        {
+            // The release as a widget receives it (its window has seen it:
+            // Qt's grab bookkeeping stays intact): it ends the drag and goes
+            // no further, the HUD and the editor tool never saw its press.
+            endView3dOrbit();
+            return true;
         }
         else if (this->view_3d_orbit_input == View3dOrbitInput::CtrlMouse
                  && event->type() == QEvent::KeyRelease)
@@ -1322,7 +1398,14 @@ bool MapWidget::handleMouseReleaseEvent(QMouseEvent *event)
     if (!event)
         return false;
 
-    if (event->button() == Qt::MiddleButton && this->view_3d_orbit_active)
+    if (event->button() == Qt::MiddleButton && this->view_3d_orbit_active
+        && this->view_3d_orbit_input != View3dOrbitInput::HudJoystick)
+    {
+        endView3dOrbit();
+        event->accept();
+        return true;
+    }
+    if (event->button() == Qt::LeftButton && joystickPanActive())
     {
         endView3dOrbit();
         event->accept();
@@ -1401,6 +1484,8 @@ bool MapWidget::handleMouseMoveEvent(QMouseEvent *event)
             orbit_input_still_active = event->buttons().testFlag(Qt::MiddleButton);
         else if (this->view_3d_orbit_input == View3dOrbitInput::CtrlMouse)
             orbit_input_still_active = ctrl_mouse_orbit_requested;
+        else if (this->view_3d_orbit_input == View3dOrbitInput::HudJoystick)
+            orbit_input_still_active = event->buttons().testFlag(Qt::LeftButton);
 
         if (!orbit_input_still_active)
         {

@@ -146,10 +146,25 @@ frame:
   camera's projection, scale bar bottom left (sampled through the viewport
   centre from the continuous camera, label in the user's distance unit),
   download panels top centre (map tiles, terrain: busy bar, "n active ·
-  m queued", Cancel stays disabled until fresh numbers arrive), 2D/3D switch
-  top left (3D disabled until the bgfx globe exists), fullscreen button top
-  right (desktop). Hit boxes come from the last build: clickable is exactly
-  what was drawn; boxes of a popup closed since then are ignored.
+  m queued", Cancel stays disabled until fresh numbers arrive), one panel
+  top left with the fullscreen button (always: monitor and editor, desktop
+  and WASM) and the 2D/3D switch (3D disabled until the bgfx globe exists),
+  the pan joystick top right. Hit boxes come from the last build: clickable
+  is exactly what was drawn; boxes of a popup closed since then are ignored.
+* Pan joystick (`MapBgfxHud::joystick()`): a ring with four arrows and a
+  knob. A press on it sends `JoystickDrag` (Begin, press position) and is
+  not held by the HUD: `MapWidget::beginJoystickPan()` captures the pointer
+  with the globe orbit's machinery (cursor hidden; Wayland pointer lock with
+  relative motion, on the top-level and the embedded bgfx window; elsewhere
+  pinned by warping back to the press point; WASM: plain moves) and moves a
+  virtual knob up to `JoystickTravelPx` (120 px of hand movement for the
+  HUD knob's 18 px). The deflection pans every navigation frame like the
+  drag pan (globe: ground under the crosshair) at up to
+  `JoystickMaximumSpeedPixelsPerSecond`, quadratic near the centre; the
+  release (seen by the orbit's application event filter on desktop, by the
+  map handlers on WASM) ends it, the knob springs back
+  (`MapWidget::joystickChanged()` -> `setHudJoystick()`) and the pan glides
+  out like a keyboard pan.
 * Map legend (slice 6b), bottom right, like `EntityMapLegendHud`: node /
   link / heatmap metric combos (list opens on press, below or above the
   combo and tall enough for every entry; only when neither side has room it
@@ -171,7 +186,7 @@ frame:
 Input: every map mouse event goes to the HUD first
 (`MapMonitorContainer::routeBgfxHudMouseEvent()`); a press on a HUD panel is
 consumed together with its moves and release and never reaches navigation,
-picking or hover. Wheel events over a HUD panel scroll an open list or are
+picking or hover (the joystick's press only: its drag is navigation). Wheel events over a HUD panel scroll an open list or are
 swallowed (`handleHudWheelEvent()`), never zooming the map underneath.
 Button and legend actions are delivered queued as `MapBgfxHud::Command`
 (`setHudActionHandler()`), outside the native window's event dispatch,
@@ -179,9 +194,11 @@ because fullscreen reparents the map. Desktop cursors (pointing hand, cross
 over ramps) are set on the embedded native window (`setMapCursor()`), the
 only cursor visible there.
 
-Fullscreen reparents `map_stack` like the QRhi path, but shuts bgfx down
-first (`suspendForNativeWindowChange()`) and restarts it once the native
-window is exposed again (`resumeAfterNativeWindowChange()`). Qt Wayland
+Fullscreen reparents `map_stack` into its own full-screen window (WASM:
+over the page's whole Qt screen; the bgfx canvas follows the surface's
+geometry), but shuts bgfx down first (`suspendForNativeWindowChange()`) and
+restarts it once the native window is exposed (WASM: shown) again
+(`resumeAfterNativeWindowChange()`). Qt Wayland
 destroys the embedded window's wl_surface on reparent without a
 `QPlatformSurfaceEvent`; a Vulkan swapchain still alive on it ends the whole
 Wayland connection ("wp_linux_drm_syncobj_surface_v1: Surface got destroyed
@@ -241,7 +258,7 @@ The Map Editor uses a second `MapBgfxSurface`, and only bgfx. It draws the
 imagery, the static network in the editor look (black pipes, brown device
 links, black 10 px node dots: `applyRenderSurfaceEditorSymbology()`), every
 editor overlay, map labels and the HUD (crosshair, GPS dot, scale bar, the
-2D/3D switch, the fullscreen button on desktop). `MapCanvasWidget` is the input
+fullscreen button, 2D/3D switch, joystick). `MapCanvasWidget` is the input
 owner (editor controller first, then MapWidget navigation) and paints
 nothing. There is no fallback renderer: until the first frame, and when bgfx
 cannot start (or is not in the build), a status label takes the map's place,
@@ -301,7 +318,7 @@ as in the monitor.
   event filter on the canvas gives the HUD every pointer event, wheel and
   Escape first (`routeBgfxHudEvent()`); a HUD button's pointing hand wins
   over the tool's cursor.
-* Fullscreen (desktop): the HUD button and the map fullscreen shortcut
+* Fullscreen: the HUD button and the map fullscreen shortcut
   (`MapMonitorFullscreen`, parented to each map stack, so only the visible
   map's fires) reparent the editor's map stack exactly like the monitor
   (suspend bgfx, top-level window, `showFullScreen()`, resume). The left

@@ -168,9 +168,9 @@ private:
     int bgfx_tiles_queued = 0;
     int bgfx_terrain_active = 0;
     int bgfx_terrain_queued = 0;
-    // Map fullscreen for the bgfx surface (desktop): the HUD button and the
-    // MapMonitorFullscreen shortcut: the map stack is reparented into its
-    // own full-screen window.
+    // Map fullscreen for the bgfx surface (desktop and WASM): the HUD button
+    // and the MapMonitorFullscreen shortcut: the map stack is reparented
+    // into its own full-screen window.
     QShortcut *bgfx_fullscreen_shortcut = nullptr;
     bool bgfx_fullscreen_active = false;
     // Pointer shape the bgfx HUD wants under the pointer (pointing hand over

@@ -505,6 +505,9 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
                 case MapBgfxHud::Action::CompassWheel:
                     this->bgfx_globe_hud->handleCommand(command);
                     break;
+                case MapBgfxHud::Action::JoystickDrag:
+                    this->map->beginJoystickPan(command.position);
+                    break;
                 default:
                     handleBgfxHudAction(static_cast<int>(command.action), command.group,
                                         command.value, command.flipped);
@@ -564,7 +567,9 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
         {
             refreshBgfxDownloadActivity();
         });
-#ifndef Q_OS_WASM
+        // The joystick's knob follows MapWidget's captured drag.
+        connect(this->map, &MapWidget::joystickChanged, surface,
+                [surface](QPointF deflection, bool active) { surface->setHudJoystick(deflection, active); });
         // Fullscreen shortcut, enabled while the surface presents frames and
         // no shortcut is being captured.
         this->bgfx_fullscreen_shortcut = new QShortcut(
@@ -595,11 +600,6 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
             if (this->bgfx_fullscreen_shortcut != nullptr)
                 this->bgfx_fullscreen_shortcut->setEnabled(this->bgfx_render_surface_active && !active);
         });
-        surface->setHudFullscreen(true, false);
-#else
-        // The browser build keeps the page layout; no map fullscreen yet.
-        surface->setHudFullscreen(false, false);
-#endif
 
         // Selection from anywhere (map click, tables, inspector) is drawn as
         // the selection highlight.
@@ -711,13 +711,11 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
             refreshBgfxDownloadActivity();
             if (this->bgfx_download_poll_timer != nullptr)
                 this->bgfx_download_poll_timer->start();
-#ifndef Q_OS_WASM
             if (this->bgfx_fullscreen_shortcut != nullptr)
             {
                 this->bgfx_fullscreen_shortcut->setEnabled(
                     !guiShortcutRegistry().shortcutCaptureActive());
             }
-#endif
             // WASM: MapWidget keeps pointer input on the Qt layer (the bgfx
             // canvas has pointer-events:none); picking and the HUD are routed
             // from this container's event filter on the map.
@@ -726,12 +724,10 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
         connect(surface, &MapBgfxSurface::signalRendererFailed, this,
                 [this, surface](const QString &reason) {
             qWarning() << "bgfx Map Monitor failed; no map renderer is available:" << reason;
-#ifndef Q_OS_WASM
             if (this->bgfx_fullscreen_active)
                 setBgfxFullscreen(false);
             if (this->bgfx_fullscreen_shortcut != nullptr)
                 this->bgfx_fullscreen_shortcut->setEnabled(false);
-#endif
             if (this->bgfx_download_poll_timer != nullptr)
                 this->bgfx_download_poll_timer->stop();
             setBgfxHudCursor(Qt::ArrowCursor);
@@ -873,10 +869,8 @@ MapMonitorContainer::~MapMonitorContainer()
     this->map->setRenderSurfaceScreenCoordinateResolver(MapWidget::ScreenCoordinateResolver());
     this->map->setRenderSurfaceGlobeSurfacePointResolver(MapWidget::GlobeSurfacePointResolver());
     this->map->setCachedTerrainElevationResolver(MapWidget::CachedTerrainElevationResolver());
-#ifndef Q_OS_WASM
     if (this->bgfx_fullscreen_active)
         setBgfxFullscreen(false);
-#endif
 }
 
 void MapMonitorContainer::setNodePalette(NetworkSymbologyPalette palette, bool flipped)
@@ -969,7 +963,6 @@ void MapMonitorContainer::showMapLegendHeatmap(VisualHeatmap visual_heatmap)
 
 bool MapMonitorContainer::eventFilter(QObject *watched, QEvent *event)
 {
-#ifndef Q_OS_WASM
     // Closing the bgfx fullscreen window returns the map to the tab.
     if (watched == this->map_stack && event->type() == QEvent::Close
         && this->bgfx_fullscreen_active)
@@ -978,7 +971,6 @@ bool MapMonitorContainer::eventFilter(QObject *watched, QEvent *event)
         event->ignore();
         return true;
     }
-#endif
 
     // The bgfx HUD sits on top of the map: it sees every pointer event first
     // (desktop: forwarded from the native window through MapWidget; WASM:
@@ -1229,9 +1221,7 @@ void MapMonitorContainer::handleBgfxHudAction(int action, int group, int value, 
                 this->map_model->setViewMode(MapViewMode::Globe, this->map->size());
             break;
         case MapBgfxHud::Action::ToggleFullscreen:
-#ifndef Q_OS_WASM
             setBgfxFullscreen(!this->bgfx_fullscreen_active);
-#endif
             break;
         case MapBgfxHud::Action::LegendVisual:
             // Same as the left menu's radio buttons: settings, the radio
@@ -1296,6 +1286,7 @@ void MapMonitorContainer::handleBgfxHudAction(int action, int group, int value, 
         case MapBgfxHud::Action::GlobeSliderReset:
         case MapBgfxHud::Action::CompassDrag:
         case MapBgfxHud::Action::CompassWheel:
+        case MapBgfxHud::Action::JoystickDrag:
         case MapBgfxHud::Action::None:
             break;
     }
@@ -1322,16 +1313,17 @@ void MapMonitorContainer::pushBgfxDownloadActivity()
 
 void MapMonitorContainer::setBgfxFullscreen(bool fullscreen)
 {
-#ifndef Q_OS_WASM
     if (fullscreen == this->bgfx_fullscreen_active)
         return;
     if (fullscreen && (!this->bgfx_render_surface_active || this->bgfx_surface == nullptr))
         return;
 
-    // Same reparenting as setDesktopRenderSurfaceFullscreen(), but bgfx is
-    // shut down first: reparenting destroys the embedded native surface
-    // (Wayland: the wl_surface) and a live swapchain on it is a fatal
-    // protocol error. The surface restarts once the window is exposed again.
+    // The map stack becomes its own full-screen window (desktop: on the
+    // screen; WASM: over the whole Qt screen of the page, the bgfx canvas
+    // follows the surface's geometry). bgfx is shut down first:
+    // reparenting destroys the embedded native surface (Wayland: the
+    // wl_surface) and a live swapchain on it is a fatal protocol error. The
+    // surface restarts once the window is exposed (WASM: shown) again.
     this->bgfx_surface->suspendForNativeWindowChange();
     if (fullscreen)
     {
@@ -1351,12 +1343,9 @@ void MapMonitorContainer::setBgfxFullscreen(bool fullscreen)
         this->layout->addWidget(this->map_stack);
         this->map_stack->show();
     }
-    this->bgfx_surface->setHudFullscreen(true, this->bgfx_fullscreen_active);
+    this->bgfx_surface->setHudFullscreen(this->bgfx_fullscreen_active);
     this->bgfx_surface->resumeAfterNativeWindowChange();
     this->bgfx_surface->focusNavigationInput();
-#else
-    Q_UNUSED(fullscreen)
-#endif
 }
 
 

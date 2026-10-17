@@ -79,13 +79,27 @@ public:
 
 #ifndef Q_OS_WASM
     // When mouse input arrives from an embedded native window (bgfx) rather
-    // than from this widget, the Wayland orbit pointer lock is requested on
+    // than from this widget, the Wayland pointer lock (orbit, HUD joystick) is requested on
     // that window's own wl_surface as well as on the top-level's (which of
     // the two a compositor honours differs, see MapWaylandPointerLock). Its
     // coordinates equal this widget's (same stack geometry). nullptr: the
     // top-level window only.
     void setOrbitPointerLockWindow(QWindow *window);
 #endif
+
+    // HUD pan joystick (a press on it, position in this widget's
+    // coordinates): from here the pointer is captured like the globe orbit's
+    // (hidden; Wayland pointer lock, elsewhere pinned by warping; WASM:
+    // plain moves) and its motion moves a virtual knob up to
+    // JoystickTravelPx from the centre, a reach far larger than the HUD
+    // knob's, so the small widget still takes an ergonomic hand movement.
+    // The deflection pans the map at up to JoystickMaximumSpeedPixelsPerSecond
+    // (ground under the crosshair), quadratic for fine control near the
+    // centre; releasing the left button ends it, the pan glides out.
+    void beginJoystickPan(const QPointF &position);
+    bool joystickPanActive() const;
+    static constexpr double JoystickTravelPx = 120.0;
+    static constexpr double JoystickMaximumSpeedPixelsPerSecond = 1800.0;
 
     void setEdgePanningEnabled(bool enabled);
     void setRenderSurfaceScreenCoordinateResolver(ScreenCoordinateResolver resolver);
@@ -164,13 +178,18 @@ private:
     {
         None,
         MiddleMouse,
-        CtrlMouse
+        CtrlMouse,
+        // The pan joystick shares the orbit's pointer capture
+        // (beginJoystickPan()).
+        HudJoystick
     };
 
     void beginView3dOrbit(
         const QPoint &position, const QPoint &global_position, View3dOrbitInput input);
     void endView3dOrbit(bool restore_cursor_position = true);
     void applyView3dOrbitPointerDelta(const QPoint &delta);
+    // Deflection of the joystick, |deflection| <= 1, screen directions.
+    QPointF joystickDeflection() const;
 
     void updatePointerCoordinates(const QPoint &position);
     CoordinateWGS84 withCachedTerrainAltitude(const CoordinateWGS84 &wgs) const;
@@ -186,6 +205,8 @@ private:
     QPointF mouse_pan_sensitivity_fractional_delta;
     bool view_3d_orbit_active = false;
     View3dOrbitInput view_3d_orbit_input = View3dOrbitInput::None;
+    // Virtual knob position of a joystick drag (captured pointer motion).
+    QPointF joystick_offset_px;
     QPoint view_3d_orbit_last_position;
 #ifndef Q_OS_WASM
     QPoint view_3d_orbit_last_global_position;
@@ -251,6 +272,8 @@ signals:
     void signalCoordsChangedWgs84(CoordinateWGS84 wgs);
     void signalCoordsChangedUTM(CoordinateUTM utm);
     void signalCoordsUnavailable();
+    // The pan joystick's knob moved, or its drag began / ended.
+    void joystickChanged(QPointF deflection, bool active);
 };
 
 #endif // MAP_WIDGET_H

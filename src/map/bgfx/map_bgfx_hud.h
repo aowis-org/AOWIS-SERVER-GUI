@@ -9,6 +9,7 @@
 #include <QFont>
 #include <QImage>
 #include <QPalette>
+#include <QPointF>
 #include <QSizeF>
 #include <QString>
 #include <QVector>
@@ -21,7 +22,8 @@
 //
 // Replaces the QWidget HUD that cannot sit on top of bgfx's native window:
 // crosshair, GPS position, scale bar, download activity (map tiles, terrain)
-// with cancel buttons, the 2D/3D view switch, the fullscreen button (6a) and
+// with cancel buttons, the 2D/3D view switch with the fullscreen button (6a),
+// the pan joystick top right and
 // the map legend (6b: node / link / heatmap metric combos, colour ramps with
 // value labels, hover value swatch, palette menu with flip and reset,
 // tooltips). On the globe (Phase 3 slice 5, setGlobe()): the wireframe /
@@ -78,7 +80,12 @@ public:
         // delta in px), End (value 1: it was a click, turn north).
         CompassDrag,
         // Wheel over the compass: number = notches (angle delta / 120).
-        CompassWheel
+        CompassWheel,
+        // Press on the pan joystick (phase Begin, position: the press). The
+        // drag itself belongs to the map's pointer capture (MapWidget): the
+        // HUD does not hold the press, moves and the release go on to the
+        // map, which reports the deflection back (setJoystick()).
+        JoystickDrag
     };
 
     // Continuous interactions (sliders, compass) report their course.
@@ -99,6 +106,7 @@ public:
         bool flipped = false;
         double number = 0.0;
         Phase phase = Phase::None;
+        QPointF position;
     };
 
     // The globe's camera sliders, left to right (QWidget HUD order).
@@ -263,7 +271,12 @@ public:
             || this->terrain_queued > 0 || this->tooltip_waiting
             || (this->globe.visible && this->globe.mesh_active) || this->mesh_panel_shown;
     }
-    void setFullscreen(bool available, bool active);
+    // The map is shown fullscreen: the button shows "leave fullscreen". The
+    // button is always there (first in the top-left panel).
+    void setFullscreen(bool active);
+    // Pan joystick: the knob's deflection (|deflection| <= 1, screen
+    // directions) and whether a joystick drag is running.
+    void setJoystick(const QPointF &deflection, bool active);
     // Replaces the legend content. Open popups stay open when their group
     // still exists; hiding the legend closes them.
     void setLegend(const Legend &legend);
@@ -350,6 +363,11 @@ public:
     static constexpr double SliderHeightPx = 74.0;
     // A compass press that moves less than this is a click (turn north).
     static constexpr double CompassDragThresholdPx = 4.0;
+    // Pan joystick, top right: the ring and the knob; the knob moves at most
+    // JoystickKnobTravelPx from the centre (full deflection).
+    static constexpr double JoystickDiameterPx = 76.0;
+    static constexpr double JoystickKnobDiameterPx = 26.0;
+    static constexpr double JoystickKnobTravelPx = 18.0;
 
 private:
     enum class Element
@@ -375,6 +393,7 @@ private:
         GlobeUnderground,
         GlobeSlider,
         Compass,
+        Joystick,
         // Background of an open popup: blocks what lies underneath
         // (Target::index: PopupComboList or PopupPaletteMenu).
         Popup
@@ -433,6 +452,8 @@ private:
                     int index, const Palette &palette);
     void drawCompass(MapBgfxHudCanvas *canvas, MapBgfxHudTextCache *cache, double x, double y,
                      const Palette &palette);
+    // Pan joystick, top right.
+    void joystick(MapBgfxHudCanvas *canvas, const FrameInputs &inputs, const Palette &palette);
     // Slider position 0..1 at pointer y on slider index's track.
     double sliderFraction(int index, double y) const;
 
@@ -502,8 +523,9 @@ private:
     bool two_d = true;
     bool globe_available = false;
     bool view_switch_visible = true;
-    bool fullscreen_available = false;
     bool fullscreen_active = false;
+    QPointF joystick_deflection;
+    bool joystick_active = false;
 
     // Globe controls (slice 5): state, the slider tracks of the last build,
     // the compass drag and the queued continuous commands.

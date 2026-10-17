@@ -28,8 +28,6 @@ constexpr double ButtonPaddingVerticalPx = 3.0;
 constexpr double FramePaddingPx = 6.0;
 constexpr double SegmentMinimumWidthPx = 36.0;
 // Fullscreen button: (TopControlBarHeight 62 - 8) / 2 = 27 px, padding 4.
-constexpr double FullscreenButtonExtentPx = 27.0;
-constexpr double FullscreenPaddingPx = 4.0;
 // Scale label font (QWidget HUD: pixel size 11).
 constexpr int ScaleLabelPixelSize = 11;
 
@@ -293,10 +291,15 @@ QVector<MapBgfxHud::Command> MapBgfxHud::takeCommands()
     return commands;
 }
 
-void MapBgfxHud::setFullscreen(bool available, bool active)
+void MapBgfxHud::setFullscreen(bool active)
 {
-    this->fullscreen_available = available;
     this->fullscreen_active = active;
+}
+
+void MapBgfxHud::setJoystick(const QPointF &deflection, bool active)
+{
+    this->joystick_deflection = deflection;
+    this->joystick_active = active;
 }
 
 void MapBgfxHud::setLegend(const Legend &legend)
@@ -593,74 +596,75 @@ void MapBgfxHud::buildOnce(MapBgfxHudCanvas *canvas, MapBgfxHudTextCache *cache,
             meshPanel(canvas, cache, x, MarginPx, inputs.time_s, palette);
     }
 
-    // 2D / 3D switch, top left. 3D stays disabled until the bgfx globe exists.
-    if (this->view_switch_visible)
+    // Top left, one panel: the fullscreen button, always (every map, every
+    // platform), then the 2D / 3D switch where the map has one (3D stays
+    // disabled until the bgfx globe exists) and, on the globe, the
+    // "wireframe" and "map" toggles (the QWidget HUD's check boxes).
     {
+        const double segment_height = buttonHeight(cache);
         const QString label_2d = QStringLiteral("2D");
         const QString label_3d = QStringLiteral("3D");
-        const double segment_height = buttonHeight(cache);
-        const double width_2d = std::max(SegmentMinimumWidthPx, buttonWidth(cache, label_2d));
-        const double width_3d = std::max(SegmentMinimumWidthPx, buttonWidth(cache, label_3d));
-        // On the globe: "wireframe" and "map" toggles follow (the QWidget
-        // HUD's check boxes).
         const QString label_wireframe = QStringLiteral("wireframe");
         const QString label_map = QStringLiteral("map");
-        const double width_wireframe = this->globe.visible ? buttonWidth(cache, label_wireframe) : 0.0;
-        const double width_map = this->globe.visible ? buttonWidth(cache, label_map) : 0.0;
-        const double toggles_width = this->globe.visible
-            ? ViewToggleSpacingPx + width_wireframe + ControlsSpacingPx + width_map : 0.0;
-        const MapBgfxHudRect frame{MarginPx, MarginPx,
-                                   2.0 * FramePaddingPx + width_2d + width_3d + toggles_width,
+        const double width_2d = std::max(SegmentMinimumWidthPx, buttonWidth(cache, label_2d));
+        const double width_3d = std::max(SegmentMinimumWidthPx, buttonWidth(cache, label_3d));
+        const bool toggles = this->view_switch_visible && this->globe.visible;
+        const double width_wireframe = toggles ? buttonWidth(cache, label_wireframe) : 0.0;
+        const double width_map = toggles ? buttonWidth(cache, label_map) : 0.0;
+        double content_width = segment_height;
+        if (this->view_switch_visible)
+            content_width += ViewToggleSpacingPx + width_2d + width_3d;
+        if (toggles)
+            content_width += ViewToggleSpacingPx + width_wireframe + ControlsSpacingPx + width_map;
+        const MapBgfxHudRect frame{MarginPx, MarginPx, 2.0 * FramePaddingPx + content_width,
                                    2.0 * FramePaddingPx + segment_height};
         drawPanel(canvas, frame, palette);
-        drawButton(canvas, cache,
-                   MapBgfxHudRect{frame.x + FramePaddingPx, frame.y + FramePaddingPx,
-                                  width_2d, segment_height},
-                   label_2d, Target{Element::ViewMode2d, -1, -1}, true, this->two_d, palette);
-        drawButton(canvas, cache,
-                   MapBgfxHudRect{frame.x + FramePaddingPx + width_2d, frame.y + FramePaddingPx,
-                                  width_3d, segment_height},
-                   label_3d, Target{Element::ViewMode3d, -1, -1}, this->globe_available,
-                   !this->two_d, palette);
-        if (this->globe.visible)
+        double x = frame.x + FramePaddingPx;
+        const double y = frame.y + FramePaddingPx;
+
+        // Fullscreen: a square button with the icon.
+        const MapBgfxHudRect fullscreen_button{x, y, segment_height, segment_height};
+        drawButton(canvas, cache, fullscreen_button, QString(), Target{Element::Fullscreen, -1, -1}, true,
+                   false, palette,
+                   this->fullscreen_active ? QStringLiteral("Leave the map fullscreen")
+                                           : QStringLiteral("Show the map fullscreen"));
+        const QImage &icon = this->fullscreen_active ? this->fullscreen_exit_image : this->fullscreen_image;
+        if (!icon.isNull())
         {
-            const double toggle_x = frame.x + FramePaddingPx + width_2d + width_3d + ViewToggleSpacingPx;
-            drawButton(canvas, cache,
-                       MapBgfxHudRect{toggle_x, frame.y + FramePaddingPx, width_wireframe, segment_height},
-                       label_wireframe, Target{Element::GlobeWireframe, -1, -1}, true, this->globe.wireframe,
-                       palette, QStringLiteral("Draw the 3D globe terrain mesh as a wireframe."));
-            drawButton(canvas, cache,
-                       MapBgfxHudRect{toggle_x + width_wireframe + ControlsSpacingPx, frame.y + FramePaddingPx,
-                                      width_map, segment_height},
-                       label_map, Target{Element::GlobeMapTiles, -1, -1}, true, this->globe.map_tiles, palette,
+            const double icon_extent = std::floor(segment_height - 4.0);
+            const MapBgfxHudSprite sprite = cache->image(
+                this->fullscreen_active ? QStringLiteral("fullscreen-exit") : QStringLiteral("fullscreen"),
+                icon, QSizeF(icon_extent, icon_extent));
+            canvas->sprite(snap(x + 0.5 * (segment_height - icon_extent), ratio),
+                           snap(y + 0.5 * (segment_height - icon_extent), ratio), sprite, 0xffffffffu);
+        }
+        x += segment_height;
+
+        if (this->view_switch_visible)
+        {
+            x += ViewToggleSpacingPx;
+            drawButton(canvas, cache, MapBgfxHudRect{x, y, width_2d, segment_height}, label_2d,
+                       Target{Element::ViewMode2d, -1, -1}, true, this->two_d, palette);
+            x += width_2d;
+            drawButton(canvas, cache, MapBgfxHudRect{x, y, width_3d, segment_height}, label_3d,
+                       Target{Element::ViewMode3d, -1, -1}, this->globe_available, !this->two_d, palette);
+            x += width_3d;
+        }
+        if (toggles)
+        {
+            x += ViewToggleSpacingPx;
+            drawButton(canvas, cache, MapBgfxHudRect{x, y, width_wireframe, segment_height}, label_wireframe,
+                       Target{Element::GlobeWireframe, -1, -1}, true, this->globe.wireframe, palette,
+                       QStringLiteral("Draw the 3D globe terrain mesh as a wireframe."));
+            x += width_wireframe + ControlsSpacingPx;
+            drawButton(canvas, cache, MapBgfxHudRect{x, y, width_map, segment_height}, label_map,
+                       Target{Element::GlobeMapTiles, -1, -1}, true, this->globe.map_tiles, palette,
                        QStringLiteral("Draw map tiles as textures on the 3D globe surface."));
         }
     }
 
-    // Fullscreen, top right (desktop only).
-    if (this->fullscreen_available)
-    {
-        const double frame_extent = FullscreenButtonExtentPx + 2.0 * FullscreenPaddingPx;
-        const MapBgfxHudRect frame{std::max(MarginPx, viewport_width - frame_extent - MarginPx),
-                                   MarginPx, frame_extent, frame_extent};
-        drawPanel(canvas, frame, palette);
-        const MapBgfxHudRect button{frame.x + FullscreenPaddingPx, frame.y + FullscreenPaddingPx,
-                                    FullscreenButtonExtentPx, FullscreenButtonExtentPx};
-        drawButton(canvas, cache, button, QString(), Target{Element::Fullscreen, -1, -1}, true,
-                   false, palette);
-        const QImage &icon = this->fullscreen_active ? this->fullscreen_exit_image
-                                                     : this->fullscreen_image;
-        if (!icon.isNull())
-        {
-            const double icon_extent = FullscreenButtonExtentPx - 2.0;
-            const MapBgfxHudSprite sprite = cache->image(
-                this->fullscreen_active ? QStringLiteral("fullscreen-exit")
-                                        : QStringLiteral("fullscreen"),
-                icon, QSizeF(icon_extent, icon_extent));
-            canvas->sprite(snap(button.x + 1.0, ratio), snap(button.y + 1.0, ratio), sprite,
-                           0xffffffffu);
-        }
-    }
+    // Pan joystick, top right.
+    joystick(canvas, inputs, palette);
 
     // Globe camera controls, compass and scale, bottom left (slice 5).
     globeControls(canvas, cache, inputs, palette);
@@ -845,6 +849,67 @@ void MapBgfxHud::drawCompass(MapBgfxHudCanvas *canvas, MapBgfxHudTextCache *cach
                          MapBgfxHudPoint{cx + 4.0, top + 7.0}, palette.text);
     addHitBox(dial, target, true, Cursor::PointingHand,
               QStringLiteral("Compass\nClick: animate back to north\nDrag or mouse wheel: rotate map"));
+}
+
+void MapBgfxHud::joystick(MapBgfxHudCanvas *canvas, const FrameInputs &inputs, const Palette &palette)
+{
+    // A ring with an arrow towards each side and the knob inside, shown at
+    // the deflection the map reports while a drag runs (setJoystick()).
+    const double x = std::max(MarginPx, inputs.viewport.width() - MarginPx - JoystickDiameterPx);
+    const double y = MarginPx;
+    const MapBgfxHudRect rect{x, y, JoystickDiameterPx, JoystickDiameterPx};
+    this->blocking_panels.append(rect);
+    const Target target{Element::Joystick, -1, -1};
+    const double radius = 0.5 * JoystickDiameterPx - 2.5;
+    const double cx = x + 0.5 * JoystickDiameterPx;
+    const double cy = y + 0.5 * JoystickDiameterPx;
+    canvas->fillCircle(cx, cy + 1.5, radius, qRgba(0, 0, 0, 85));
+    canvas->fillCircle(cx, cy, radius, palette.panel);
+    canvas->strokeCircle(cx, cy, radius, 1.2, palette.border);
+
+    // Arrows: the one(s) the knob leans towards in the highlight colour.
+    const double deflection_x = this->joystick_deflection.x();
+    const double deflection_y = this->joystick_deflection.y();
+    struct Arrow
+    {
+        double direction_x;
+        double direction_y;
+        double lean;
+    };
+    const Arrow arrows[4] = {{0.0, -1.0, -deflection_y}, {1.0, 0.0, deflection_x},
+                             {0.0, 1.0, deflection_y}, {-1.0, 0.0, -deflection_x}};
+    for (const Arrow &arrow : arrows)
+    {
+        const double tip = radius - 4.0;
+        const double base = radius - 11.0;
+        const double half_width = 6.0;
+        const MapBgfxHudPoint a{cx + arrow.direction_x * tip, cy + arrow.direction_y * tip};
+        const MapBgfxHudPoint b{cx + arrow.direction_x * base - arrow.direction_y * half_width,
+                                cy + arrow.direction_y * base + arrow.direction_x * half_width};
+        const MapBgfxHudPoint c{cx + arrow.direction_x * base + arrow.direction_y * half_width,
+                                cy + arrow.direction_y * base - arrow.direction_x * half_width};
+        canvas->fillTriangle(a, b, c, this->joystick_active && arrow.lean > 0.3 ? palette.highlight
+                                                                                  : palette.border);
+    }
+
+    // Knob.
+    const double knob_radius = 0.5 * JoystickKnobDiameterPx;
+    const double knob_x = cx + deflection_x * JoystickKnobTravelPx;
+    const double knob_y = cy + deflection_y * JoystickKnobTravelPx;
+    QRgb knob = palette.button;
+    if (this->joystick_active)
+        knob = darker(palette.button, 112);
+    else if (this->hovered == target)
+        knob = lighter(palette.button, 106);
+    canvas->fillCircle(knob_x, knob_y + 1.0, knob_radius, qRgba(0, 0, 0, 70));
+    canvas->fillCircle(knob_x, knob_y, knob_radius, knob);
+    canvas->strokeCircle(knob_x, knob_y, knob_radius, 1.2,
+                         this->joystick_active ? palette.highlight : palette.border);
+    canvas->strokeCircle(knob_x, knob_y, knob_radius - 5.0, 1.0, withAlpha(palette.border, 110));
+
+    addHitBox(rect, target, true, Cursor::PointingHand,
+              QStringLiteral("Pan joystick\nPress and push the mouse: the map pans in that direction,\n"
+                             "faster the further you push. Release to stop."));
 }
 
 void MapBgfxHud::globeControls(MapBgfxHudCanvas *canvas, MapBgfxHudTextCache *cache,
@@ -1851,6 +1916,18 @@ bool MapBgfxHud::mousePress(double x, double y)
             command.phase = Phase::Begin;
             this->pending_commands.append(command);
             this->press_consumed = true;
+            return true;
+        }
+        case Element::Joystick:
+        {
+            // The press starts the map's captured joystick drag
+            // (MapWidget); moves and the release are not held here.
+            Command command;
+            command.action = Action::JoystickDrag;
+            command.phase = Phase::Begin;
+            command.position = QPointF(x, y);
+            this->pending_commands.append(command);
+            this->press_consumed = false;
             return true;
         }
         case Element::Compass:

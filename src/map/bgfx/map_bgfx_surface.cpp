@@ -1110,10 +1110,16 @@ void MapBgfxSurface::setHudDownloadActivity(int tiles_active, int tiles_queued,
     this->hud.setDownloadActivity(tiles_active, tiles_queued, terrain_active, terrain_queued);
 }
 
-void MapBgfxSurface::setHudFullscreen(bool available, bool active)
+void MapBgfxSurface::setHudFullscreen(bool active)
 {
     requestRedraw();
-    this->hud.setFullscreen(available, active);
+    this->hud.setFullscreen(active);
+}
+
+void MapBgfxSurface::setHudJoystick(const QPointF &deflection, bool active)
+{
+    requestRedraw();
+    this->hud.setJoystick(deflection, active);
 }
 
 MapBgfxSurface::HudPointer MapBgfxSurface::handleHudMouseEvent(QMouseEvent *event)

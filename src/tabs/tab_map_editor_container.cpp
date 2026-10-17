@@ -166,6 +166,10 @@ MapEditorContainer::MapEditorContainer(MapModel *map_model, MapTileRepository *t
 
 MapEditorContainer::~MapEditorContainer()
 {
+    // A fullscreen map stack is its own window: back into the tab, so it
+    // goes with the container (the monitor's destructor).
+    if (this->bgfx_fullscreen_active)
+        setBgfxFullscreen(false);
 }
 
 void MapEditorContainer::showRendererStatus(const QString &text)
@@ -370,19 +374,20 @@ void MapEditorContainer::setupBgfxEditor()
     surface->setGlobeOffered(false);
     surface->setObjectName(QStringLiteral("aowis-bgfx-editor-surface"));
     this->bgfx_surface = surface;
-    // Editor HUD: crosshair, scale bar, the 2D/3D switch (3D is offered once
-    // the bgfx globe exists) and, on desktop, the fullscreen button.
+    // Editor HUD: crosshair, scale bar, the fullscreen button with the
+    // 2D/3D switch (3D is offered once the bgfx globe exists) and the pan
+    // joystick.
     surface->setHudViewSwitchVisible(true);
-#ifndef Q_OS_WASM
-    surface->setHudFullscreen(true, false);
-#else
-    // The browser build keeps the page layout (as the monitor).
-    surface->setHudFullscreen(false, false);
-#endif
     surface->setHudActionHandler([this](const MapBgfxHud::Command &command)
     {
-        handleBgfxHudAction(static_cast<int>(command.action));
+        if (command.action == MapBgfxHud::Action::JoystickDrag)
+            this->map->beginJoystickPan(command.position);
+        else
+            handleBgfxHudAction(static_cast<int>(command.action));
     });
+    // The joystick's knob follows MapWidget's captured drag.
+    connect(this->map, &MapWidget::joystickChanged, surface,
+            [surface](QPointF deflection, bool active) { surface->setHudJoystick(deflection, active); });
     // Keys stay on the canvas (editor keys, window shortcuts of the tools).
     surface->setKeyboardFocusWidget(this->map_canvas);
     // Node dots at their true positions, exactly under the overlay icons and
@@ -572,7 +577,6 @@ void MapEditorContainer::setupBgfxEditor()
         applyEditorCursor();
     });
 
-#ifndef Q_OS_WASM
     // Map fullscreen shortcut (the monitor's "Toggle map fullscreen"),
     // enabled while bgfx presents frames and no shortcut is being captured.
     // Its parent is the map stack, so only the visible map's shortcut fires.
@@ -603,7 +607,6 @@ void MapEditorContainer::setupBgfxEditor()
         if (this->bgfx_fullscreen_shortcut != nullptr)
             this->bgfx_fullscreen_shortcut->setEnabled(this->bgfx_editor_active && !active);
     });
-#endif
 
     syncRenderSurfaceNetworkSnapshot();
     connectRenderSurfaceSync();
@@ -614,13 +617,15 @@ void MapEditorContainer::setupBgfxEditor()
         this->renderer_status->hide();
         // bgfx presents the frames, so it is the only navigation clock.
         this->map->setNavigationFrameDriver(true);
-#ifndef Q_OS_WASM
-        this->map_stack_layout->setCurrentWidget(surface);
         if (this->bgfx_fullscreen_shortcut != nullptr)
         {
             this->bgfx_fullscreen_shortcut->setEnabled(
                 !guiShortcutRegistry().shortcutCaptureActive());
         }
+#ifndef Q_OS_WASM
+        this->map_stack_layout->setCurrentWidget(surface);
+        // The joystick's pointer lock (Wayland) also on the native window.
+        this->map->setOrbitPointerLockWindow(surface->nativeInputWindow());
 #else
         // The canvas widget stays on top of the Qt stack for the pointer.
         this->map_stack_layout->setCurrentWidget(this->map_canvas);
@@ -638,11 +643,12 @@ void MapEditorContainer::setupBgfxEditor()
         qWarning().noquote()
             << QStringLiteral("Editor bgfx surface failed; no map renderer is available: %1")
                    .arg(reason);
-#ifndef Q_OS_WASM
         if (this->bgfx_fullscreen_active)
             setBgfxFullscreen(false);
         if (this->bgfx_fullscreen_shortcut != nullptr)
             this->bgfx_fullscreen_shortcut->setEnabled(false);
+#ifndef Q_OS_WASM
+        this->map->setOrbitPointerLockWindow(nullptr);
 #endif
         this->bgfx_editor_active = false;
         this->bgfx_hud_cursor = Qt::ArrowCursor;
@@ -742,9 +748,7 @@ void MapEditorContainer::handleBgfxHudAction(int action)
             // Offered (enabled) only once the bgfx globe exists (Phase 3).
             break;
         case MapBgfxHud::Action::ToggleFullscreen:
-#ifndef Q_OS_WASM
             setBgfxFullscreen(!this->bgfx_fullscreen_active);
-#endif
             break;
         default:
             // Downloads and the legend are monitor-only HUD parts.
@@ -754,7 +758,6 @@ void MapEditorContainer::handleBgfxHudAction(int action)
 
 void MapEditorContainer::setBgfxFullscreen(bool fullscreen)
 {
-#ifndef Q_OS_WASM
     if (fullscreen == this->bgfx_fullscreen_active)
         return;
     if (fullscreen && (!this->bgfx_editor_active || this->bgfx_surface == nullptr))
@@ -784,20 +787,16 @@ void MapEditorContainer::setBgfxFullscreen(bool fullscreen)
         this->layout->addWidget(this->map_stack);
         this->map_stack->show();
     }
-    this->bgfx_surface->setHudFullscreen(true, this->bgfx_fullscreen_active);
+    this->bgfx_surface->setHudFullscreen(this->bgfx_fullscreen_active);
     this->bgfx_surface->resumeAfterNativeWindowChange();
     // Keys belong to the canvas (editor keys; in fullscreen also the left
     // menu's button shortcuts, see eventFilter()).
     this->map_canvas->activateWindow();
     this->map_canvas->setFocus(Qt::OtherFocusReason);
-#else
-    Q_UNUSED(fullscreen)
-#endif
 }
 
 bool MapEditorContainer::eventFilter(QObject *watched, QEvent *event)
 {
-#ifndef Q_OS_WASM
     // Closing the fullscreen map window returns the map to the tab.
     if (watched == this->map_stack && event->type() == QEvent::Close
         && this->bgfx_fullscreen_active)
@@ -806,9 +805,16 @@ bool MapEditorContainer::eventFilter(QObject *watched, QEvent *event)
         event->ignore();
         return true;
     }
-#endif
     if (watched == this->map_canvas)
     {
+        // A joystick drag's release belongs to the map only: the editor
+        // tool never saw its press (the HUD took it).
+        if (event->type() == QEvent::MouseButtonRelease && this->map->joystickPanActive())
+        {
+            this->map->handleMouseReleaseEvent(static_cast<QMouseEvent *>(event));
+            event->accept();
+            return true;
+        }
         // The HUD sits on top of the map: it sees pointer, wheel and Escape
         // first, and what it consumes never reaches the editor.
         if (routeBgfxHudEvent(event))

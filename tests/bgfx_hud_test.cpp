@@ -389,12 +389,13 @@ void testHud()
                            0.5 * ViewportHeight - 30.0, 0.5),
         "crosshair sprite is centred");
 
-    // Without downloads and fullscreen only the 2D segment is clickable; 3D is
-    // disabled until the bgfx globe exists.
+    // Without downloads the fullscreen button and the 2D segment are
+    // clickable; 3D is disabled until the bgfx globe exists.
     ActionScan scan = scanActions(&hud, 2.0);
+    hud.takeCommands();
     req(scan.found(MapBgfxHud::Action::ViewMode2d), "2D segment is clickable");
     req(!scan.found(MapBgfxHud::Action::ViewMode3d), "3D segment is disabled without a globe");
-    req(!scan.found(MapBgfxHud::Action::ToggleFullscreen), "no fullscreen button unless available");
+    req(scan.found(MapBgfxHud::Action::ToggleFullscreen), "the fullscreen button is always there");
     req(!scan.found(MapBgfxHud::Action::CancelMapTiles), "no download panel without activity");
     const QRectF segment_2d = scan.where(MapBgfxHud::Action::ViewMode2d);
     req(segment_2d.left() >= MapBgfxHud::MarginPx && segment_2d.top() >= MapBgfxHud::MarginPx
@@ -437,18 +438,66 @@ void testHud()
         "3D segment follows the 2D segment once a globe exists");
     hud.setViewMode(true, false);
 
-    // Fullscreen, top right, 35 x 35 frame.
-    hud.setFullscreen(true, false);
-    hud.build(&canvas, &cache, frameInputs(true), palette);
-    scan = scanActions(&hud, 1.0);
-    const QRectF fullscreen_button = scan.where(MapBgfxHud::Action::ToggleFullscreen);
-    req(scan.found(MapBgfxHud::Action::ToggleFullscreen), "fullscreen button is clickable");
-    req(fullscreen_button.left() >= ViewportWidth - MapBgfxHud::MarginPx - 35.0
-            && fullscreen_button.right() <= ViewportWidth - MapBgfxHud::MarginPx
-            && fullscreen_button.top() >= MapBgfxHud::MarginPx
-            && fullscreen_button.bottom() <= MapBgfxHud::MarginPx + 35.0,
-        "fullscreen button sits in the top-right frame");
-    req(std::fabs(fullscreen_button.width() - 26.0) <= 1.01, "fullscreen button is 27 px");
+    // Fullscreen: first in the top-left panel, square, before the 2D
+    // segment; also without the view switch (map editor without a globe).
+    {
+        const QRectF fullscreen_button = scan.where(MapBgfxHud::Action::ToggleFullscreen);
+        req(fullscreen_button.left() >= MapBgfxHud::MarginPx && fullscreen_button.top() >= MapBgfxHud::MarginPx
+                && fullscreen_button.right() < scan.where(MapBgfxHud::Action::ViewMode2d).left()
+                && std::fabs(fullscreen_button.width() - fullscreen_button.height()) <= 2.01,
+            "fullscreen button is the square first button of the top-left panel");
+        hud.setFullscreen(true);
+        hud.setViewSwitchVisible(false);
+        hud.build(&canvas, &cache, frameInputs(true), palette);
+        ActionScan alone = scanActions(&hud, 1.0);
+        hud.takeCommands();
+        req(alone.found(MapBgfxHud::Action::ToggleFullscreen) && !alone.found(MapBgfxHud::Action::ViewMode2d),
+            "without the view switch the fullscreen button stays");
+        req(std::fabs(alone.where(MapBgfxHud::Action::ToggleFullscreen).left() - fullscreen_button.left()) <= 1.01,
+            "the fullscreen button keeps its place");
+        hud.setViewSwitchVisible(true);
+        hud.setFullscreen(false);
+        hud.build(&canvas, &cache, frameInputs(true), palette);
+    }
+
+    // Pan joystick, top right: a press starts the map's drag (command with
+    // the press position) and is consumed, but the HUD does not hold it.
+    {
+        const double cx = ViewportWidth - MapBgfxHud::MarginPx - 0.5 * MapBgfxHud::JoystickDiameterPx;
+        const double cy = MapBgfxHud::MarginPx + 0.5 * MapBgfxHud::JoystickDiameterPx;
+        req(hud.blocksInput(cx, cy), "the joystick blocks map input");
+        req(!hud.blocksInput(cx, cy + MapBgfxHud::JoystickDiameterPx), "below the joystick is map");
+        hud.takeCommands();
+        req(hud.mousePress(cx + 3.0, cy - 2.0), "a press on the joystick is consumed");
+        const QVector<MapBgfxHud::Command> commands = hud.takeCommands();
+        req(commands.size() == 1 && commands.first().action == MapBgfxHud::Action::JoystickDrag
+                && commands.first().phase == MapBgfxHud::Phase::Begin
+                && commands.first().position == QPointF(cx + 3.0, cy - 2.0),
+            "the press starts a joystick drag at its position");
+        bool over_button = false;
+        req(!hud.mouseMove(cx + 40.0, cy + 40.0, &over_button), "the drag's moves go on to the map");
+        hud.mouseRelease(cx + 40.0, cy + 40.0, &consumed);
+        req(!consumed, "so does its release");
+        req(hud.takeCommands().isEmpty(), "the HUD sends nothing else for the drag");
+        // The knob shows the deflection the map reports.
+        const QRgb knob_border = palette.highlight;
+        hud.setJoystick(QPointF(1.0, 0.0), true);
+        hud.build(&canvas, &cache, frameInputs(true), palette);
+        // The knob's rim (highlight while dragged): vertices around the
+        // deflected centre.
+        bool knob_right = false;
+        const quint32 knob_abgr = MapBgfxHudCanvas::premultipliedAbgr(knob_border);
+        for (const MapBgfxHudVertex &vertex : canvas.vertices())
+        {
+            if (vertex.abgr != knob_abgr)
+                continue;
+            const double distance = std::hypot(vertex.x - (cx + MapBgfxHud::JoystickKnobTravelPx), vertex.y - cy);
+            knob_right = knob_right || std::fabs(distance - 0.5 * MapBgfxHud::JoystickKnobDiameterPx) <= 2.0;
+        }
+        req(knob_right, "a full deflection to the right draws the knob at its travel");
+        hud.setJoystick(QPointF(), false);
+        hud.build(&canvas, &cache, frameInputs(true), palette);
+    }
 
     // Download activity: top centre, one panel per source, tiles first.
     hud.setDownloadActivity(2, 3, 1, 0);
@@ -1037,7 +1086,10 @@ void testGlobe()
     ActionScan scan = scanActions(&hud, 4.0);
     req(!scan.found(MapBgfxHud::Action::ToggleWireframe) && !scan.found(MapBgfxHud::Action::UndergroundMode),
         "no globe controls while the globe is not shown");
-    req(hud.takeCommands().isEmpty(), "no globe commands while the globe is not shown");
+    bool globe_command = false;
+    for (const MapBgfxHud::Command &command : hud.takeCommands())
+        globe_command = globe_command || command.action != MapBgfxHud::Action::JoystickDrag;
+    req(!globe_command, "no globe commands while the globe is not shown");
 
     hud.setGlobe(globeState());
     hud.build(&canvas, &cache, frameInputs(false), palette);

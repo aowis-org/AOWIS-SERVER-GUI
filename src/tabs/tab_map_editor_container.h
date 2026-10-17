@@ -149,8 +149,8 @@ private:
     // Pointer shape of the HUD element under the pointer (buttons); wins
     // over the editor tool's cursor.
     Qt::CursorShape bgfx_hud_cursor = Qt::ArrowCursor;
-    // Map fullscreen (desktop): the HUD button and the map fullscreen
-    // shortcut, the monitor's reparenting.
+    // Map fullscreen (desktop and WASM): the HUD button and the map
+    // fullscreen shortcut, the monitor's reparenting.
     QShortcut *bgfx_fullscreen_shortcut = nullptr;
     bool bgfx_fullscreen_active = false;
     void setupBgfxEditor();
