@@ -650,12 +650,19 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
     set_tests_properties(aowis-bgfx-labels PROPERTIES
         LABELS "aowis" ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
-    # The Model owns the complete unit-conversion regression test. Its CTest
-    # entry is registered in the Model subdirectory, so assign our suite label
-    # there instead of maintaining a duplicate GUI test source.
-    set_tests_properties(aowis-model-unit-conversion
+    # The Model owns the unit-conversion regression test, but not every Model
+    # revision or build configuration registers it. Query the Model directory:
+    # if(TEST ...) only sees tests registered in the calling directory.
+    get_property(aowis_model_registered_tests
         DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/external/AOWIS-SERVER-MODEL"
-        PROPERTIES LABELS "aowis")
+        PROPERTY TESTS)
+    if("aowis-model-unit-conversion" IN_LIST aowis_model_registered_tests)
+        set_tests_properties(aowis-model-unit-conversion
+            DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/external/AOWIS-SERVER-MODEL"
+            PROPERTIES LABELS "aowis")
+    else()
+        message(STATUS "Model unit-conversion test is not registered; skipping its GUI suite label")
+    endif()
 
     # Dimension-aware ordering for the mixed-unit valve-setting table columns.
     add_executable(aowis-valve-setting-sort-policy-tests
@@ -1075,7 +1082,6 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
             aowis-bgfx-hud-tests
             aowis-bgfx-editor-overlay-tests
             aowis-bgfx-labels-tests
-            aowis-model-unit-conversion-test
             aowis-unit-cross-surface-acceptance-tests
             aowis-valve-setting-sort-policy-tests
             aowis-unit-presentation-benchmark
@@ -1104,6 +1110,9 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
             aowis-epanet-js-converter-tests
             aowis-epanet-js-integration-tests
     )
+    if(TARGET aowis-model-unit-conversion-test)
+        add_dependencies(aowis-tests aowis-model-unit-conversion-test)
+    endif()
 endif()
 
 qt_import_plugins(aowis-server-gui
