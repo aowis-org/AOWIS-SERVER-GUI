@@ -310,6 +310,11 @@ void MapBgfxGlobeNetwork::setTerrainElevationResolver(MapGlobeNetworkScene::Terr
     this->network_scene.setTerrainElevationResolver(std::move(resolver));
 }
 
+void MapBgfxGlobeNetwork::setSurfaceHeightResolver(MapGlobeNetworkScene::SurfaceHeightResolver resolver)
+{
+    this->network_scene.setSurfaceHeightResolver(std::move(resolver));
+}
+
 void MapBgfxGlobeNetwork::setUndergroundMode(MapUndergroundMode mode)
 {
     if (this->underground_mode == mode)
@@ -632,6 +637,16 @@ MapBgfxGlobeNetwork::FrameResult MapBgfxGlobeNetwork::render(bgfx::ViewId view, 
         markDirty(AllStreams);
     if (!this->network_scene.hasGeometry())
         return result;
+    // The terrain changed this frame (window, meshes): the demand points
+    // follow it before they are drawn, so they never sink into or float
+    // above the surface on screen. A geometry rebuild above sampled the
+    // current surface already.
+    if (this->draped_surface_revision != this->terrain_surface_revision)
+    {
+        this->draped_surface_revision = this->terrain_surface_revision;
+        if (this->network_scene.refreshDemandPointHeights())
+            markDirty(GeometryStream | IconStream | HighlightStream);
+    }
     // Pixel-sized chevrons (and pixel-sized 3D models) in metres at the
     // orbit distance: rebuilt only when that scale changes.
     const double reference_depth_m = std::max(1.0, camera.orbitDistanceM());

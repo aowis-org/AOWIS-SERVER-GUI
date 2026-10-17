@@ -80,6 +80,13 @@ public:
         double *elevation_m,
         double *cell_size_m)>;
 
+    // The height above the WGS84 ellipsoid of the terrain surface exactly as
+    // it is drawn (vertical exaggeration applied, at the LOD on screen);
+    // false where no relief is drawn, i.e. the surface is the ellipsoid.
+    using SurfaceHeightResolver = std::function<bool(
+        const CoordinateWGS84 &coordinate,
+        double *height_m)>;
+
     void setNetworkSnapshot(const NetworkRenderSnapshot &snapshot);
     bool setHiddenEntityUuids(const QSet<QUuid> &hidden_entity_uuids);
     void setSymbology(const MapNetworkRenderSymbology &symbology);
@@ -106,6 +113,19 @@ public:
     // always queries live repository state, so there's no need to re-set it
     // as terrain tiles load in.
     void setTerrainElevationResolver(TerrainElevationResolver resolver);
+    // Demand points have no elevation (they are not part of the EPANET
+    // model): with this resolver they are draped on the drawn terrain, the
+    // network lift above it (MapGlobeVerticalTransform::networkLiftM()), and
+    // their attachment lines run from there to the junction / pipe at its
+    // own elevation. Without one they stay at the network's fallback
+    // elevation. Set once by the renderer backend; the next geometry build
+    // uses it.
+    void setSurfaceHeightResolver(SurfaceHeightResolver resolver);
+    // The drawn terrain changed (window rebuilt, terrain meshes applied):
+    // samples the surface under every demand point again and moves the ones
+    // whose height changed (markers, icons, attachment lines, highlights) in
+    // place, without a network rebuild. True when any vertex moved.
+    bool refreshDemandPointHeights();
     // While true, rebuildNetworkGeometry() also walks each link in short
     // subdivisions, compares each subdivision's own implied elevation
     // against the resolver's terrain sample at the same point, and
@@ -203,6 +223,15 @@ private:
     void rebuildNetworkGeometry();
     void rebuildUndergroundXRayGeometry();
     QVector3D ecefPosition(const CoordinateWGS84 &coordinate, double elevation_m) const;
+    // ecefPosition() for a height already above the ellipsoid (rendered
+    // metres: exaggeration and lift applied by the caller).
+    QVector3D ecefPositionAtHeight(const CoordinateWGS84 &coordinate, double height_m) const;
+    // Rendered height of a draped demand point at its render coordinate:
+    // the drawn surface (0 m where no relief is drawn) plus the network lift.
+    double drapedHeightM(const CoordinateWGS84 &render_coordinate, double *surface_height_m) const;
+    // Moves one draped demand point (node quad, attachment line start, icon
+    // marker) to center.
+    void moveDemandPoint(quint32 render_id, int icon_marker_index, const QVector3D &center);
     void appendLinkSegment(InfrastructureEntity entity_type, quint32 render_id,
                            const QVector3D &start, const QVector3D &end);
     QVector3D linkWidthDirection(
@@ -285,6 +314,18 @@ private:
     MapGlobeVerticalTransform vertical_transform;
     double flow_direction_pixels_per_meter = 0.0;
     TerrainElevationResolver terrain_elevation_resolver;
+    SurfaceHeightResolver surface_height_resolver;
+    // Draped demand points of the current geometry (built with it): where
+    // they are sampled, the surface height they were placed on, and their
+    // icon marker (-1: none).
+    struct DrapedDemandPoint
+    {
+        quint32 render_id = 0;
+        CoordinateWGS84 render_coordinate;
+        double surface_height_m = 0.0;
+        int icon_marker_index = -1;
+    };
+    QVector<DrapedDemandPoint> draped_demand_points;
     bool underground_xray_enabled = false;
     bool use_3d_icon_models = false;
     bool node_decluttering_enabled = true;

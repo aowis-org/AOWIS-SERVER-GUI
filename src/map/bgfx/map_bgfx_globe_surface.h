@@ -123,6 +123,10 @@ public:
                        MapBgfx2dImageryGpu *imagery, const FrameInputs &inputs);
 
     bool hasPendingTerrainMeshes() const;
+    // Changes whenever the drawn terrain geometry changes (window rebuilt,
+    // terrain meshes applied, render origin rebased): what is draped on it
+    // is placed again.
+    quint64 surfaceRevision() const { return this->surface_revision; }
     void terrainMeshProgress(int *completed, int *total, bool *active) const;
     const MapGlobeSurfacePreparation &preparation() const { return this->surface_preparation; }
 
@@ -213,6 +217,7 @@ private:
     bool wireframe_upload_pending = true;
     bool window_tiles_requested = false;
     bool map_visible = true;
+    quint64 surface_revision = 1;
     QVector<TileImagery> window_imagery;
 
     // Heatmap (slice 3b).

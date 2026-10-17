@@ -439,6 +439,7 @@ MapBgfxGlobeSurface::FrameResult MapBgfxGlobeSurface::render(
     {
         this->cap_upload_pending = true;
         this->wireframe_upload_pending = true;
+        ++this->surface_revision;
     }
     if (this->surface_preparation.ensureCapsBuilt())
     {
@@ -450,6 +451,7 @@ MapBgfxGlobeSurface::FrameResult MapBgfxGlobeSurface::render(
         this->window_upload_pending = true;
         this->wireframe_upload_pending = true;
         this->window_tiles_requested = false;
+        ++this->surface_revision;
     }
     QVector<MapGlobeSurfaceVertexPatch> patches;
     if (this->surface_preparation.applyReadyTerrainMeshes(&patches))
@@ -467,6 +469,7 @@ MapBgfxGlobeSurface::FrameResult MapBgfxGlobeSurface::render(
             }
         }
         this->wireframe_upload_pending = true;
+        ++this->surface_revision;
     }
     this->surface_preparation.requestMissingTerrainTiles();
     this->surface_preparation.scheduleReadyTerrainMeshes();

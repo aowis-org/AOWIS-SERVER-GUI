@@ -167,6 +167,12 @@ MapBgfxSurface::MapBgfxSurface(MapModel *model, QWidget *parent)
     {
         return this->terrain_navigation.terrainElevationAtCoordinate(coordinate, elevation_m, cell_size_m);
     });
+    // Demand points (no elevation in the model) lie on the terrain as drawn.
+    this->globe_network.setSurfaceHeightResolver(
+        [this](const CoordinateWGS84 &coordinate, double *height_m)
+    {
+        return this->terrain_navigation.drawnSurfaceHeightAtCoordinate(coordinate, height_m);
+    });
     this->globe_network.setGroundOffsetM(this->map_model->view3dNetworkGroundOffsetM());
     this->globe_network.setVerticalExaggeration(this->map_model->view3dVerticalExaggeration());
     this->globe_network.setUndergroundMode(this->underground_mode);
@@ -1264,6 +1270,8 @@ void MapBgfxSurface::renderGlobe(const QSizeF &logical)
     // tests run against the terrain's depth).
     if (this->globe_network_ready)
     {
+        // The terrain as drawn this frame (demand points are draped on it).
+        this->globe_network.setTerrainSurfaceRevision(this->globe_surface->surfaceRevision());
         const MapBgfxGlobeNetwork::FrameResult network = this->globe_network.render(
             kMapBgfxView, this->globe_camera, viewport, this->gpu_2d_scene.iconAtlasTexture());
         this->network_frame_stats.draw_calls += network.draw_calls;

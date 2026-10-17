@@ -332,6 +332,36 @@ bool MapGlobeTerrainNavigation::terrainElevationAtCoordinate(const CoordinateWGS
     return false;
 }
 
+bool MapGlobeTerrainNavigation::drawnSurfaceHeightAtCoordinate(const CoordinateWGS84 &coordinate,
+                                                               double *height_m) const
+{
+    *height_m = 0.0;
+    if (this->surface_preparation == nullptr || !std::isfinite(coordinate.longitude_deg)
+        || !std::isfinite(coordinate.latitude_deg))
+    {
+        return false;
+    }
+    // A ray down the ellipsoid normal from above any exaggerated terrain.
+    // Geodetic height changes linearly along the normal, so the surface
+    // height is the start height minus the distance to the first (top)
+    // triangle the ray meets.
+    constexpr double HighestTerrainM = 9000.0;
+    const double start_height_m = HighestTerrainM * MapModel::MaxView3dVerticalExaggeration + 1000.0;
+    const GeoWgs84Ellipsoid::EcefPositionD ray_origin = GeoWgs84Ellipsoid::geodeticToEcefD(
+        coordinate.longitude_deg, coordinate.latitude_deg, start_height_m);
+    const GeoWgs84Ellipsoid::LocalFrame frame = GeoWgs84Ellipsoid::localFrameAtGeodetic(
+        coordinate.longitude_deg, coordinate.latitude_deg, 0.0);
+    GeoWgs84Ellipsoid::EcefPositionD intersection;
+    double distance_m = 0.0;
+    if (!this->surface_preparation->visibleTerrainRayIntersection(ray_origin, -frame.up, &intersection,
+                                                                  &distance_m))
+    {
+        return false;
+    }
+    *height_m = start_height_m - distance_m;
+    return true;
+}
+
 bool MapGlobeTerrainNavigation::cachedTerrainElevationAtCoordinate(const CoordinateWGS84 &coordinate,
                                                                    double *elevation_m) const
 {

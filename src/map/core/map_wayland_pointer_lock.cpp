@@ -1,14 +1,18 @@
 #include "map/core/map_wayland_pointer_lock.h"
 
+#include <QDebug>
 #include <QGuiApplication>
 #include <QLibrary>
 #include <QWindow>
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <memory>
 #include <utility>
+#include <vector>
 
 #ifndef AOWIS_HAS_WAYLAND_POINTER_LOCK
 #define AOWIS_HAS_WAYLAND_POINTER_LOCK 0
@@ -210,6 +214,12 @@ struct RelativePointerListener
                             int32_t, int32_t, int32_t, int32_t);
 };
 
+struct LockedPointerListener
+{
+    void (*locked)(void *, WaylandProxy *);
+    void (*unlocked)(void *, WaylandProxy *);
+};
+
 double fixedToDouble(int32_t value)
 {
     return double(value) / 256.0;
@@ -238,11 +248,23 @@ public:
     WaylandProxy *pointer_constraints = nullptr;
     WaylandProxy *relative_pointer_manager = nullptr;
     WaylandProxy *relative_pointer = nullptr;
-    WaylandProxy *locked_pointer = nullptr;
-    WaylandProxy *surface = nullptr;
     MapWaylandPointerLock::RelativeMotionHandler relative_motion_handler;
+
+    // One lock request per target surface (see the class comment). The
+    // listener data pointer must stay stable: heap-allocated entries.
+    struct SurfaceLock
+    {
+        WaylandProxy *surface = nullptr;
+        WaylandProxy *locked_pointer = nullptr;
+        QPointF restore_surface_position;
+        // The compositor activated this lock (locked event, until unlocked).
+        bool active = false;
+        // Ever activated during this orbit (cursor hint and diagnostics).
+        bool was_active = false;
+        QString description;
+    };
+    std::vector<std::unique_ptr<SurfaceLock>> surface_locks;
 #endif
-    QPointF restore_surface_position;
 
 #if AOWIS_HAS_WAYLAND_POINTER_LOCK
     bool loadWaylandClientRuntime()
@@ -408,17 +430,74 @@ public:
         }
     }
 
+    static void lockedPointerLocked(void *data, WaylandProxy *)
+    {
+        SurfaceLock *surface_lock = static_cast<SurfaceLock *>(data);
+        surface_lock->active = true;
+        surface_lock->was_active = true;
+        // Once per process: which surface's constraint this compositor
+        // honours (diagnostics for the subsurface question).
+        static bool reported = false;
+        if (!reported)
+        {
+            reported = true;
+            qInfo().noquote() << "Wayland orbit pointer lock active on the" << surface_lock->description;
+        }
+    }
+
+    static void lockedPointerUnlocked(void *data, WaylandProxy *)
+    {
+        static_cast<SurfaceLock *>(data)->active = false;
+    }
+
+    void destroySurfaceLocks(bool restore_cursor_position)
+    {
+        bool any_activated = false;
+        for (const std::unique_ptr<SurfaceLock> &surface_lock : this->surface_locks)
+        {
+            any_activated = any_activated || surface_lock->was_active;
+            // The position hint applies to the lock that is active; the
+            // commit makes it take effect (double-buffered surface state).
+            if (restore_cursor_position && surface_lock->active)
+            {
+                this->proxy_marshal_flags(
+                    surface_lock->locked_pointer,
+                    LockedPointerSetCursorPositionHintOpcode,
+                    nullptr,
+                    this->proxy_get_version(surface_lock->locked_pointer),
+                    0U,
+                    doubleToFixed(surface_lock->restore_surface_position.x()),
+                    doubleToFixed(surface_lock->restore_surface_position.y()));
+                this->proxy_marshal_flags(
+                    surface_lock->surface,
+                    SurfaceCommitOpcode,
+                    nullptr,
+                    this->proxy_get_version(surface_lock->surface),
+                    0U);
+            }
+            this->destroyProtocolObject(surface_lock->locked_pointer, LockedPointerDestroyOpcode);
+        }
+        // Once per process: a compositor that activated none of the locks
+        // (the pointer is not held; the orbit still gets relative motion
+        // while the pointer stays on the window).
+        static bool reported = false;
+        if (!this->surface_locks.empty() && !any_activated && !reported)
+        {
+            reported = true;
+            qWarning() << "Wayland orbit pointer lock was requested but not activated by the compositor";
+        }
+        this->surface_locks.clear();
+    }
+
     void shutdown()
     {
-        this->destroyProtocolObject(
-            this->locked_pointer, LockedPointerDestroyOpcode);
+        this->destroySurfaceLocks(false);
         this->destroyProtocolObject(
             this->relative_pointer, RelativePointerDestroyOpcode);
         this->destroyProtocolObject(
             this->pointer_constraints, PointerConstraintsDestroyOpcode);
         this->destroyProtocolObject(
             this->relative_pointer_manager, RelativePointerManagerDestroyOpcode);
-        this->surface = nullptr;
         this->display = nullptr;
         this->relative_motion_handler = MapWaylandPointerLock::RelativeMotionHandler();
         if (this->wayland_client_library.isLoaded())
@@ -449,13 +528,12 @@ bool MapWaylandPointerLock::isWaylandPlatform() const
 }
 
 bool MapWaylandPointerLock::lock(
-    QWindow *window,
-    const QPointF &restore_surface_position,
+    const QVector<Target> &targets,
     RelativeMotionHandler relative_motion_handler)
 {
     unlock(false);
 
-    if (!isWaylandPlatform() || window == nullptr)
+    if (!isWaylandPlatform() || targets.isEmpty())
         return false;
 
 #if AOWIS_HAS_WAYLAND_POINTER_LOCK
@@ -466,22 +544,46 @@ bool MapWaylandPointerLock::lock(
     if (wayland_application == nullptr || platform_native_interface == nullptr)
         return false;
 
-    window->create();
-
     this->d->display = reinterpret_cast<WaylandProxy *>(
         wayland_application->display());
     WaylandProxy *pointer = reinterpret_cast<WaylandProxy *>(
         wayland_application->pointer());
-    this->d->surface = reinterpret_cast<WaylandProxy *>(
-        platform_native_interface->nativeResourceForWindow(
-            QByteArrayLiteral("surface"), window));
-    if (this->d->display == nullptr || pointer == nullptr || this->d->surface == nullptr)
+    if (this->d->display == nullptr || pointer == nullptr)
         return false;
 
-    if (!this->d->ensureProtocolManagers())
+    // Target surfaces, each once.
+    for (const Target &target : targets)
+    {
+        if (target.window == nullptr)
+            continue;
+        target.window->create();
+        WaylandProxy *surface = reinterpret_cast<WaylandProxy *>(
+            platform_native_interface->nativeResourceForWindow(
+                QByteArrayLiteral("surface"), target.window));
+        if (surface == nullptr)
+            continue;
+        const bool duplicate = std::any_of(
+            this->d->surface_locks.begin(), this->d->surface_locks.end(),
+            [surface](const std::unique_ptr<Private::SurfaceLock> &surface_lock)
+            {
+                return surface_lock->surface == surface;
+            });
+        if (duplicate)
+            continue;
+        std::unique_ptr<Private::SurfaceLock> surface_lock = std::make_unique<Private::SurfaceLock>();
+        surface_lock->surface = surface;
+        surface_lock->restore_surface_position = target.restore_surface_position;
+        surface_lock->description = target.window->parent() == nullptr
+            ? QStringLiteral("top-level window surface")
+            : QStringLiteral("embedded map window surface (wl_subsurface)");
+        this->d->surface_locks.push_back(std::move(surface_lock));
+    }
+    if (this->d->surface_locks.empty() || !this->d->ensureProtocolManagers())
+    {
+        this->d->surface_locks.clear();
         return false;
+    }
 
-    this->d->restore_surface_position = restore_surface_position;
     this->d->relative_motion_handler = std::move(relative_motion_handler);
 
     // Use wl_proxy_marshal_array_flags() for constructor requests. This avoids
@@ -500,6 +602,7 @@ bool MapWaylandPointerLock::lock(
         relative_pointer_arguments);
     if (this->d->relative_pointer == nullptr)
     {
+        this->d->surface_locks.clear();
         this->d->relative_motion_handler = RelativeMotionHandler();
         return false;
     }
@@ -514,24 +617,43 @@ bool MapWaylandPointerLock::lock(
     {
         this->d->destroyProtocolObject(
             this->d->relative_pointer, RelativePointerDestroyOpcode);
+        this->d->surface_locks.clear();
         this->d->relative_motion_handler = RelativeMotionHandler();
         return false;
     }
 
-    WaylandArgument lock_pointer_arguments[5] = {};
-    lock_pointer_arguments[0].o = nullptr;
-    lock_pointer_arguments[1].o = this->d->surface;
-    lock_pointer_arguments[2].o = pointer;
-    lock_pointer_arguments[3].o = nullptr;
-    lock_pointer_arguments[4].u = PointerConstraintLifetimePersistent;
-    this->d->locked_pointer = this->d->proxy_marshal_array_flags(
-        this->d->pointer_constraints,
-        PointerConstraintsLockPointerOpcode,
-        &LockedPointerInterface,
-        this->d->proxy_get_version(this->d->pointer_constraints),
-        0U,
-        lock_pointer_arguments);
-    if (this->d->locked_pointer == nullptr)
+    static LockedPointerListener locked_pointer_listener = {
+        &Private::lockedPointerLocked,
+        &Private::lockedPointerUnlocked
+    };
+    for (std::size_t index = 0; index < this->d->surface_locks.size();)
+    {
+        Private::SurfaceLock *surface_lock = this->d->surface_locks[index].get();
+        WaylandArgument lock_pointer_arguments[5] = {};
+        lock_pointer_arguments[0].o = nullptr;
+        lock_pointer_arguments[1].o = surface_lock->surface;
+        lock_pointer_arguments[2].o = pointer;
+        lock_pointer_arguments[3].o = nullptr;
+        lock_pointer_arguments[4].u = PointerConstraintLifetimePersistent;
+        surface_lock->locked_pointer = this->d->proxy_marshal_array_flags(
+            this->d->pointer_constraints,
+            PointerConstraintsLockPointerOpcode,
+            &LockedPointerInterface,
+            this->d->proxy_get_version(this->d->pointer_constraints),
+            0U,
+            lock_pointer_arguments);
+        if (surface_lock->locked_pointer == nullptr)
+        {
+            this->d->surface_locks.erase(this->d->surface_locks.begin() + std::ptrdiff_t(index));
+            continue;
+        }
+        this->d->proxy_add_listener(
+            surface_lock->locked_pointer,
+            reinterpret_cast<void (**)(void)>(&locked_pointer_listener),
+            surface_lock);
+        ++index;
+    }
+    if (this->d->surface_locks.empty())
     {
         this->d->destroyProtocolObject(
             this->d->relative_pointer, RelativePointerDestroyOpcode);
@@ -541,7 +663,6 @@ bool MapWaylandPointerLock::lock(
 
     return true;
 #else
-    Q_UNUSED(restore_surface_position)
     Q_UNUSED(relative_motion_handler)
     return false;
 #endif
@@ -550,35 +671,10 @@ bool MapWaylandPointerLock::lock(
 void MapWaylandPointerLock::unlock(bool restore_cursor_position)
 {
 #if AOWIS_HAS_WAYLAND_POINTER_LOCK
-    if (this->d->locked_pointer != nullptr)
-    {
-        if (restore_cursor_position && this->d->surface != nullptr)
-        {
-            this->d->proxy_marshal_flags(
-                this->d->locked_pointer,
-                LockedPointerSetCursorPositionHintOpcode,
-                nullptr,
-                this->d->proxy_get_version(this->d->locked_pointer),
-                0U,
-                doubleToFixed(this->d->restore_surface_position.x()),
-                doubleToFixed(this->d->restore_surface_position.y()));
-
-            this->d->proxy_marshal_flags(
-                this->d->surface,
-                SurfaceCommitOpcode,
-                nullptr,
-                this->d->proxy_get_version(this->d->surface),
-                0U);
-        }
-
-        this->d->destroyProtocolObject(
-            this->d->locked_pointer, LockedPointerDestroyOpcode);
-    }
-
+    this->d->destroySurfaceLocks(restore_cursor_position);
     this->d->destroyProtocolObject(
         this->d->relative_pointer, RelativePointerDestroyOpcode);
     this->d->relative_motion_handler = RelativeMotionHandler();
-    this->d->surface = nullptr;
 #else
     Q_UNUSED(restore_cursor_position)
 #endif
@@ -587,7 +683,7 @@ void MapWaylandPointerLock::unlock(bool restore_cursor_position)
 bool MapWaylandPointerLock::isLocked() const
 {
 #if AOWIS_HAS_WAYLAND_POINTER_LOCK
-    return this->d->locked_pointer != nullptr;
+    return !this->d->surface_locks.empty();
 #else
     return false;
 #endif

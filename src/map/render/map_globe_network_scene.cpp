@@ -364,6 +364,93 @@ void MapGlobeNetworkScene::setTerrainElevationResolver(TerrainElevationResolver 
     this->terrain_elevation_resolver = std::move(resolver);
 }
 
+void MapGlobeNetworkScene::setSurfaceHeightResolver(SurfaceHeightResolver resolver)
+{
+    this->surface_height_resolver = std::move(resolver);
+}
+
+double MapGlobeNetworkScene::drapedHeightM(
+    const CoordinateWGS84 &render_coordinate, double *surface_height_m) const
+{
+    // No relief drawn there (not loaded yet, outside the terrain window):
+    // the drawn surface is the ellipsoid itself.
+    double height_m = 0.0;
+    if (!this->surface_height_resolver(render_coordinate, &height_m) || !std::isfinite(height_m))
+        height_m = 0.0;
+    *surface_height_m = height_m;
+    // The same lift as the rest of the network above coincident terrain.
+    return height_m + this->vertical_transform.networkLiftM();
+}
+
+void MapGlobeNetworkScene::moveDemandPoint(
+    quint32 render_id, int icon_marker_index, const QVector3D &center)
+{
+    const quint64 key = entityRenderKey(InfrastructureEntity::DemandPoint, render_id);
+    const QHash<quint64, QVector<int>>::const_iterator node_indices =
+        this->node_vertex_indices_by_entity.constFind(key);
+    if (node_indices != this->node_vertex_indices_by_entity.cend())
+    {
+        for (int vertex_index : node_indices.value())
+        {
+            MapNetworkNodeVertex &vertex = this->node_vertices[vertex_index];
+            vertex.center_x = center.x();
+            vertex.center_y = center.y();
+            vertex.center_z = center.z();
+        }
+    }
+    // The demand point's only link segment is its attachment line, which
+    // starts at the demand point; its end stays on the junction / pipe.
+    const QHash<quint64, QVector<int>>::const_iterator link_indices =
+        this->link_vertex_indices_by_entity.constFind(key);
+    if (link_indices != this->link_vertex_indices_by_entity.cend() && !link_indices.value().isEmpty())
+    {
+        const MapNetworkLinkVertex &first = this->link_vertices.at(link_indices.value().first());
+        const QVector3D end(first.end_x, first.end_y, first.end_z);
+        const QVector3D width_direction = linkWidthDirection(center, end);
+        for (int vertex_index : link_indices.value())
+        {
+            MapNetworkLinkVertex &vertex = this->link_vertices[vertex_index];
+            vertex.start_x = center.x();
+            vertex.start_y = center.y();
+            vertex.start_z = center.z();
+            vertex.width_direction_x = width_direction.x();
+            vertex.width_direction_y = width_direction.y();
+            vertex.width_direction_z = width_direction.z();
+        }
+    }
+    if (icon_marker_index >= 0 && icon_marker_index < this->icon_markers.size())
+        this->icon_markers[icon_marker_index].center = center;
+}
+
+bool MapGlobeNetworkScene::refreshDemandPointHeights()
+{
+    if (!this->surface_height_resolver || this->draped_demand_points.isEmpty())
+        return false;
+
+    // Below 5 cm nothing visible moves (2 m network lift; the drawn-surface
+    // samples carry float noise of the camera-relative terrain vertices).
+    constexpr double HeightToleranceM = 0.05;
+    bool moved = false;
+    for (DrapedDemandPoint &point : this->draped_demand_points)
+    {
+        double surface_height_m = 0.0;
+        const double height_m = drapedHeightM(point.render_coordinate, &surface_height_m);
+        if (std::abs(surface_height_m - point.surface_height_m) < HeightToleranceM)
+            continue;
+        point.surface_height_m = surface_height_m;
+        moveDemandPoint(point.render_id, point.icon_marker_index,
+                        ecefPositionAtHeight(point.render_coordinate, height_m));
+        moved = true;
+    }
+    if (moved)
+    {
+        // Icons and highlights are copies of the moved vertices.
+        rebuildIcons();
+        rebuildHighlights();
+    }
+    return moved;
+}
+
 bool MapGlobeNetworkScene::setRenderOriginEcef(
     const GeoWgs84Ellipsoid::EcefPositionD &origin_ecef)
 {
@@ -581,8 +668,12 @@ QVector3D MapGlobeNetworkScene::ecefPosition(
     // the very first frames of a session resolves itself once relief
     // arrives without any
     // equivalent synchronization dance.
-    const double height_m = this->vertical_transform.networkHeightM(elevation_m);
+    return ecefPositionAtHeight(coordinate, this->vertical_transform.networkHeightM(elevation_m));
+}
 
+QVector3D MapGlobeNetworkScene::ecefPositionAtHeight(
+    const CoordinateWGS84 &coordinate, double height_m) const
+{
     // Computed in double (geodeticToEcefD(), not geodeticToEcef()) and
     // subtracted against the retained network ECEF anchor -- also double -- before ever
     // narrowing to the QVector3D (float32) this function returns. Both
@@ -624,6 +715,7 @@ void MapGlobeNetworkScene::rebuildNetworkGeometry()
     this->junction_markers.clear();
     this->link_paths.clear();
     this->underground_link_vertices.clear();
+    this->draped_demand_points.clear();
     this->entity_keys_by_uuid.clear();
     this->link_vertex_indices_by_entity.clear();
     this->node_vertex_indices_by_entity.clear();
@@ -715,18 +807,38 @@ void MapGlobeNetworkScene::rebuildNetworkGeometry()
             ++node_quad_count;
     }
     this->node_vertices.reserve(node_quad_count * 6);
+    // Draped demand point positions for their attachment lines below.
+    QHash<quint32, QVector3D> draped_demand_point_centers;
     for (const PreparedNode &prepared : prepared_nodes)
     {
         const NetworkRenderNode &node = *prepared.node;
         const CoordinateWGS84 render_coordinate = coordinateWithDeclutterOffset(
             node.coordinate_wgs84, this->node_declutter_offsets_m.value(node.render_id));
-        const QVector3D center = ecefPosition(render_coordinate, prepared.elevation_m);
+        // Demand points lie on the drawn terrain (setSurfaceHeightResolver()).
+        const bool draped = node.entity_type == InfrastructureEntity::DemandPoint
+            && this->surface_height_resolver;
+        DrapedDemandPoint draped_point;
+        QVector3D center;
+        if (draped)
+        {
+            draped_point.render_id = node.render_id;
+            draped_point.render_coordinate = render_coordinate;
+            center = ecefPositionAtHeight(
+                render_coordinate, drapedHeightM(render_coordinate, &draped_point.surface_height_m));
+            draped_demand_point_centers.insert(node.render_id, center);
+        }
+        else
+        {
+            center = ecefPosition(render_coordinate, prepared.elevation_m);
+        }
         this->entity_keys_by_uuid.insert(
             node.uuid, entityRenderKey(node.entity_type, node.render_id));
         appendNode(node.entity_type, node.render_id, center);
 
         if (mapHasIcon(node.entity_type))
         {
+            if (draped)
+                draped_point.icon_marker_index = int(this->icon_markers.size());
             IconMarker marker;
             marker.entity_type = node.entity_type;
             marker.render_id = node.render_id;
@@ -741,6 +853,8 @@ void MapGlobeNetworkScene::rebuildNetworkGeometry()
             marker.center = center;
             this->junction_markers.append(marker);
         }
+        if (draped)
+            this->draped_demand_points.append(draped_point);
     }
 
     qsizetype segment_count = 0;
@@ -901,13 +1015,26 @@ void MapGlobeNetworkScene::rebuildNetworkGeometry()
             continue;
         }
 
-        const CoordinateWGS84 demand_point_render_coordinate = coordinateWithDeclutterOffset(
-            attachment.demand_point_coordinate_wgs84,
-            this->node_declutter_offsets_m.value(attachment.demand_point_render_id));
-        const QVector3D start = ecefPosition(
-            demand_point_render_coordinate, this->fallback_elevation_m);
-        const QVector3D end = ecefPosition(
-            attachment.attachment_coordinate_wgs84, this->fallback_elevation_m);
+        // From the demand point (draped on the terrain, or at the fallback
+        // elevation without a surface resolver) to the junction / pipe at
+        // its own elevation.
+        const QHash<quint32, QVector3D>::const_iterator draped_center =
+            draped_demand_point_centers.constFind(attachment.demand_point_render_id);
+        QVector3D start;
+        if (draped_center != draped_demand_point_centers.cend())
+        {
+            start = draped_center.value();
+        }
+        else
+        {
+            const CoordinateWGS84 demand_point_render_coordinate = coordinateWithDeclutterOffset(
+                attachment.demand_point_coordinate_wgs84,
+                this->node_declutter_offsets_m.value(attachment.demand_point_render_id));
+            start = ecefPosition(demand_point_render_coordinate, this->fallback_elevation_m);
+        }
+        const double attachment_elevation_m = std::isfinite(attachment.attachment_elevation_m)
+            ? attachment.attachment_elevation_m : this->fallback_elevation_m;
+        const QVector3D end = ecefPosition(attachment.attachment_coordinate_wgs84, attachment_elevation_m);
         const qsizetype first_vertex = this->link_vertices.size();
         appendLinkSegment(
             InfrastructureEntity::DemandPoint, attachment.demand_point_render_id,

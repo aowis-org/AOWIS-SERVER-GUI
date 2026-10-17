@@ -1015,6 +1015,25 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
     set_tests_properties(aowis-map-globe-retained-origin PROPERTIES
         LABELS "aowis" ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+    # Demand points (no elevation in the model) lie on the drawn globe
+    # terrain: bare ellipsoid, relief, in-place moves without a network
+    # rebuild, attachment lines ending at the network's elevation.
+    add_executable(aowis-map-globe-demand-drape-tests
+        tests/map_globe_demand_drape_test.cpp
+        src/map/render/map_globe_network_scene.cpp
+        src/map/render/map_icon_atlas.cpp
+        src/map/render/map_node_declutter.cpp
+        src/geo/geo_wgs84_ellipsoid.cpp)
+    target_include_directories(aowis-map-globe-demand-drape-tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/external/AOWIS-SERVER-MODEL/include)
+    target_link_libraries(aowis-map-globe-demand-drape-tests PRIVATE
+        Qt6::Core Qt6::Gui AOWIS::ServerModel GeographicLib_STATIC)
+    add_test(NAME aowis-map-globe-demand-drape
+        COMMAND aowis-map-globe-demand-drape-tests)
+    set_tests_properties(aowis-map-globe-demand-drape PROPERTIES
+        LABELS "aowis" ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
     # End-to-end Qt presentation binding across an editor, a virtualized table,
     # map HUD/legend formatters and simulation readouts. This is headless
     # cross-surface coverage, not a GPU/solver production renderer benchmark.
@@ -1249,6 +1268,7 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
             aowis-map-zoom-animation-tests
             aowis-map-retained-network-scene-tests
             aowis-map-globe-retained-origin-tests
+            aowis-map-globe-demand-drape-tests
             aowis-unit-model-header-authority-tests
             aowis-emitter-coefficient-binding-tests
             aowis-emitter-numeric-spin-box-tests

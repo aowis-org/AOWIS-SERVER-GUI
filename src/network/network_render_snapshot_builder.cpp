@@ -5,6 +5,8 @@
 #include <QVector>
 
 #include <cmath>
+#include <functional>
+#include <limits>
 #include <optional>
 
 namespace
@@ -241,10 +243,22 @@ NetworkRenderSnapshot buildNetworkRenderSnapshot(const NetworkHydraulic &network
     for (const HydraulicLinkPipe &pipe : network.links_pipes)
         pipes_by_uuid.insert(pipe.uuid, &pipe);
 
+    // Elevation of a connection node (junction, reservoir, tank); NaN when
+    // it is not in the snapshot.
+    const std::function<double(const QUuid &)> node_elevation =
+        [&snapshot, &node_indices](const QUuid &uuid)
+    {
+        const QHash<QUuid, qsizetype>::const_iterator iterator = node_indices.constFind(uuid);
+        return iterator != node_indices.cend()
+            ? snapshot.nodes.at(iterator.value()).elevation_m
+            : std::numeric_limits<double>::quiet_NaN();
+    };
+
     snapshot.demand_point_attachments.reserve(network.demand_points.size());
     for (const HydraulicDemandPoint &demand_point : network.demand_points)
     {
         CoordinateWGS84 attachment_coordinate;
+        double attachment_elevation_m = std::numeric_limits<double>::quiet_NaN();
         bool attachment_valid = false;
         if (demand_point.attachment.type == HydraulicDemandPointAttachmentType::Junction)
         {
@@ -253,6 +267,7 @@ NetworkRenderSnapshot buildNetworkRenderSnapshot(const NetworkHydraulic &network
             if (iterator != connection_node_coordinates.cend())
             {
                 attachment_coordinate = iterator.value();
+                attachment_elevation_m = node_elevation(demand_point.attachment.junction_uuid);
                 attachment_valid = true;
             }
         }
@@ -268,6 +283,13 @@ NetworkRenderSnapshot buildNetworkRenderSnapshot(const NetworkHydraulic &network
                 if (coordinate.has_value())
                 {
                     attachment_coordinate = coordinate.value();
+                    // pipe_position is the fraction of the pipe's length,
+                    // which is also how the link's elevations interpolate
+                    // between its end nodes (appendNetworkRenderLink()).
+                    const double elevation_from_m = node_elevation(pipe_iterator.value()->node_uuid_from);
+                    const double elevation_to_m = node_elevation(pipe_iterator.value()->node_uuid_to);
+                    attachment_elevation_m = elevation_from_m
+                        + (elevation_to_m - elevation_from_m) * demand_point.attachment.pipe_position;
                     attachment_valid = true;
                 }
             }
@@ -281,6 +303,7 @@ NetworkRenderSnapshot buildNetworkRenderSnapshot(const NetworkHydraulic &network
         attachment.demand_point_uuid = demand_point.uuid;
         attachment.demand_point_coordinate_wgs84 = demand_point.coordinate_wgs84;
         attachment.attachment_coordinate_wgs84 = attachment_coordinate;
+        attachment.attachment_elevation_m = attachment_elevation_m;
         if (attachment.demand_point_render_id != 0)
             snapshot.demand_point_attachments.append(attachment);
     }

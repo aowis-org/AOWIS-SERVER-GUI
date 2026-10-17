@@ -6,6 +6,8 @@
 #include <QUuid>
 #include <QtGlobal>
 
+#include <limits>
+
 #include <aowis/model/gis.h>
 
 #include "common/_enums_structs.h"
@@ -43,6 +45,10 @@ struct NetworkRenderDemandPointAttachment
     QUuid demand_point_uuid;
     CoordinateWGS84 demand_point_coordinate_wgs84;
     CoordinateWGS84 attachment_coordinate_wgs84;
+    // Elevation of the network at the attachment: the junction's, or the
+    // pipe's at the attachment position (interpolated between its end nodes
+    // along its length, as NetworkRenderLink::elevations_m). NaN: unknown.
+    double attachment_elevation_m = std::numeric_limits<double>::quiet_NaN();
 };
 
 struct NetworkRenderSnapshot

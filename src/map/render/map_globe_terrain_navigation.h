@@ -51,6 +51,11 @@ public:
                                       double *elevation_m, double *cell_size_m) const;
     bool cachedTerrainElevationAtCoordinate(const CoordinateWGS84 &coordinate,
                                             double *elevation_m) const;
+    // Height above the ellipsoid of the terrain surface as drawn (the
+    // retained DEM meshes of the window, vertical exaggeration applied) at
+    // coordinate; false (height 0) where no relief mesh is drawn, i.e. the
+    // surface is the ellipsoid. Drapes the demand points on the terrain.
+    bool drawnSurfaceHeightAtCoordinate(const CoordinateWGS84 &coordinate, double *height_m) const;
     // Ray from the screen position (logical pixels, top-left origin) against
     // the rendered DEM meshes, else the ellipsoid. false: the ray misses.
     bool surfaceRayHitAtScreen(const QPointF &screen_position, MapGlobeSurfaceHit *hit) const;

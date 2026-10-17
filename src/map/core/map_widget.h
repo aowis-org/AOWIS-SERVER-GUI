@@ -74,10 +74,11 @@ public:
 
 #ifndef Q_OS_WASM
     // When mouse input arrives from an embedded native window (bgfx) rather
-    // than from this widget, the Wayland orbit pointer lock must target that
-    // window's own wl_surface: it, not the top-level, has pointer focus.
-    // Its coordinates equal this widget's (same stack geometry). nullptr
-    // restores the top-level window.
+    // than from this widget, the Wayland orbit pointer lock is requested on
+    // that window's own wl_surface as well as on the top-level's (which of
+    // the two a compositor honours differs, see MapWaylandPointerLock). Its
+    // coordinates equal this widget's (same stack geometry). nullptr: the
+    // top-level window only.
     void setOrbitPointerLockWindow(QWindow *window);
 #endif
 

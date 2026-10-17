@@ -412,6 +412,15 @@ Slice 3, the network on the globe (`map_bgfx_globe_network.*`):
   terrain occlude them. Premultiplied blending; tank/reservoir models with
   back-face culling. The chevrons keep their 8 px pull towards the eye but
   have no extra depth bias (bgfx has no depth-bias state).
+* Demand points have no elevation (not part of the EPANET model): they lie
+  on the terrain exactly as it is drawn, the network lift above it
+  (`MapGlobeNetworkScene::setSurfaceHeightResolver()`, a vertical ray
+  against the retained DEM meshes; the bare ellipsoid where no relief is
+  drawn yet). Whenever the drawn terrain changes (window, applied meshes:
+  `MapBgfxGlobeSurface::surfaceRevision()`) they are moved in place before
+  the network is drawn in that same frame, without a network rebuild. Their
+  attachment lines end on the junction / pipe at its own elevation
+  (`NetworkRenderDemandPointAttachment::attachment_elevation_m`).
 * The underground mode is set through `setUndergroundMode()` (default
   X-Ray) from the globe HUD's buttons (slice 5). X-Ray
   classification runs 500 ms after the last camera change or DEM arrival,
@@ -533,8 +542,15 @@ warns and runs on OpenGL.
 Desktop bgfx runs in an embedded native `QWindow`, which receives all input
 over the map. Keys, wheel and mouse are forwarded to MapWidget (mouse via
 `QCoreApplication::sendEvent`, so the container's click-selection filter still
-runs). The Wayland orbit pointer lock targets the native window's own
-`wl_surface` (`MapWidget::setOrbitPointerLockWindow`). Frames are not rendered
+runs). Orbit (Ctrl or middle button) keeps going at the screen edges as on
+QRhi: X11, Windows and macOS warp the hidden cursor back to the orbit start;
+Wayland locks the pointer and reads relative motion
+(`MapWaylandPointerLock`). The lock is requested on the top-level window's
+`wl_surface` and on the native map window's own (a `wl_subsurface`,
+`MapWidget::setOrbitPointerLockWindow`), because compositors differ in which
+of the two they honour while the pointer is over a subsurface (KWin and
+older mutter only the main surface). The log names the surface the
+compositor activated, once per run, or warns when it activated none. Frames are not rendered
 while the native window is unexposed, so the vsync swap cannot block the GUI
 thread on a hidden Wayland surface.
 

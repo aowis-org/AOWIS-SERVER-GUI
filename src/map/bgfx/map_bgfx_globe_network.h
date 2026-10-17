@@ -67,6 +67,13 @@ public:
     void setVerticalExaggeration(double exaggeration);
     // DEM lookup for the X-Ray classification (MapGlobeTerrainNavigation).
     void setTerrainElevationResolver(MapGlobeNetworkScene::TerrainElevationResolver resolver);
+    // Height of the drawn terrain surface (MapGlobeTerrainNavigation): the
+    // demand points, which have no elevation, are draped on it.
+    void setSurfaceHeightResolver(MapGlobeNetworkScene::SurfaceHeightResolver resolver);
+    // Revision of the drawn terrain (MapBgfxGlobeSurface::surfaceRevision()),
+    // set before render(): when it changed, render() moves the demand points
+    // onto the terrain as it is drawn in that same frame.
+    void setTerrainSurfaceRevision(quint64 revision) { this->terrain_surface_revision = revision; }
     void setUndergroundMode(MapUndergroundMode mode);
     MapUndergroundMode undergroundMode() const { return this->underground_mode; }
     // X-Ray: classifies the network against the DEM cached now (after
@@ -199,6 +206,9 @@ private:
     // A link thickness change rebuilds the scene's geometry when the network
     // has demand point attachments.
     bool has_attachments = false;
+    // The drawn terrain the demand points were last draped on.
+    quint64 terrain_surface_revision = 0;
+    quint64 draped_surface_revision = 0;
     quint32 dirty_streams = AllStreams;
 
     bgfx::VertexLayout link_layout;

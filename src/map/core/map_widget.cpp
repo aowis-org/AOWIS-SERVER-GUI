@@ -1136,26 +1136,30 @@ void MapWidget::beginView3dOrbit(
     bool wayland_pointer_locked = false;
     if (wayland_platform)
     {
+        // The top-level window's surface, as the QRhi map always did, plus
+        // the embedded native map window (bgfx, a wl_subsurface that has
+        // the pointer focus) when there is one: compositors differ in which
+        // of the two constraints they honour, see MapWaylandPointerLock.
+        QVector<MapWaylandPointerLock::Target> lock_targets;
         QWidget *top_level_widget = window();
-        QWindow *top_level_window = top_level_widget != nullptr
-            ? top_level_widget->windowHandle()
-            : nullptr;
-        QPoint restore_surface_position = position;
-        if (top_level_widget != nullptr)
-            restore_surface_position = mapTo(top_level_widget, position);
-
-        QWindow *lock_window = top_level_window;
+        if (top_level_widget != nullptr && top_level_widget->windowHandle() != nullptr)
+        {
+            MapWaylandPointerLock::Target top_level;
+            top_level.window = top_level_widget->windowHandle();
+            top_level.restore_surface_position = QPointF(mapTo(top_level_widget, position));
+            lock_targets.append(top_level);
+        }
         if (!this->orbit_pointer_lock_window.isNull())
         {
-            // Embedded native window (bgfx) owns pointer focus; its local
-            // coordinates are this widget's coordinates.
-            lock_window = this->orbit_pointer_lock_window.data();
-            restore_surface_position = position;
+            // Its local coordinates are this widget's (same stack geometry).
+            MapWaylandPointerLock::Target embedded;
+            embedded.window = this->orbit_pointer_lock_window.data();
+            embedded.restore_surface_position = QPointF(position);
+            lock_targets.append(embedded);
         }
 
         wayland_pointer_locked = this->view_3d_orbit_wayland_pointer_lock.lock(
-            lock_window,
-            QPointF(restore_surface_position),
+            lock_targets,
             [this](const QPointF &delta)
             {
                 if (!this->view_3d_orbit_active
