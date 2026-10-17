@@ -596,7 +596,7 @@ void MapGlobeSurfacePreparation::rebuildWindow(
         tile.zoom = leaf.zoom;
         if (this->map_model != nullptr)
         {
-            tile.imagery_key = this->map_model->tileCacheKeyAtZoom(
+            tile.imagery_key = this->map_model->tileCacheKey(
                 leaf.tile_x, leaf.tile_y, leaf.zoom);
         }
 

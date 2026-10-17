@@ -1,6 +1,7 @@
 #!/bin/sh
 # Post-migration cleanup (2026-10-17): deletes what a patch zip cannot.
 # Run once from anywhere after extracting; the script deletes itself.
+# Running it again is harmless (everything is already gone).
 set -e
 cd "$(dirname "$0")"
 # The bgfx stacking probe (development tool of the migration).
@@ -19,4 +20,5 @@ rm -rf src/lib
 rm -f src/simulation/simulation_diagnostics_dialog.cpp src/simulation/simulation_diagnostics_dialog.h \
       src/simulation/simulation_diagnostic.h
 echo "Cleanup files removed."
-rm -f "$0"
+# After the cd above, "$0" may be a path relative to the old directory.
+rm -f "$(basename "$0")"

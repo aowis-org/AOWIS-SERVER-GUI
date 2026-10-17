@@ -11,9 +11,10 @@
 // camera. No Qt, no bgfx: unit-tested in tests/bgfx_2d_imagery_layout_test.cpp.
 //
 // * The imagery level is derived from the continuous camera zoom (rounded,
-//   like MapModel's tile LOD). It never feeds back into the camera, and the
-//   quads are positioned with the continuous scale, so zooming between two
-//   levels stretches the tiles smoothly instead of stepping.
+//   imageryZoomFor(); the camera has no integer zoom). It never feeds back
+//   into the camera, and the quads are positioned with the continuous
+//   scale, so zooming between two levels stretches the tiles smoothly
+//   instead of stepping.
 // * Quads are computed per frame on the CPU in double precision relative to
 //   the camera centre, so there is no float precision issue at zoom 19+.
 // * A tile that is not available yet is covered by (1) the nearest

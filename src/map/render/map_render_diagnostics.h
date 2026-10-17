@@ -23,8 +23,7 @@ namespace MapRenderDiagnostics
 enum class Counter : size_t
 {
     // MapModel camera changes.
-    ZoomBoundary,
-    FractionalZoom,
+    ZoomChange,
     CenterChange,
     // Presented bgfx frames; the duration is the CPU time of building and
     // submitting one (bgfx::frame() included), not GPU time.
@@ -37,7 +36,7 @@ enum class Counter : size_t
 };
 
 inline constexpr std::array<const char *, static_cast<std::size_t>(Counter::Count)> CounterNames{{
-    "zoom_boundary", "fractional_zoom", "center_change", "frames",
+    "zoom_change", "center_change", "frames",
     "demand_attachments_prepared", "globe_geometry_rebuilt", "globe_flow_rebuilt"
 }};
 

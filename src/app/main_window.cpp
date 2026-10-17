@@ -302,11 +302,7 @@ MainWindow::MainWindow(QWidget *parent)
     connect(this->map_model_editor, &MapModel::providerChanged, map_edit_nav, &MapNavigationWidget::mapProviderChange);
     connect(this->map_model_monitor, &MapModel::providerChanged, map_mon_nav, &MapNavigationWidget::mapProviderChange);
 
-    connect(this->map_model_editor, &MapModel::zoomChanged, this, [this](int)
-    {
-        this->syncMapMovement(this->map_edit, this->map_mon);
-    });
-    connect(this->map_model_editor, &MapModel::view2dContinuousScaleChanged,
+    connect(this->map_model_editor, &MapModel::view2dContinuousZoomChanged,
             this, [this](double)
     {
         this->syncMapMovement(this->map_edit, this->map_mon);
@@ -315,14 +311,7 @@ MainWindow::MainWindow(QWidget *parent)
     {
         this->syncMapMovement(this->map_edit, this->map_mon);
     });
-    connect(this->map_model_monitor, &MapModel::zoomChanged, this, [this](int)
-    {
-        if (this->map_model_monitor->viewMode() != MapViewMode::Globe)
-            this->syncMapMovement(this->map_mon, this->map_edit);
-        if (this->map_model_monitor->viewMode() == MapViewMode::TwoD)
-            this->syncMonitorViewModesFromActive();
-    });
-    connect(this->map_model_monitor, &MapModel::view2dContinuousScaleChanged,
+    connect(this->map_model_monitor, &MapModel::view2dContinuousZoomChanged,
             this, [this](double)
     {
         if (this->map_model_monitor->viewMode() != MapViewMode::Globe)

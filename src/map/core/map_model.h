@@ -99,12 +99,10 @@ public:
     static constexpr double ViewGlobeOrbitYawDegreesPerPixel = 0.35;
     static constexpr double ViewGlobeOrbitPitchDegreesPerPixel = 0.25;
 
-    // Legacy integer tile/cache zoom. Never use to invalidate GPU network
-    // geometry. Use cameraViewState() for camera transformations instead.
-    int zoom() const;
-    int imageryTileZoom() const;
     MapCameraViewState cameraViewState() const;
-    double view2dContinuousScale() const;
+    // The one 2D camera zoom (Web Mercator level, MinZoom..MaxZoom, any
+    // fraction). There is no integer zoom state: the imagery tile level is
+    // derived from it where tiles are drawn (MapBgfx2dImagery::imageryZoomFor()).
     double view2dContinuousZoom() const;
     double centerLon() const;
     double centerLat() const;
@@ -145,19 +143,13 @@ public:
     // see viewGlobeZoomLevelForDistanceM() for the exact relationship.
     // This is what the footer zoom control displays while in Globe mode.
     double viewGlobeZoomLevel(const QSize &viewport) const;
-    QString tileCacheKey(int x, int y) const;
+    // Imagery tile addressing for an explicit tile level (the renderers pick
+    // the level they draw; the camera has none).
     QString tileCachePrefix(int zoom) const;
-    QString tileEndpoint(int x, int y) const;
     QString tileSourcePath(int zoom) const;
-    // Zoom-independent siblings of tileCacheKey()/tileEndpoint(): those two
-    // always resolve against the current 2D zoom (zoom()), which is not
-    // useful for the globe view's own fixed, independent imagery zoom level.
-    QString tileCacheKeyAtZoom(int x, int y, int zoom) const;
-    QString tileEndpointAtZoom(int x, int y, int zoom) const;
+    QString tileCacheKey(int x, int y, int zoom) const;
+    QString tileEndpoint(int x, int y, int zoom) const;
 
-    int tileCount() const;
-
-    QPointF centerTile() const;
     CoordinateWGS84 wgs84FromScreen(const QPoint &pos, const QSize &viewport) const;
     QPointF screenFromWgs84(const CoordinateWGS84 &coord, const QSize &viewport) const;
     QPointF screenFromWgs84(double lon, double lat, const QSize &viewport) const;
@@ -166,16 +158,11 @@ public:
     QPointF screenFromWgs84(double lon, double lat, const QSize &viewport,
                             double wrap_reference_lon) const;
 
-    void setView(double lon, double lat, int zoom, const QSize &viewport = QSize());
     void fitViewToBounds(const CoordinateWGS84 &minimum, const CoordinateWGS84 &maximum,
                          const QSize &viewport, double elevation_minimum_m,
-                         double elevation_maximum_m, bool allow_continuous_2d_zoom);
+                         double elevation_maximum_m);
     void setCenter(double lon, double lat, const QSize &viewport = QSize());
-    void setZoom(int zoom, const QSize &viewport = QSize());
-    void zoomIn(const QSize &viewport = QSize());
-    void zoomOut(const QSize &viewport = QSize());
     void setView2dContinuousZoom(double continuous_zoom, const QSize &viewport = QSize());
-    void resetView2dContinuousZoom(const QSize &viewport = QSize());
 
     // Sub-pixel anchor: an integer anchor cannot express the exact centre of
     // an odd-sized viewport and makes repeated zoom steps drift laterally.
@@ -247,12 +234,12 @@ public:
                                  CoordinateWGS84 *coordinate) const;
 
 signals:
-    void zoomChanged(int zoom);
+    // Any change of view2dContinuousZoom() (every frame while zooming).
+    void view2dContinuousZoomChanged(double zoom);
     void centerChangedWGS84(CoordinateWGS84 wgs);
     void centerChangedUTM(CoordinateUTM utm);
     void providerChanged(MapProvider provider);
     void viewModeChanged(MapViewMode view_mode);
-    void view2dContinuousScaleChanged(double scale);
     void view3dVerticalExaggerationChanged(double exaggeration);
     void view3dNavigationStateChanged(MapView3dNavigationState state);
     void view3dNetworkGroundOffsetChanged(double offset_m);
@@ -263,6 +250,15 @@ signals:
     void viewGlobeTerrainHeightChanged();
 
 private:
+    // Sets centre and 2D zoom together, then clamps the centre for the new
+    // zoom (the clamp depends on it) and emits each change once.
+    void setView(double lon, double lat, double continuous_zoom, const QSize &viewport);
+    // Camera centre in normalised Web Mercator: zoom-0 tile units, x and y
+    // in 0..1 (x unwrapped as the longitude is normalised).
+    QPointF centerMercator() const;
+    // Screen pixels per normalised Mercator unit at the current 2D zoom
+    // (TileSize * 2^zoom), i.e. the width of the whole world in pixels.
+    double view2dWorldSizePx() const;
     void clampCenter(const QSize &viewport);
     void emitCenterChanged();
     bool globeScreenRay(const QPoint &screen_position, const QSize &viewport,
@@ -270,17 +266,9 @@ private:
     void applyGlobePanRotation(const QQuaternion &rotation);
     QString providerPath() const;
 
-    // Authoritative 2D camera zoom. m_zoom is only a derived tile/cache LOD.
     double m_view_2d_continuous_zoom = 18.0;
-    int m_zoom = 18;
-    double m_view_2d_continuous_scale = 1.0;
     double m_centerLon = 18.19331;
     double m_centerLat = 11.98119;
-    /*
-    int m_zoom = 16;
-    double m_centerLon = 18.2063;
-    double m_centerLat = 11.9792;
-    */
 
     MapProvider m_provider = MapProvider::ArcGISSat;
     MapViewMode m_view_mode = MapViewMode::TwoD;

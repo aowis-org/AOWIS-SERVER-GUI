@@ -75,9 +75,7 @@ MapCanvasEntities::MapCanvasEntities(MapModel *map_model, HydraulicData *hydraul
 
     // Icon widths follow the continuous zoom (MapCanvasMarkers::entityWidth());
     // rescale whenever the whole-pixel width actually changes.
-    connect(this->map_model, &MapModel::zoomChanged,
-            this, &MapCanvasEntities::updateMarkerScale);
-    connect(this->map_model, &MapModel::view2dContinuousScaleChanged, this, [this](double)
+    connect(this->map_model, &MapModel::view2dContinuousZoomChanged, this, [this](double)
     {
         updateMarkerScale();
     });

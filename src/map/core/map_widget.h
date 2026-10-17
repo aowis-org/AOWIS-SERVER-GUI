@@ -6,7 +6,6 @@
 #include <QHideEvent>
 #include <QKeyEvent>
 #include <QMouseEvent>
-#include <QPainter>
 #include <QPoint>
 #include <QPointF>
 #include <QPointer>
@@ -35,6 +34,10 @@
 
 #include "common/_enums_structs.h"
 
+// Navigation controller of one map: turns mouse, wheel and keyboard input
+// (and the zoom / pan buttons) into MapModel camera changes and reports the
+// pointer coordinate and zoom level. It draws nothing; the bgfx surface
+// stacked with it shows the map.
 class MapWidget : public QWidget
 {
     Q_OBJECT
@@ -90,7 +93,6 @@ public:
 public slots:
     void zoomIn();
     void zoomOut();
-    void setRenderSurfaceActive(bool active);
     void panUp();
     void panDown();
     void panLeft();
@@ -109,7 +111,6 @@ protected:
     void focusOutEvent(QFocusEvent *event) override;
     void hideEvent(QHideEvent *event) override;
     void showEvent(QShowEvent *event) override;
-    void paintEvent(QPaintEvent *event) override;
 
 private:
     void init();
@@ -190,7 +191,6 @@ private:
     bool pan_key_up_pressed = false;
     bool pan_key_down_pressed = false;
     bool pan_fast_modifier_pressed = false;
-    bool render_surface_active = false;
     ScreenCoordinateResolver render_surface_screen_coordinate_resolver;
     GlobeTerrainPanResolver render_surface_globe_terrain_pan_resolver;
     CachedTerrainElevationResolver cached_terrain_elevation_resolver;
@@ -201,8 +201,8 @@ private:
 
     // The one continuous camera zoom motion for wheel, buttons and keys, in
     // every view mode and with every renderer. Octaves: the 2D continuous
-    // zoom level, or -log2(globe distance). The integer tile zoom is never
-    // a navigation quantity; it remains a derived imagery LOD in MapModel.
+    // zoom level, or -log2(globe distance). MapModel has no integer zoom;
+    // imagery tile levels are derived where tiles are drawn.
     MapZoomMotion zoom_motion;
     MapViewMode zoom_motion_mode = MapViewMode::TwoD;
     QPointF zoom_motion_anchor;
@@ -218,16 +218,12 @@ private:
     QPoint browser_pointer_position;
     bool browser_pointer_inside = false;
 #endif
-    bool backing_store_pan_active = false;
-
 
 signals:
-    void signalZoomChanged(int zoom);
-    // Continuous zoom-level counterpart to signalZoomChanged() above,
-    // purely additive: fires the discrete 2D zoom as a double there
-    // modes, and the 2D-equivalent continuous zoom level (see
-    // MapModel::viewGlobeZoomLevel()) while in Globe mode, where there is
-    // no discrete zoom to report. Used by the footer's live zoom control.
+    // The zoom level shown to the person: the continuous 2D zoom, or in
+    // Globe mode the 2D-equivalent level of the camera distance (see
+    // MapModel::viewGlobeZoomLevel()). Used by the footer's live zoom
+    // control.
     void signalZoomLevelChanged(double zoom);
     void signalCoordsChangedWgs84(CoordinateWGS84 wgs);
     void signalCoordsChangedUTM(CoordinateUTM utm);

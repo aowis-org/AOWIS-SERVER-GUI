@@ -3,6 +3,7 @@
 #include "config/shortcut_registry.h"
 
 #include "network/network_symbology_rendering.h"
+#include "map/bgfx/map_bgfx_2d_imagery_layout.h"
 #include "map/bgfx/map_bgfx_editor_icons.h"
 #include "map/bgfx/map_bgfx_editor_overlay.h"
 #include "map/bgfx/map_bgfx_pan_reuse.h"
@@ -611,7 +612,6 @@ void MapEditorContainer::setupBgfxEditor()
     {
         this->bgfx_editor_active = true;
         this->renderer_status->hide();
-        this->map->setRenderSurfaceActive(true);
         // bgfx presents the frames, so it is the only navigation clock.
         this->map->setNavigationFrameDriver(true);
 #ifndef Q_OS_WASM
@@ -647,7 +647,6 @@ void MapEditorContainer::setupBgfxEditor()
         this->bgfx_editor_active = false;
         this->bgfx_hud_cursor = Qt::ArrowCursor;
         this->map->setNavigationFrameDriver(false);
-        this->map->setRenderSurfaceActive(false);
         surface->hide();
         showRendererStatus(tr("The bgfx map renderer could not start:\n%1").arg(reason));
     });
@@ -978,7 +977,14 @@ void MapEditorMenuWidget::createToolboxCache(QToolBox *tbx)
         int zoom_from = this->spin_zoom_from->value();
         this->spin_zoom_to->setRange(zoom_from, 19);
     });
-    connect(this->map, &MapWidget::signalZoomChanged, this->spin_zoom_from, &QSpinBox::setValue);
+    // "From" follows the imagery level the map draws (the selection frame
+    // shows the tiles of that level).
+    connect(this->map, &MapWidget::signalZoomLevelChanged, this->spin_zoom_from, [this](double zoom)
+    {
+        if (this->map->model()->viewMode() == MapViewMode::TwoD)
+            this->spin_zoom_from->setValue(
+                MapBgfx2dImagery::imageryZoomFor(zoom, MapModel::MinZoom, MapModel::MaxZoom));
+    });
     
     this->button_tiles_delete = new QToolButton(wgt);
     this->button_tiles_delete->setText("Delete Tiles");

@@ -318,7 +318,7 @@ void MapBgfxGlobeSurface::requestImagery()
             tile.tile_x, tile.tile_y, tile.zoom,
             this->map_model->centerLon(), this->map_model->centerLat());
         this->tile_repository->requestTile(
-            this->map_model->tileEndpointAtZoom(tile.tile_x, tile.tile_y, tile.zoom),
+            this->map_model->tileEndpoint(tile.tile_x, tile.tile_y, tile.zoom),
             tile.imagery_key, tile.tile_x, tile.tile_y, priority, batch, true);
     }
     this->window_tiles_requested = true;
@@ -401,7 +401,7 @@ void MapBgfxGlobeSurface::resolveImagery(MapBgfx2dImageryGpu *imagery, FrameResu
             }
             const QString key = levels_up == 0
                 ? tile.imagery_key
-                : this->map_model->tileCacheKeyAtZoom(source.tile.x, source.tile.y, source.tile.zoom);
+                : this->map_model->tileCacheKey(source.tile.x, source.tile.y, source.tile.zoom);
             const QImage *image = this->tile_repository->tile(key);
             if (image == nullptr)
                 continue;

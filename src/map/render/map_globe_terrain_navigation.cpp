@@ -386,8 +386,8 @@ bool MapGlobeTerrainNavigation::cameraTerrainElevationAtCoordinate(const Coordin
     // The target leaf changes at the midpoint between continuous zoom
     // levels (the 512 px projected-diagonal threshold in the Globe
     // quadtree), so qRound() selects the terrain zoom belonging to the tile
-    // beneath the camera. MapModel::zoom() belongs to the flat 2D view and
-    // can be completely unrelated to Globe distance.
+    // beneath the camera. The 2D zoom (view2dContinuousZoom()) belongs to
+    // the flat view and can be completely unrelated to Globe distance.
     const int imagery_zoom = qBound(0, qRound(this->map_model->viewGlobeZoomLevel(this->viewport_size)),
                                     MapModel::MaxZoom);
     if (imagery_zoom < CameraTerrainMinimumZoom)

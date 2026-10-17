@@ -4,6 +4,7 @@
 #include "map/core/map_model.h"
 
 #include "geo/geo_web_mercator.h"
+#include "map/bgfx/map_bgfx_2d_imagery_layout.h"
 
 #ifdef Q_OS_WASM
 #include <QTimer>
@@ -409,11 +410,15 @@ void MapEditorController::updateTileSelectionOverlay(const QRect &selected_rect,
         return;
     }
 
-    const int zoom = this->map_model->zoom();
+    // The tiles of the imagery level the map draws now (the cache holds
+    // tiles, the camera zoom is continuous).
+    const double camera_zoom = this->map_model->view2dContinuousZoom();
+    const int zoom = MapBgfx2dImagery::imageryZoomFor(camera_zoom, MapModel::MinZoom, MapModel::MaxZoom);
     const int tile_count = 1 << zoom;
-    const QPointF center_tile = this->map_model->centerTile();
-    const double view_scale = qMax(1e-9, this->map_model->view2dContinuousScale());
-    const double rendered_tile_size = MapModel::TileSize * view_scale;
+    const QPointF center_tile(GeoWebMercator::lonToTileX(this->map_model->centerLon(), zoom),
+                              GeoWebMercator::latToTileY(this->map_model->centerLat(), zoom));
+    // Screen pixels per tile of that level at the continuous camera zoom.
+    const double rendered_tile_size = MapModel::TileSize * std::exp2(camera_zoom - double(zoom));
     const double tile_x_first = center_tile.x() +
         (selected_rect.left() - viewport_size.width() / 2.0) / rendered_tile_size;
     const double tile_x_second = center_tile.x() +

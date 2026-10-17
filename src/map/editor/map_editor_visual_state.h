@@ -84,8 +84,8 @@ struct MapEditorViewportRenderState
     int background_opacity = 0;
 
     bool tile_selection_visible = false;
-    // Zoom level the tile range below refers to (MapModel::zoom() when the
-    // state was taken); the bgfx overlay places it with the continuous
+    // Imagery tile level the range below refers to (the level drawn when
+    // the state was taken); the bgfx overlay places it with the continuous
     // camera.
     int tile_selection_zoom = -1;
     int tile_x_min = 0;

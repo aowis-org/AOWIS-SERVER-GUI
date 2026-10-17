@@ -4,8 +4,6 @@
 #include "config/shortcut_registry.h"
 
 #include <QApplication>
-#include <QPaintEvent>
-#include <QPalette>
 
 #ifndef Q_OS_WASM
 #include <QCursor>
@@ -126,10 +124,9 @@ void MapWidget::fitViewToBounds(
     if (this->m_model == nullptr)
         return;
 
-    // Continuous fit: every renderer draws the fractional scale.
     cancelSmoothZoom();
     this->m_model->fitViewToBounds(
-        minimum, maximum, size(), elevation_minimum_m, elevation_maximum_m, true);
+        minimum, maximum, size(), elevation_minimum_m, elevation_maximum_m);
 }
 
 void MapWidget::deleteCachedTiles(int zoom, int tile_x_min, int tile_x_max, int tile_y_min, int tile_y_max)
@@ -146,8 +143,9 @@ void MapWidget::deleteCachedTiles(int zoom, int tile_x_min, int tile_x_max, int 
 
 void MapWidget::init()
 {
-    this->setAttribute(Qt::WA_OpaquePaintEvent);
-    this->setAttribute(Qt::WA_NoSystemBackground);
+    // Input only: no background, no painting (paintEvent() is QWidget's).
+    setAttribute(Qt::WA_TranslucentBackground);
+    setAttribute(Qt::WA_NoSystemBackground);
 
     this->setMinimumHeight(500);
     this->setMinimumWidth(550);
@@ -157,15 +155,10 @@ void MapWidget::init()
     this->setFocus();
     this->setMouseTracking(true);
 
-    connect(this->m_model, &MapModel::zoomChanged, this, [this](int zoom)
+    connect(this->m_model, &MapModel::view2dContinuousZoomChanged, this, [this](double zoom)
     {
-        emit signalZoomChanged(zoom);
         if (this->m_model->viewMode() == MapViewMode::TwoD)
-            emit signalZoomLevelChanged(this->m_model->view2dContinuousZoom());
-        // Nothing to repaint while a GPU surface draws the map (every repaint
-        // is a full-size backing-store flush, per frame while zooming).
-        if (!this->render_surface_active)
-            update();
+            emit signalZoomLevelChanged(zoom);
     });
 
     connect(this->m_model, &MapModel::viewGlobeCameraChanged, this, [this]
@@ -174,22 +167,11 @@ void MapWidget::init()
             emit signalZoomLevelChanged(this->m_model->viewGlobeZoomLevel(size()));
     });
 
-    connect(this->m_model, &MapModel::view2dContinuousScaleChanged, this, [this](double)
-    {
-        if (this->m_model->viewMode() != MapViewMode::TwoD)
-            return;
-
-        emit signalZoomLevelChanged(this->m_model->view2dContinuousZoom());
-        if (!this->render_surface_active)
-            update();
-    });
-
     connect(this->m_model, &MapModel::centerChangedWGS84, this, [this](CoordinateWGS84 wgs)
     {
         if (this->m_model->viewMode() == MapViewMode::Globe)
             emit signalZoomLevelChanged(this->m_model->viewGlobeZoomLevel(size()));
-        if (this->render_surface_active
-            && this->m_model->viewMode() == MapViewMode::Globe
+        if (this->m_model->viewMode() == MapViewMode::Globe
             && this->render_surface_screen_coordinate_resolver)
         {
             updatePointerCoordinates(
@@ -200,25 +182,17 @@ void MapWidget::init()
             // Keep 2D centre readouts aware of any cached 3D terrain too.
             emit signalCoordsChangedWgs84(withCachedTerrainAltitude(wgs));
         }
-        if (this->backing_store_pan_active || this->render_surface_active)
-            return;
-        update();
     });
 
     connect(this->m_model, &MapModel::centerChangedUTM, this,
             [this](CoordinateUTM utm)
     {
-        if (this->render_surface_active
-            && this->m_model->viewMode() == MapViewMode::Globe
+        if (this->m_model->viewMode() == MapViewMode::Globe
             && this->render_surface_screen_coordinate_resolver)
         {
             return;
         }
         emit signalCoordsChangedUTM(utm);
-    });
-    connect(this->m_model, &MapModel::providerChanged, this, [this](MapProvider)
-    {
-        update();
     });
 
     connect(this->m_model, &MapModel::viewModeChanged, this, [this](MapViewMode view_mode)
@@ -237,7 +211,7 @@ void MapWidget::init()
             stopPanAnimationIfIdle();
         }
 
-        if (this->render_surface_active && this->render_surface_screen_coordinate_resolver)
+        if (this->render_surface_screen_coordinate_resolver)
         {
             updatePointerCoordinates(
                 QPoint(width() / 2, height() / 2));
@@ -261,7 +235,9 @@ void MapWidget::init()
 
     QTimer::singleShot(0, this, [this]
     {
-        emit signalZoomChanged(this->m_model->zoom());
+        emit signalZoomLevelChanged(this->m_model->viewMode() == MapViewMode::Globe
+                                        ? this->m_model->viewGlobeZoomLevel(size())
+                                        : this->m_model->view2dContinuousZoom());
 
         CoordinateWGS84 wgs;
         wgs.latitude_deg = this->m_model->centerLat();
@@ -390,14 +366,9 @@ void MapWidget::advanceNavigation(qreal elapsed_seconds)
     if (elapsed_seconds <= 0.0)
         return;
 
-    // A GPU surface can replace this widget in QStackedLayout while the map
-    // remains visible. Camera navigation must not depend on whether the CPU
-    // painting widget is the selected stack page. Still stop the animation
-    // when the entire map stack (for example, its tab) becomes hidden.
-    const bool navigation_visible = isVisible()
-        || (this->render_surface_active && parentWidget() != nullptr
-            && parentWidget()->isVisible());
-    if (!navigation_visible)
+    // The map stack shows all its pages (QStackedLayout::StackAll), so this
+    // widget is visible exactly while the map is; stop when its tab hides.
+    if (!isVisible())
     {
         stopAllPanMovement();
         return;
@@ -1003,50 +974,21 @@ void MapWidget::panMapByPixels(const QPoint &delta, bool keyboard_pan)
     if (delta.isNull())
         return;
 
-    const QPointF old_center = this->m_model->centerTile();
-
-    this->backing_store_pan_active = true;
-    if (this->m_model->viewMode() == MapViewMode::Globe)
-    {
-        if (keyboard_pan)
-        {
-            this->m_model->panByPixelsGlobeKeyboard(delta, size());
-        }
-        else
-        {
-            const bool terrain_pan_handled = this->render_surface_active
-                && this->render_surface_globe_terrain_pan_resolver
-                && this->render_surface_globe_terrain_pan_resolver(delta);
-            if (!terrain_pan_handled)
-                this->m_model->panByPixelsGlobe(delta, size());
-        }
-    }
-    else
+    if (this->m_model->viewMode() != MapViewMode::Globe)
     {
         this->m_model->panByPixels(delta, size());
-    }
-    this->backing_store_pan_active = false;
-
-    const QPointF new_center = this->m_model->centerTile();
-    const double tile_count = double(this->m_model->tileCount());
-    const double horizontal_tile_delta = std::remainder(old_center.x() - new_center.x(), tile_count);
-    const QPoint actual_delta(
-        qRound(horizontal_tile_delta * MapModel::TileSize),
-        qRound((old_center.y() - new_center.y()) * MapModel::TileSize));
-
-    // A GPU surface draws the map: this widget shows nothing, so neither a
-    // repaint nor a backing-store scroll (a full-size copy plus a flush per
-    // pan step, the costliest part of panning in the browser).
-    if (actual_delta.isNull() || this->render_surface_active)
         return;
-
-    if (std::abs(actual_delta.x()) >= this->width() || std::abs(actual_delta.y()) >= this->height())
+    }
+    if (keyboard_pan)
     {
-        update();
+        this->m_model->panByPixelsGlobeKeyboard(delta, size());
         return;
     }
-
-    this->scroll(actual_delta.x(), actual_delta.y(), this->rect());
+    // Drag over the drawn terrain first; the ellipsoid where there is none.
+    const bool terrain_pan_handled = this->render_surface_globe_terrain_pan_resolver
+        && this->render_surface_globe_terrain_pan_resolver(delta);
+    if (!terrain_pan_handled)
+        this->m_model->panByPixelsGlobe(delta, size());
 }
 
 void MapWidget::panUp()
@@ -1559,7 +1501,7 @@ void MapWidget::updatePointerCoordinates(const QPoint &position)
     {
         CoordinateWGS84 globe_coordinate;
         bool coordinate_available = false;
-        if (this->render_surface_active && this->render_surface_screen_coordinate_resolver)
+        if (this->render_surface_screen_coordinate_resolver)
         {
             coordinate_available = this->render_surface_screen_coordinate_resolver(
                 QPointF(position), &globe_coordinate);
@@ -1613,8 +1555,7 @@ void MapWidget::setCachedTerrainElevationResolver(CachedTerrainElevationResolver
     this->cached_terrain_elevation_resolver = std::move(resolver);
 }
 
-// Zoom buttons/menu: one smooth octave about the crosshair, never an
-// integer tile-zoom jump (MapModel::zoomIn/zoomOut are not navigation).
+// Zoom buttons/menu: one smooth octave about the crosshair.
 void MapWidget::zoomIn()
 {
     queueZoomImpulse(1.0, viewportCenter());
@@ -1625,35 +1566,8 @@ void MapWidget::zoomOut()
     queueZoomImpulse(-1.0, viewportCenter());
 }
 
-void MapWidget::setRenderSurfaceActive(bool active)
-{
-    if (this->render_surface_active == active)
-        return;
-
-    this->render_surface_active = active;
-    if (active)
-        return;
-
-    // Never snap the camera to an integer zoom here: the continuous camera
-    // stays authoritative with or without a GPU surface.
-    stopPanAnimationIfIdle();
-    // Camera changes did not repaint this widget while the surface was
-    // active; cover the area again now.
-    update();
-}
-
 void MapWidget::changeMapProvider(MapProvider provider)
 {
     this->m_model->setProvider(provider);
 }
 
-void MapWidget::paintEvent(QPaintEvent *event)
-{
-    // The GPU surface draws the map; until it does (or when it cannot), this
-    // widget only covers its area (WA_OpaquePaintEvent). It never paints map
-    // tiles: the CPU map renderers are gone (monitor and editor).
-    if (this->render_surface_active)
-        return;
-    QPainter painter(this);
-    painter.fillRect(event->rect(), this->palette().brush(QPalette::Window));
-}

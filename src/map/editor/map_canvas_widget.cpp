@@ -1,6 +1,7 @@
 #include "map/editor/map_canvas_widget.h"
 
 #include "map/editor/map_editor_controller.h"
+#include "map/bgfx/map_bgfx_2d_imagery_layout.h"
 
 #include <QFocusEvent>
 #include <QKeyEvent>
@@ -19,17 +20,13 @@ MapCanvasWidget::MapCanvasWidget(MapModel *map_model, MapWidget *map,
     setAttribute(Qt::WA_NoSystemBackground);
     setMouseTracking(true);
 
-    connect(this->map_model, &MapModel::zoomChanged, this, [this]
-    {
-        requestRenderUpdate();
-    });
     // Camera motion (every frame while zooming or panning): the pointer now
     // lies over another map position, so the editor re-evaluates it - only
     // while the editor is shown (synced map movement moves this camera with
     // the monitor's, and hover hit testing there is wasted work). The visual
     // state itself is camera independent except for the pointer's map
     // coordinate: signalCameraChanged(), not a full render update.
-    connect(this->map_model, &MapModel::view2dContinuousScaleChanged, this, [this](double)
+    connect(this->map_model, &MapModel::view2dContinuousZoomChanged, this, [this](double)
     {
         if (isVisible() && this->editor_controller && this->last_pointer_position_valid)
             this->editor_controller->mouseMove(this->last_pointer_position, size(), false);
@@ -143,12 +140,15 @@ MapEditorViewportRenderState MapCanvasWidget::viewportRenderState() const
         this->editor_controller->tileSelectionOverlay();
     if (overlay.visible)
     {
+        // The selection in tiles of the imagery level drawn now.
+        const int imagery_zoom = MapBgfx2dImagery::imageryZoomFor(
+            this->map_model->view2dContinuousZoom(), MapModel::MinZoom, MapModel::MaxZoom);
         const MapEditorController::TileSelectionRange range =
-            this->editor_controller->tileSelectionRange(this->map_model->zoom());
+            this->editor_controller->tileSelectionRange(imagery_zoom);
         if (range.valid)
         {
             state.tile_selection_visible = true;
-            state.tile_selection_zoom = this->map_model->zoom();
+            state.tile_selection_zoom = imagery_zoom;
             state.tile_x_min = range.tile_x_min;
             state.tile_x_max = range.tile_x_max;
             state.tile_y_min = range.tile_y_min;

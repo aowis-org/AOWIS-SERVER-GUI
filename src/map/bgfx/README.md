@@ -119,8 +119,8 @@ longer keeps a core busy. Plain pointer moves over the map present nothing;
 only HUD hover feedback does. Unchanged download numbers (the monitor polls
 every 400 ms) present nothing either.
 
-Around the surface: `MapWidget` neither repaints nor scrolls its backing store
-while a GPU surface is active (a full-size copy and flush per pan step), and
+Around the surface: `MapWidget` is a pure navigation controller that draws
+nothing (no repaint and no backing-store scroll per pan step), and
 the footer's map readouts are coalesced to at most one update per 100 ms
 (each label change relayouts the status bar). WASM builds drop the function
 name section by default (`AOWIS_WASM_FUNCTION_NAMES=ON` to keep it).

@@ -2193,7 +2193,7 @@ void MapBgfxSurface::renderImagery(const QSizeF &logical)
         int uploads = 0;
         for (const MapBgfx2dImagery::Request &request : layout.requests)
         {
-            const QString key = this->map_model->tileCacheKeyAtZoom(
+            const QString key = this->map_model->tileCacheKey(
                 request.tile.x, request.tile.y, request.tile.zoom);
             const QImage *image = this->tile_repository->tile(key);
             if (image != nullptr)
@@ -2214,7 +2214,7 @@ void MapBgfxSurface::renderImagery(const QSizeF &logical)
             if (this->imagery_requests_dirty)
             {
                 this->tile_repository->requestTile(
-                    this->map_model->tileEndpointAtZoom(
+                    this->map_model->tileEndpoint(
                         request.tile.x, request.tile.y, request.tile.zoom),
                     key, request.tile.x, request.tile.y, request.priority,
                     this->imagery_request_batch);

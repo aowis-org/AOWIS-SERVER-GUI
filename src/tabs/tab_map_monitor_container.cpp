@@ -694,10 +694,6 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
             // receives the pointer input.
             this->map_stack_layout->setCurrentWidget(this->map);
 #endif
-            // Keyboard zoom must use the continuous GPU-camera animation,
-            // not integer MapModel::zoomIn/zoomOut. Tile zoom is only a
-            // derived imagery LOD.
-            this->map->setRenderSurfaceActive(true);
             // bgfx presents the frames, so it is the only navigation clock.
             this->map->setNavigationFrameDriver(true);
 #ifndef Q_OS_WASM
@@ -749,7 +745,6 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
 #ifndef Q_OS_WASM
             this->map->setOrbitPointerLockWindow(nullptr);
 #endif
-            this->map->setRenderSurfaceActive(false);
             showRendererStatus(
                 tr("The bgfx map renderer could not start:\n%1").arg(reason));
             surface->hide();
