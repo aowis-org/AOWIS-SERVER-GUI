@@ -7,7 +7,7 @@ uniform vec4 u_heatmap_style;
 
 // One heatmap spot per node, drawn on the node marker quad (vs_network_2d.sc
 // with the radius as size), so v_texcoord0 is the unit corner. Same radial
-// profile as the QRhi heatmap (map_rhi_heatmap.frag): full strength inside the
+// profile as the former QRhi heatmap: full strength inside the
 // solid centre, linear to 0.5 at 43.75 % of the remaining radius, then
 // linear to 0 at the rim. Output is premultiplied (blend One,
 // OneMinusSrcAlpha). v_color0.a is 0 for nodes without a heatmap value.

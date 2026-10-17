@@ -97,17 +97,4 @@ else
     cp "$BUILD_CONFIG" "$DIST_CONFIG"
 fi
 
-# Renderer value check for preserved configurations. bgfx is the only map
-# renderer: the retired values "browser" (JavaScript renderer) and "rhi" (QRhi,
-# the old template default) are rewritten to bgfx; the app would map them anyway.
-for aowis_config in "$BUILD_CONFIG" "$DIST_CONFIG"; do
-    [ -f "$aowis_config" ] || continue
-    for retired_renderer in browser rhi; do
-        if grep -Eq "^[[:space:]]*map_wasm_renderer[[:space:]]*=[[:space:]]*${retired_renderer}[[:space:]]*\$" "$aowis_config"; then
-            sed -i -E "s/^([[:space:]]*map_wasm_renderer[[:space:]]*=[[:space:]]*)${retired_renderer}[[:space:]]*\$/\\1bgfx/" "$aowis_config"
-            echo "NOTE: $aowis_config: map_wasm_renderer=${retired_renderer} is retired; changed to bgfx."
-        fi
-    done
-done
-
 echo "=== WASM build finished ==="

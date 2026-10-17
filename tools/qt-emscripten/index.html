@@ -511,21 +511,11 @@
           const loadedConfiguration = await fetchAowisConfiguration();
           const configurationUrl = loadedConfiguration.url;
           const values = parseAowisIni(loadedConfiguration.text);
-          // bgfx is the only map renderer. The removed renderers' values
-          // ("browser": the JavaScript renderer, "rhi": QRhi) select bgfx,
-          // like the desktop "cpu" and "rhi" values.
-          const configuredWasmRenderer = (values['gui/map_wasm_renderer'] || 'bgfx')
-              .trim().toLowerCase();
-          const mapWasmRenderer = 'bgfx';
-          if (configuredWasmRenderer === 'browser' || configuredWasmRenderer === 'rhi')
-              console.warn(`gui/map_wasm_renderer '${configuredWasmRenderer}' is no longer supported, using bgfx`);
-          else if (mapWasmRenderer !== configuredWasmRenderer)
-              console.warn(`Invalid gui/map_wasm_renderer '${configuredWasmRenderer}', using bgfx`);
-
+          // bgfx is the only map renderer: a gui/map_wasm_renderer line of an
+          // older deployment is ignored.
           const guiConfiguration = Object.freeze({
               examplesBuiltinEnable: parseAowisBoolean(
-                  values['gui/examples_builtin_enable'], true),
-              mapWasmRenderer
+                  values['gui/examples_builtin_enable'], true)
           });
           const baseUrl = (values['map_server/base_url'] || '').trim().replace(/\/+$/, '');
           if (!baseUrl)
@@ -546,7 +536,6 @@
           console.info('Loaded and activated AOWIS configuration:', {
               configurationUrl: configurationUrl.toString(),
               examplesBuiltinEnable: guiConfiguration.examplesBuiltinEnable,
-              mapWasmRenderer: guiConfiguration.mapWasmRenderer,
               baseUrl,
               hasApiKey: configuration.apiKey.length > 0,
               hasDeleteApiKey: configuration.deleteApiKey.length > 0

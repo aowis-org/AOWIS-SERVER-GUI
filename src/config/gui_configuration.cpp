@@ -7,10 +7,6 @@
 
 #include <cmath>
 
-#ifndef AOWIS_HAS_BGFX
-#define AOWIS_HAS_BGFX 0
-#endif
-
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
 #else
@@ -295,8 +291,6 @@ GuiConfiguration loadConfiguration()
 {
     GuiConfiguration configuration;
     configuration.examples_builtin_enable = aowisBuiltinExamplesEnabled() != 0;
-    // bgfx is the only renderer: index.html warns about legacy values of
-    // gui/map_wasm_renderer ("browser", "rhi").
     const int node_palette_value = aowisSymbologyPalettePreference(
         "aowis.symbology.node_palette",
         static_cast<int>(NetworkSymbologyDefaultNodePalette));
@@ -354,8 +348,7 @@ GuiConfiguration loadConfiguration()
             "aowis.map_performance.terrain_full_detail_zoom",
             default_map_performance.terrain_full_detail_zoom);
     qInfo() << "Loaded GUI configuration from webroot/aowis-server-gui.ini: examples_builtin_enable ="
-            << configuration.examples_builtin_enable
-            << "map_wasm_renderer =" << wasmMapRendererName(configuration.map_wasm_renderer);
+            << configuration.examples_builtin_enable;
     return configuration;
 }
 #else
@@ -411,7 +404,6 @@ bool createDefaultConfiguration(const QString &path)
         "\n"
         "[gui]\n"
         "examples_builtin_enable=true\n"
-        "map_desktop_renderer=bgfx\n"
         "\n"
         "[shortcuts]\n"
         "sidebar_toggle=Win+Tab\n"
@@ -475,40 +467,6 @@ bool createDefaultConfiguration(const QString &path)
     return true;
 }
 
-DesktopMapRenderer parseDesktopMapRenderer(const QString &value, bool *valid)
-{
-    const QString normalized = value.trimmed().toLower();
-    if (normalized == QStringLiteral("cpu"))
-    {
-        // The CPU map renderer was removed (it displayed the network at the
-        // integer tile zoom only). Keep old ini files working.
-        qWarning() << "gui/map_desktop_renderer=cpu is no longer supported; using bgfx.";
-        if (valid != nullptr)
-            *valid = true;
-        return DesktopMapRenderer::Bgfx;
-    }
-
-    if (normalized == QStringLiteral("rhi"))
-    {
-        // The QRhi map renderer was removed with the bgfx globe (roadmap
-        // Phase 3). Keep old ini files working.
-        qWarning() << "gui/map_desktop_renderer=rhi is no longer supported; using bgfx.";
-        if (valid != nullptr)
-            *valid = true;
-        return DesktopMapRenderer::Bgfx;
-    }
-    if (normalized == QStringLiteral("bgfx"))
-    {
-        if (valid != nullptr)
-            *valid = true;
-        return DesktopMapRenderer::Bgfx;
-    }
-
-    if (valid != nullptr)
-        *valid = false;
-    return DesktopMapRenderer::Bgfx;
-}
-
 GuiConfiguration loadConfiguration()
 {
     const QString path = nativeConfigurationPath();
@@ -536,7 +494,9 @@ GuiConfiguration loadConfiguration()
     const GuiShortcutConfiguration advertised_shortcuts;
     migrateSetting(settings, QStringLiteral("shortcuts/map_editor_add_customer_point"),
                    QStringLiteral("shortcuts/map_editor_add_demand_point"));
-    ensureSettingDefault(settings, QStringLiteral("gui/map_desktop_renderer"), QStringLiteral("bgfx"));
+    // bgfx is the only map renderer: the renderer choice of older versions
+    // is dropped from the file.
+    settings.remove(QStringLiteral("gui/map_desktop_renderer"));
     ensureSettingDefault(settings, QStringLiteral("shortcuts/sidebar_toggle"), advertised_shortcuts.sidebar_toggle);
     ensureSettingDefault(settings, QStringLiteral("shortcuts/fullscreen"), advertised_shortcuts.fullscreen);
     ensureSettingDefault(settings, QStringLiteral("shortcuts/map_monitor_fullscreen"), advertised_shortcuts.map_monitor_fullscreen);
@@ -600,17 +560,6 @@ GuiConfiguration loadConfiguration()
         NetworkSymbologyDefaultHeatmapPalette);
     configuration.symbology_palettes.heatmap_palette_flipped = settings.value(
         QStringLiteral("symbology/heatmap_palette_flipped"), false).toBool();
-
-    const QString configured_renderer = settings.value(
-        QStringLiteral("gui/map_desktop_renderer"), QStringLiteral("bgfx")).toString();
-    bool renderer_valid = false;
-    configuration.map_desktop_renderer = parseDesktopMapRenderer(
-        configured_renderer, &renderer_valid);
-    if (!renderer_valid)
-    {
-        qWarning() << "Invalid gui/map_desktop_renderer value" << configured_renderer
-                   << "in" << path << "- using bgfx. The only valid value is bgfx.";
-    }
 
     configuration.shortcuts.sidebar_toggle = loadShortcutSetting(settings, QStringLiteral("shortcuts/sidebar_toggle"), advertised_shortcuts.sidebar_toggle);
     configuration.shortcuts.fullscreen = loadShortcutSetting(settings, QStringLiteral("shortcuts/fullscreen"), advertised_shortcuts.fullscreen);
@@ -706,9 +655,7 @@ GuiConfiguration loadConfiguration()
         qWarning() << "Failed to read GUI configuration:" << path;
     else
         qInfo() << "Loaded GUI configuration:" << path
-                << "examples_builtin_enable =" << configuration.examples_builtin_enable
-                << "map_desktop_renderer ="
-                << desktopMapRendererName(configuration.map_desktop_renderer);
+                << "examples_builtin_enable =" << configuration.examples_builtin_enable;
 
     return configuration;
 }
@@ -760,64 +707,6 @@ QString guiConfigurationFilePath()
 const GuiConfiguration &guiConfiguration()
 {
     return mutableGuiConfiguration();
-}
-
-const char *desktopMapRendererName(DesktopMapRenderer renderer)
-{
-    switch (renderer)
-    {
-        case DesktopMapRenderer::Bgfx:
-            break;
-    }
-    return "bgfx";
-}
-
-DesktopMapRenderer desktopMapRenderer()
-{
-    static const DesktopMapRenderer renderer = []()
-    {
-        // bgfx is the only map renderer. Without it in the build the monitor
-        // shows a status message telling how to enable it.
-        const DesktopMapRenderer requested = guiConfiguration().map_desktop_renderer;
-        if (!AOWIS_HAS_BGFX)
-        {
-            qWarning() << "Desktop bgfx map requested but this build has AOWIS_ENABLE_BGFX_MAP=OFF; "
-                          "no map renderer. Reconfigure with -DAOWIS_ENABLE_BGFX_MAP=ON.";
-        }
-        return requested;
-    }();
-    return renderer;
-}
-
-const char *wasmMapRendererName(WasmMapRenderer renderer)
-{
-    switch (renderer)
-    {
-        case WasmMapRenderer::Bgfx:
-            break;
-    }
-    return "bgfx";
-}
-
-WasmMapRenderer wasmMapRenderer()
-{
-#ifdef __EMSCRIPTEN__
-    static const WasmMapRenderer renderer = []()
-    {
-        // Same policy as the desktop: without bgfx in the build the monitor
-        // shows a status message.
-        const WasmMapRenderer requested = guiConfiguration().map_wasm_renderer;
-        if (!AOWIS_HAS_BGFX)
-        {
-            qWarning() << "WASM bgfx map requested but this build has AOWIS_ENABLE_BGFX_MAP=OFF; "
-                          "no map renderer.";
-        }
-        return requested;
-    }();
-    return renderer;
-#else
-    return WasmMapRenderer::Bgfx;
-#endif
 }
 
 bool saveGuiNodeSymbologyPalette(NetworkSymbologyPalette palette, bool flipped)

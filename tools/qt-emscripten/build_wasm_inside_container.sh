@@ -35,9 +35,9 @@ em++ --version | head -n 1
 cd /project
 
 # bgfx shaders are pre-compiled and committed (src/map/bgfx/shaders/bin,
-# cmake/aowis_bgfx_shaders.cmake): no shader compiler is built here. If the
-# configure step reports stale essl shaders, regenerate them with a native
-# build (./compile_linux.sh --shader-tools) and commit them.
+# cmake/aowis_bgfx_shaders.cmake): no shader compiler is built here. After
+# shader changes, regenerate them with a native build
+# (./compile_linux.sh --shader-tools) and commit them.
 mkdir -p build-wasm
 
 # A build directory configured with an older/single-threaded Qt toolchain must not

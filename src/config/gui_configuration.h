@@ -8,19 +8,6 @@
 
 class QKeyEvent;
 
-// bgfx is the only map renderer. Legacy ini values ("cpu", "rhi" and in the
-// browser "browser") are accepted with a warning and select bgfx. Both enums
-// and their ini keys go away in roadmap Phase 4.
-enum class DesktopMapRenderer
-{
-    Bgfx
-};
-
-enum class WasmMapRenderer
-{
-    Bgfx
-};
-
 struct GuiShortcutConfiguration
 {
     QString sidebar_toggle = QStringLiteral("Win+Tab");
@@ -95,9 +82,6 @@ struct GuiMapPerformanceConfiguration
 struct GuiConfiguration
 {
     bool examples_builtin_enable = true;
-    // bgfx is the map renderer on every platform.
-    DesktopMapRenderer map_desktop_renderer = DesktopMapRenderer::Bgfx;
-    WasmMapRenderer map_wasm_renderer = WasmMapRenderer::Bgfx;
     GuiSymbologyPaletteConfiguration symbology_palettes;
     GuiShortcutConfiguration shortcuts;
     GuiMapNavigationConfiguration map_navigation;
@@ -109,10 +93,6 @@ const GuiConfiguration &guiConfiguration();
 QKeySequence guiShortcutKeySequence(const QString &shortcut);
 bool guiShortcutMatches(const QKeyEvent *event, const QString &shortcut,
                         Qt::KeyboardModifiers allowed_extra_modifiers = Qt::NoModifier);
-DesktopMapRenderer desktopMapRenderer();
-const char *desktopMapRendererName(DesktopMapRenderer renderer);
-WasmMapRenderer wasmMapRenderer();
-const char *wasmMapRendererName(WasmMapRenderer renderer);
 bool saveGuiNodeSymbologyPalette(NetworkSymbologyPalette palette, bool flipped);
 bool saveGuiLinkSymbologyPalette(NetworkSymbologyPalette palette, bool flipped);
 bool saveGuiHeatmapSymbologyPalette(NetworkSymbologyPalette palette, bool flipped);

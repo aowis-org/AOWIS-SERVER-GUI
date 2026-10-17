@@ -98,7 +98,6 @@ bool createDefaultConfiguration(const QString &path)
         "\n"
         "[gui]\n"
         "examples_builtin_enable=true\n"
-        "map_desktop_renderer=bgfx\n"
         "\n"
         "[shortcuts]\n"
         "sidebar_toggle=Win+Tab\n"

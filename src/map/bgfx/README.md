@@ -7,9 +7,10 @@ the source of step-wise zoom. Without a working GPU surface the monitor shows a
 status message, never a CPU-rendered map. bgfx is the only map renderer on
 desktop and WASM: the QRhi renderer (`src/map/rhi`, its `qt_add_shaders`
 shaders and the QWidget HUD controls) was removed once the bgfx globe was
-complete (roadmap Phase 3 exit, 2026-10-17); the old renderer values
-`gui/map_desktop_renderer=rhi` and `map_wasm_renderer=rhi` select bgfx with a
-warning. Qt ShaderTools is no longer needed. The
+complete (roadmap Phase 3 exit, 2026-10-17), and with it the renderer
+settings `gui/map_desktop_renderer` and `map_wasm_renderer` (an old native
+line is removed from the file, an old browser line is ignored). Qt
+ShaderTools is no longer needed. The
 map editor draws with bgfx only (roadmap Phase 2); the QPainter editor
 (`MapEditorRenderer`), its QRhi overlay path and `MapWidget`'s CPU tile
 painting were removed. The JavaScript/WebGL map renderer (monitor and
@@ -517,19 +518,16 @@ The submodules are shallow and sparse (`tools/bgfx_sparse_checkout.sh`):
 **Shaders are pre-compiled and committed** in `src/map/bgfx/shaders/bin/
 <family>/` (`cmake/aowis_bgfx_shaders.cmake`), so neither desktop nor WASM
 builds build a shader compiler (bgfx.cmake's shaderc was ~690 TUs incl.
-Tint/Dawn). Each family has `inputs.sha256` over all `.sc` files,
-`varying.def.sc`, bgfx's `bgfx_shader.sh`, profile and platform (line endings
-normalised). Editing a shader re-runs CMake; a stale family is never embedded:
-the configure step stops with the regeneration command.
-
-After editing a `.sc` file, or after updating bgfx:
+Tint/Dawn). They are embedded as committed; nothing checks that they match
+their sources, so after editing a `.sc` file, or after updating bgfx:
 
     ./compile_linux.sh --shader-tools
 
 builds `aowis-bgfx-shaderc` (`cmake/aowis_bgfx_shaderc.cmake`: shaderc
 without Tint/Dawn/DXC/spirv-reduce, ~280 TUs, once), recompiles glsl, essl,
-spirv, metal and dx11 into the build tree and copies them plus `inputs.sha256`
-into `src/map/bgfx/shaders/bin`. Commit that directory.
+spirv, metal and dx11 into the build tree (again whenever a shader input
+changes) and copies them into `src/map/bgfx/shaders/bin`. Commit that
+directory.
 
 dx11 (DXBC, for the Windows build's Direct3D 11 renderer) is compiled by
 Microsoft's `d3dcompiler_47.dll`, which bgfx ships in `tools/bin/windows`

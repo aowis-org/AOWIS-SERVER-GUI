@@ -4,7 +4,7 @@ $input v_color0, v_texcoord0
 
 SAMPLER2D(s_icon_atlas, 0);
 
-// Same colouring as the QRhi icon shader (map_rhi_icon.frag): the atlas is
+// Same colouring as the former QRhi icon shader: the atlas is
 // premultiplied; its saturated "fill" pixels take the symbology colour, the
 // neutral outline/detail pixels keep the atlas colour. Output is straight
 // alpha for BGFX_STATE_BLEND_ALPHA.

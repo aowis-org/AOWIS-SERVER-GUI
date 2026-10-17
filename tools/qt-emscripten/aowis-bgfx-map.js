@@ -1,4 +1,4 @@
-/* bgfx map canvas (the only browser map renderer; mapWasmRenderer="bgfx").
+/* bgfx map canvas (the only browser map renderer).
  * Keep all ordinary Qt widgets BELOW the independent canvas. Only top-level
  * Qt transient dialogs/popups may be above it. The canvas has
  * pointer-events:none: all pointer input goes to the Qt MapWidget below,

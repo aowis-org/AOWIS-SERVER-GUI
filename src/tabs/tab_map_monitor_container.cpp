@@ -398,21 +398,12 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
     this->renderer_status->setAttribute(Qt::WA_TransparentForMouseEvents);
     this->map_stack_layout->addWidget(this->renderer_status);
     showRendererStatus(tr("Starting map renderer\u2026"));
-    // Set when a GPU map surface is created; without one there is no map.
-    bool gpu_map_surface_created = false;
 #if AOWIS_HAS_BGFX
-    bool bgfx_requested = false;
-#ifdef Q_OS_WASM
-    bgfx_requested = wasmMapRenderer() == WasmMapRenderer::Bgfx;
-#else
-    bgfx_requested = desktopMapRenderer() == DesktopMapRenderer::Bgfx;
-#endif
-    if (bgfx_requested)
+    // bgfx is the only map renderer.
     {
         // Do not promote until bgfx has actually produced a frame; until then
         // the status label is shown. MapWidget keeps map navigation input.
         MapBgfxSurface *surface = new MapBgfxSurface(this->map_model, this->map_stack);
-        gpu_map_surface_created = true;
         surface->setNavigationHandlers(
             [this](QKeyEvent *event) { return this->map->handleKeyPressEvent(event); },
             [this](QKeyEvent *event) { return this->map->handleKeyReleaseEvent(event); },
@@ -780,13 +771,11 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
                                   "after 10 s.\n%1").arg(diagnostics));
         });
     }
+#else
+    showRendererStatus(
+        tr("The bgfx map renderer is not part of this build.\n"
+           "Reconfigure with -DAOWIS_ENABLE_BGFX_MAP=ON."));
 #endif
-    if (!gpu_map_surface_created)
-    {
-        showRendererStatus(
-            tr("The bgfx map renderer is not part of this build.\n"
-               "Reconfigure with -DAOWIS_ENABLE_BGFX_MAP=ON."));
-    }
 
     this->layout->addWidget(scroll_controls);
     this->layout->addWidget(this->map_stack);
