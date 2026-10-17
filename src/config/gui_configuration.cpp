@@ -7,9 +7,6 @@
 
 #include <cmath>
 
-#ifndef AOWIS_HAS_QRHI
-#define AOWIS_HAS_QRHI 0
-#endif
 #ifndef AOWIS_HAS_BGFX
 #define AOWIS_HAS_BGFX 0
 #endif
@@ -151,18 +148,6 @@ EM_JS(int, aowisBuiltinExamplesEnabled, (),
     return configuration.examplesBuiltinEnable === false ? 0 : 1;
 });
 
-EM_JS(int, aowisWasmRendererPreference, (),
-{
-    // 1 = rhi, 2 = bgfx. index.html already normalizes the value; bgfx is
-    // the default and the removed "browser" renderer maps to bgfx like the
-    // desktop "cpu" value.
-    const configuration = globalThis.aowisGuiConfiguration || {};
-    const renderer = typeof configuration.mapWasmRenderer === "string"
-        ? configuration.mapWasmRenderer.trim().toLowerCase()
-        : "bgfx";
-    return renderer === "rhi" ? 1 : 2;
-});
-
 EM_JS(int, aowisSymbologyPalettePreference, (const char *key, int default_value),
 {
     try
@@ -251,26 +236,9 @@ EM_JS(int, aowisMapPerformanceIntPreference, (const char *key, int default_value
     }
 });
 
-EM_JS(int, aowisMapPerformanceBoolPreference, (const char *key, int default_value),
-{
-    try
-    {
-        const raw = globalThis.localStorage
-            ? globalThis.localStorage.getItem(UTF8ToString(key))
-            : null;
-        if (raw === null)
-            return default_value;
-        return raw === "true" || raw === "1" ? 1 : 0;
-    }
-    catch (error)
-    {
-        return default_value;
-    }
-});
-
 EM_JS(int, aowisSaveMapPerformancePreference,
       (double terrain_lod_target_cell_size_px,
-       int terrain_max_detail_zoom, int terrain_full_detail_zoom, int array_batching_enabled),
+       int terrain_max_detail_zoom, int terrain_full_detail_zoom),
 {
     try
     {
@@ -285,9 +253,8 @@ EM_JS(int, aowisSaveMapPerformancePreference,
         globalThis.localStorage.setItem(
             "aowis.map_performance.terrain_full_detail_zoom",
             String(terrain_full_detail_zoom));
-        globalThis.localStorage.setItem(
-            "aowis.map_performance.array_batching_enabled",
-            array_batching_enabled ? "true" : "false");
+        // The QRhi renderer's texture-array batching switch is gone.
+        globalThis.localStorage.removeItem("aowis.map_performance.array_batching_enabled");
         return 1;
     }
     catch (error)
@@ -328,9 +295,8 @@ GuiConfiguration loadConfiguration()
 {
     GuiConfiguration configuration;
     configuration.examples_builtin_enable = aowisBuiltinExamplesEnabled() != 0;
-    const int wasm_renderer = aowisWasmRendererPreference();
-    configuration.map_wasm_renderer = wasm_renderer == 1 ? WasmMapRenderer::Rhi
-                                                          : WasmMapRenderer::Bgfx;
+    // bgfx is the only renderer: index.html warns about legacy values of
+    // gui/map_wasm_renderer ("browser", "rhi").
     const int node_palette_value = aowisSymbologyPalettePreference(
         "aowis.symbology.node_palette",
         static_cast<int>(NetworkSymbologyDefaultNodePalette));
@@ -387,10 +353,6 @@ GuiConfiguration loadConfiguration()
         aowisMapPerformanceIntPreference(
             "aowis.map_performance.terrain_full_detail_zoom",
             default_map_performance.terrain_full_detail_zoom);
-    configuration.map_performance.array_batching_enabled =
-        aowisMapPerformanceBoolPreference(
-            "aowis.map_performance.array_batching_enabled",
-            default_map_performance.array_batching_enabled ? 1 : 0) != 0;
     qInfo() << "Loaded GUI configuration from webroot/aowis-server-gui.ini: examples_builtin_enable ="
             << configuration.examples_builtin_enable
             << "map_wasm_renderer =" << wasmMapRendererName(configuration.map_wasm_renderer);
@@ -488,7 +450,6 @@ bool createDefaultConfiguration(const QString &path)
         "terrain_lod_target_cell_size_px=32\n"
         "terrain_max_detail_zoom=14\n"
         "terrain_full_detail_zoom=19\n"
-        "array_batching_enabled=true\n"
         "\n"
         "[map_server]\n"
         "base_url=http://aowis-server-map.localhost:80\n"
@@ -529,9 +490,12 @@ DesktopMapRenderer parseDesktopMapRenderer(const QString &value, bool *valid)
 
     if (normalized == QStringLiteral("rhi"))
     {
+        // The QRhi map renderer was removed with the bgfx globe (roadmap
+        // Phase 3). Keep old ini files working.
+        qWarning() << "gui/map_desktop_renderer=rhi is no longer supported; using bgfx.";
         if (valid != nullptr)
             *valid = true;
-        return DesktopMapRenderer::Rhi;
+        return DesktopMapRenderer::Bgfx;
     }
     if (normalized == QStringLiteral("bgfx"))
     {
@@ -613,9 +577,6 @@ GuiConfiguration loadConfiguration()
                          QString::number(advertised_map_performance.terrain_max_detail_zoom));
     ensureSettingDefault(settings, QStringLiteral("map_performance/terrain_full_detail_zoom"),
                          QString::number(advertised_map_performance.terrain_full_detail_zoom));
-    ensureSettingDefault(settings, QStringLiteral("map_performance/array_batching_enabled"),
-                         advertised_map_performance.array_batching_enabled
-                             ? QStringLiteral("true") : QStringLiteral("false"));
     settings.sync();
 
     GuiConfiguration configuration;
@@ -648,7 +609,7 @@ GuiConfiguration loadConfiguration()
     if (!renderer_valid)
     {
         qWarning() << "Invalid gui/map_desktop_renderer value" << configured_renderer
-                   << "in" << path << "- using bgfx. Valid values are: bgfx, rhi.";
+                   << "in" << path << "- using bgfx. The only valid value is bgfx.";
     }
 
     configuration.shortcuts.sidebar_toggle = loadShortcutSetting(settings, QStringLiteral("shortcuts/sidebar_toggle"), advertised_shortcuts.sidebar_toggle);
@@ -741,18 +702,13 @@ GuiConfiguration loadConfiguration()
             ? loaded_full_detail_zoom
             : default_map_performance.terrain_full_detail_zoom;
 
-    configuration.map_performance.array_batching_enabled = settings.value(
-        QStringLiteral("map_performance/array_batching_enabled"),
-        default_map_performance.array_batching_enabled).toBool();
-
     if (settings.status() != QSettings::NoError)
         qWarning() << "Failed to read GUI configuration:" << path;
     else
         qInfo() << "Loaded GUI configuration:" << path
                 << "examples_builtin_enable =" << configuration.examples_builtin_enable
                 << "map_desktop_renderer ="
-                << desktopMapRendererName(configuration.map_desktop_renderer)
-                << "rhi_build_available =" << desktopMapRhiBuildAvailable();
+                << desktopMapRendererName(configuration.map_desktop_renderer);
 
     return configuration;
 }
@@ -810,49 +766,27 @@ const char *desktopMapRendererName(DesktopMapRenderer renderer)
 {
     switch (renderer)
     {
-        case DesktopMapRenderer::Rhi:
-            return "rhi";
         case DesktopMapRenderer::Bgfx:
-        default:
-            return "bgfx";
+            break;
     }
-}
-
-bool desktopMapRhiBuildAvailable()
-{
-    return AOWIS_HAS_QRHI != 0;
+    return "bgfx";
 }
 
 DesktopMapRenderer desktopMapRenderer()
 {
-#ifdef __EMSCRIPTEN__
-    return DesktopMapRenderer::Rhi;
-#else
     static const DesktopMapRenderer renderer = []()
     {
-        // Only GPU renderers exist. bgfx is the target renderer: if it was
-        // requested but is not part of this build, do NOT silently switch to
-        // QRhi (which is being removed). The monitor then shows a status
-        // message telling how to enable bgfx. An old CMake cache with
-        // AOWIS_ENABLE_BGFX_MAP=OFF otherwise looked like "RHI came back".
+        // bgfx is the only map renderer. Without it in the build the monitor
+        // shows a status message telling how to enable it.
         const DesktopMapRenderer requested = guiConfiguration().map_desktop_renderer;
-        if (requested == DesktopMapRenderer::Bgfx && !AOWIS_HAS_BGFX)
+        if (!AOWIS_HAS_BGFX)
         {
             qWarning() << "Desktop bgfx map requested but this build has AOWIS_ENABLE_BGFX_MAP=OFF; "
                           "no map renderer. Reconfigure with -DAOWIS_ENABLE_BGFX_MAP=ON.";
-            return DesktopMapRenderer::Bgfx;
         }
-        if (requested == DesktopMapRenderer::Rhi && !desktopMapRhiBuildAvailable())
-        {
-            qWarning() << "Desktop map renderer 'rhi' was requested, but this build has no "
-                          "QRhi support; using bgfx.";
-            return DesktopMapRenderer::Bgfx;
-        }
-
         return requested;
     }();
     return renderer;
-#endif
 }
 
 const char *wasmMapRendererName(WasmMapRenderer renderer)
@@ -860,20 +794,9 @@ const char *wasmMapRendererName(WasmMapRenderer renderer)
     switch (renderer)
     {
         case WasmMapRenderer::Bgfx:
-            return "bgfx";
-        case WasmMapRenderer::Rhi:
-        default:
-            return "rhi";
+            break;
     }
-}
-
-bool wasmMapRhiBuildAvailable()
-{
-#ifdef __EMSCRIPTEN__
-    return AOWIS_HAS_QRHI != 0;
-#else
-    return false;
-#endif
+    return "bgfx";
 }
 
 WasmMapRenderer wasmMapRenderer()
@@ -881,19 +804,13 @@ WasmMapRenderer wasmMapRenderer()
 #ifdef __EMSCRIPTEN__
     static const WasmMapRenderer renderer = []()
     {
-        // Same policy as the desktop: only GPU renderers exist. Without bgfx
-        // in the build the monitor shows a status message (no silent switch).
+        // Same policy as the desktop: without bgfx in the build the monitor
+        // shows a status message.
         const WasmMapRenderer requested = guiConfiguration().map_wasm_renderer;
-        if (requested == WasmMapRenderer::Bgfx && !AOWIS_HAS_BGFX)
+        if (!AOWIS_HAS_BGFX)
         {
             qWarning() << "WASM bgfx map requested but this build has AOWIS_ENABLE_BGFX_MAP=OFF; "
                           "no map renderer.";
-        }
-        if (requested == WasmMapRenderer::Rhi && !wasmMapRhiBuildAvailable())
-        {
-            qWarning() << "WASM map renderer 'rhi' was requested, but this build has no "
-                          "QRhi support; using bgfx.";
-            return WasmMapRenderer::Bgfx;
         }
         return requested;
     }();
@@ -1003,8 +920,7 @@ bool saveGuiMapPerformanceConfiguration(const GuiMapPerformanceConfiguration &co
     const bool saved = aowisSaveMapPerformancePreference(
         configuration.terrain_lod_target_cell_size_px,
         configuration.terrain_max_detail_zoom,
-        configuration.terrain_full_detail_zoom,
-        configuration.array_batching_enabled ? 1 : 0) != 0;
+        configuration.terrain_full_detail_zoom) != 0;
 #else
     QSettings settings(guiConfigurationFilePath(), QSettings::IniFormat);
     settings.setValue(QStringLiteral("map_performance/terrain_lod_target_cell_size_px"),
@@ -1013,8 +929,8 @@ bool saveGuiMapPerformanceConfiguration(const GuiMapPerformanceConfiguration &co
                       configuration.terrain_max_detail_zoom);
     settings.setValue(QStringLiteral("map_performance/terrain_full_detail_zoom"),
                       configuration.terrain_full_detail_zoom);
-    settings.setValue(QStringLiteral("map_performance/array_batching_enabled"),
-                      configuration.array_batching_enabled);
+    // The QRhi renderer's texture-array batching switch is gone.
+    settings.remove(QStringLiteral("map_performance/array_batching_enabled"));
     settings.sync();
     const bool saved = settings.status() == QSettings::NoError;
 #endif

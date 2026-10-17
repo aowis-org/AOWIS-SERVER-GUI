@@ -24,7 +24,7 @@
 // emscripten_proxy_async() and runs the browser's promises there. Neither the
 // GUI thread nor the wasm decode threads touch a pixel; the result is the
 // same RGBA8888 image Qt's path delivers (MapTileRepository::tile()), so the
-// bgfx zero-copy upload and the QRhi renderers are unchanged.
+// bgfx zero-copy upload is unchanged.
 //
 // The canvas round trip yields straight (unpremultiplied) RGBA: exact for
 // opaque tiles (basemap imagery; verified in Chromium against libpng and

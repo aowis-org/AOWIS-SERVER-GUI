@@ -182,8 +182,9 @@ elseif(APPLE)
         "-framework Cocoa" "-framework Metal" "-framework QuartzCore"
         "-framework IOKit" "-framework CoreFoundation")
 elseif(EMSCRIPTEN)
-    # Enables WebGL 2 in Emscripten's GL library (as bgfx.cmake did). No
-    # MIN_WEBGL_VERSION here: that would also apply to Qt's own contexts.
+    # Enables WebGL 2 in Emscripten's GL library (as bgfx.cmake did). The
+    # application target additionally requires WebGL 2 for every context
+    # (MIN_WEBGL_VERSION, CMakeLists.txt); bgfx itself does not impose that.
     target_link_options(bgfx PUBLIC "-sMAX_WEBGL_VERSION=2")
 endif()
 # Linux needs no extra link libraries: bgfx dlopen()s libEGL, libGL,

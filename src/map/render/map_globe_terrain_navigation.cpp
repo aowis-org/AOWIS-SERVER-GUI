@@ -16,9 +16,9 @@
 
 #include <cmath>
 
-// Everything below is MapRhiWidget's terrain code with the renderer
-// replaced by MapGlobeSurfacePreparation (which MapRhiGlobeRenderer only
-// forwarded to). Constants and comments are kept as they are there.
+// Everything below is the removed QRhi map widget's terrain code with its
+// renderer replaced by MapGlobeSurfacePreparation (which the QRhi globe
+// renderer only forwarded to). Constants and comments are kept as they were.
 namespace
 {
 constexpr int CameraTerrainMinimumZoom = 8;

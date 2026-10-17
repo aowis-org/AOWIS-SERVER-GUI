@@ -6,8 +6,8 @@
 #include <QtGlobal>
 
 // Backend-neutral retained network vertex layouts. Keep field order and types
-// stable: the current QRhi backend uploads these structs directly, and future
-// GPU backends should be able to consume the same scene data unchanged.
+// stable: the bgfx globe network uploads these structs directly
+// (MapBgfxGlobeNetwork's vertex layouts mirror them).
 struct MapNetworkLinkVertex
 {
     float start_x = 0.0f;

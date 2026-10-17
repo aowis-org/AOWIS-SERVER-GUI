@@ -3,15 +3,14 @@
 
 #include <QWidget>
 
-class QCheckBox;
 class QLabel;
 class QLineEdit;
 class QPushButton;
 class QTimer;
 class SliderNumberControl;
 
-// Settings > Map Settings: navigation sensitivity, performance knobs for
-// the RHI 3D renderer, and map server connection details.
+// Settings > Map Settings: navigation sensitivity, terrain performance knobs
+// for the globe, and map server connection details.
 class MapSettingsWidget : public QWidget
 {
     Q_OBJECT
@@ -31,7 +30,6 @@ private:
     SliderNumberControl *terrain_lod_target_control = nullptr;
     SliderNumberControl *terrain_max_detail_zoom_control = nullptr;
     SliderNumberControl *terrain_full_detail_zoom_control = nullptr;
-    QCheckBox *array_batching_checkbox = nullptr;
     QLabel *performance_status = nullptr;
     QTimer *performance_save_debounce = nullptr;
 

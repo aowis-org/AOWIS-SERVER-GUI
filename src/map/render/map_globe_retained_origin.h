@@ -10,9 +10,9 @@
 // geometry or GPU buffers. Re-anchoring is permitted only for an actual
 // geometry revision (e.g. loading a different network).
 //
-// This is the single-origin compatibility path for the existing QRhi network
-// buffers. Widely distributed networks require per-spatial-chunk local frames
-// in the future bgfx backend; the retained chunk index is already available.
+// One origin for the whole network (MapBgfxGlobeNetwork's buffers). Widely
+// distributed networks would need per-spatial-chunk local frames; the
+// retained chunk index is already available for that.
 class MapGlobeRetainedOrigin
 {
 public:

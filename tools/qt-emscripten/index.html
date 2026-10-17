@@ -511,16 +511,14 @@
           const loadedConfiguration = await fetchAowisConfiguration();
           const configurationUrl = loadedConfiguration.url;
           const values = parseAowisIni(loadedConfiguration.text);
-          // bgfx is the map renderer. "rhi" stays selectable until the bgfx
-          // globe exists; the JavaScript "browser" renderer was removed and
-          // the old value maps to bgfx (like the desktop "cpu" value).
+          // bgfx is the only map renderer. The removed renderers' values
+          // ("browser": the JavaScript renderer, "rhi": QRhi) select bgfx,
+          // like the desktop "cpu" and "rhi" values.
           const configuredWasmRenderer = (values['gui/map_wasm_renderer'] || 'bgfx')
               .trim().toLowerCase();
-          const mapWasmRenderer = ['rhi', 'bgfx'].includes(configuredWasmRenderer)
-              ? configuredWasmRenderer
-              : 'bgfx';
-          if (configuredWasmRenderer === 'browser')
-              console.warn("gui/map_wasm_renderer 'browser' is no longer supported, using bgfx");
+          const mapWasmRenderer = 'bgfx';
+          if (configuredWasmRenderer === 'browser' || configuredWasmRenderer === 'rhi')
+              console.warn(`gui/map_wasm_renderer '${configuredWasmRenderer}' is no longer supported, using bgfx`);
           else if (mapWasmRenderer !== configuredWasmRenderer)
               console.warn(`Invalid gui/map_wasm_renderer '${configuredWasmRenderer}', using bgfx`);
 

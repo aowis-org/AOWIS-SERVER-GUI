@@ -542,7 +542,7 @@ QVector<QRgb> rampStops(int seed)
     return stops;
 }
 
-// Node / link / heatmap like EntityMapLegendHud (13 / 12 / 13 entries); the
+// Node / link / heatmap like the former QWidget legend HUD (13 / 12 / 13 entries); the
 // link group has a metric and therefore a ramp.
 MapBgfxHud::Legend legendContent()
 {

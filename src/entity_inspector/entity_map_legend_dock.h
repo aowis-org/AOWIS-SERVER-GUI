@@ -16,61 +16,12 @@
 class MapSymbologyRampWidget;
 
 
-class EntityMapLegendHud : public QWidget
-{
-    Q_OBJECT
-public:
-    explicit EntityMapLegendHud(HydraulicData *hydraulic_data, QWidget *parent = nullptr);
-
-    void setMapMonitorActive(bool active);
-    void setNodeVisual(VisualNode visual_node);
-    void setLinkVisual(VisualLink visual_link);
-    void setHeatmapVisual(VisualHeatmap visual_heatmap);
-    void setNodePalette(NetworkSymbologyPalette palette, bool flipped);
-    void setLinkPalette(NetworkSymbologyPalette palette, bool flipped);
-    void setHeatmapPalette(NetworkSymbologyPalette palette, bool flipped);
-
-signals:
-    void signalNodeVisualSelected(VisualNode visual_node);
-    void signalLinkVisualSelected(VisualLink visual_link);
-    void signalHeatmapVisualSelected(VisualHeatmap visual_heatmap);
-    void signalNodePaletteSelected(NetworkSymbologyPalette palette, bool flipped);
-    void signalLinkPaletteSelected(NetworkSymbologyPalette palette, bool flipped);
-    void signalHeatmapPaletteSelected(NetworkSymbologyPalette palette, bool flipped);
-
-private:
-    HydraulicData *hydraulic_data = nullptr;
-    QVBoxLayout *layout = nullptr;
-    QComboBox *combo_node = nullptr;
-    QComboBox *combo_link = nullptr;
-    QComboBox *combo_heatmap = nullptr;
-    MapSymbologyRampWidget *legend_node = nullptr;
-    MapSymbologyRampWidget *legend_link = nullptr;
-    MapSymbologyRampWidget *legend_heatmap = nullptr;
-    VisualNode visual_node = VisualNode::None;
-    VisualLink visual_link = VisualLink::None;
-    VisualHeatmap visual_heatmap = VisualHeatmap::None;
-    NetworkSymbologyPalette node_palette = NetworkSymbologyDefaultNodePalette;
-    bool node_palette_flipped = false;
-    NetworkSymbologyPalette link_palette = NetworkSymbologyDefaultLinkPalette;
-    bool link_palette_flipped = false;
-    NetworkSymbologyPalette heatmap_palette = NetworkSymbologyDefaultHeatmapPalette;
-    bool heatmap_palette_flipped = false;
-    bool map_monitor_active = false;
-
-    void updateNodeLegend();
-    void updateLinkLegend();
-    void updateHeatmapLegend();
-    void updateVisibility();
-};
-
 class EntityMapLegendDock : public QDockWidget
 {
     Q_OBJECT
 public:
     explicit EntityMapLegendDock(HydraulicData *hydraulic_data, QWidget *parent = nullptr);
     int dockHeightPreferred() const;
-    void configureAsHud();
 
 public slots:
     void showMapLegendNode(VisualNode visual_node);

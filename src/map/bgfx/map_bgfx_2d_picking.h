@@ -10,8 +10,8 @@
 
 // CPU picking for the bgfx 2D Map Monitor (click selection and hover).
 //
-// Same rules and radii as the flat QRhi hitTest() (map_rhi_widget.cpp), but
-// against what bgfx actually draws: decluttered node positions, link icons at
+// Same rules and radii as the former flat QRhi hitTest(), but against what
+// bgfx actually draws: decluttered node positions, link icons at
 // the middle of the link length, sizes from the continuous zoom (never the
 // integer imagery level).
 //

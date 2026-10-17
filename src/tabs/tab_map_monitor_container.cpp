@@ -11,18 +11,12 @@
 #include "config/unit_table_presentation.h"
 #include "config/shortcut_registry.h"
 #include "map/data/map_terrain_repository.h"
+#include "map/render/map_network_render_symbology.h"
+#include "map/render/map_render_surface.h"
 #if AOWIS_HAS_BGFX
 #include "map/bgfx/map_bgfx_globe_hud_controller.h"
 #include "map/bgfx/map_bgfx_legend_content.h"
 #include "map/bgfx/map_bgfx_surface.h"
-#endif
-#if AOWIS_HAS_QRHI
-#include "map/rhi/map_rhi_widget.h"
-#include "map/render/map_render_surface.h"
-#include "map/render/map_render_hud_widget.h"
-#include "map/monitor/map_monitor_hud_controls.h"
-#include "map/render/map_network_render_symbology.h"
-#include "entity_inspector/entity_map_legend_dock.h"
 #endif
 
 #include <QAbstractButton>
@@ -30,7 +24,6 @@
 #include <QContextMenuEvent>
 #include <QCoreApplication>
 #include <QDebug>
-#include <QFrame>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -40,7 +33,6 @@
 #include <QShortcut>
 #include <QSignalBlocker>
 #include <QTimer>
-#include <QToolButton>
 #include <QWheelEvent>
 
 #include <cmath>
@@ -54,24 +46,6 @@
 
 namespace
 {
-bool rhiMonitorRendererConfigured()
-{
-#ifdef Q_OS_WASM
-    return wasmMapRenderer() == WasmMapRenderer::Rhi;
-#else
-    return desktopMapRenderer() == DesktopMapRenderer::Rhi;
-#endif
-}
-
-bool shouldCollapseRhiMonitorSymbologyGroups()
-{
-#ifdef Q_OS_WASM
-    return false;
-#else
-    return rhiMonitorRendererConfigured();
-#endif
-}
-
 class SymbologySlider final : public QSlider
 {
 public:
@@ -416,10 +390,9 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
     // input/navigation owner but never paints map tiles itself.
     this->renderer_status->setAlignment(Qt::AlignCenter);
     this->renderer_status->setWordWrap(true);
-    // Text only, never an opaque cover: a QRhiWidget that is completely
-    // obscured by an opaque sibling gets no paint events, never renders its
-    // first frame and therefore never reports ready ("Starting map
-    // renderer..." forever). MapWidget below provides the background.
+    // Text only, never an opaque cover over the stack: MapWidget below
+    // provides the background, and a GPU surface added later must stay
+    // visible to present (and report) its first frame.
     this->renderer_status->setAutoFillBackground(false);
     this->renderer_status->setAttribute(Qt::WA_TranslucentBackground);
     this->renderer_status->setAttribute(Qt::WA_TransparentForMouseEvents);
@@ -461,12 +434,12 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
         // 2D imagery is drawn by bgfx itself from the shared tile repository;
         // the "slide opacity" fades it towards the background under the network.
         surface->setTileRepository(this->tile_repository);
-        // DEM tiles for the globe's terrain relief (Phase 3 preview).
+        // DEM tiles for the globe's terrain relief.
         surface->setTerrainRepository(this->terrain_repository);
-        // Terrain-aware navigation (Phase 3, slice 2), as on the QRhi
-        // surface: pointer coordinates with DEM altitude (the 2D footer
-        // reads cached DEM tiles too), globe pans anchored to the drawn
-        // terrain. MapWidget keeps owning the navigation.
+        // Terrain-aware navigation (Phase 3, slice 2): pointer coordinates
+        // with DEM altitude (the 2D footer reads cached DEM tiles too), globe
+        // pans anchored to the drawn terrain. MapWidget keeps owning the
+        // navigation.
         this->map->setRenderSurfaceScreenCoordinateResolver(
             [surface](const QPointF &screen_position, CoordinateWGS84 *coordinate)
         {
@@ -522,8 +495,7 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
         });
         surface->setNetworkSnapshot(this->hydraulic_data->networkRenderSnapshot());
 
-        // Symbology: the same resolved MapNetworkRenderSymbology as QRhi.
-        // Every data change that can alter colours re-resolves it, coalesced
+        // Symbology: the resolved MapNetworkRenderSymbology. Every data change that can alter colours re-resolves it, coalesced
         // to one resolve per event-loop burst by applyVisualControlSymbology().
         // On the GPU this only re-uploads the colour stream, never geometry.
         this->bgfx_render_surface = surface;
@@ -607,7 +579,7 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
         });
 #ifndef Q_OS_WASM
         // Fullscreen shortcut, enabled while the surface presents frames and
-        // no shortcut is being captured (same rules as the QRhi path).
+        // no shortcut is being captured.
         this->bgfx_fullscreen_shortcut = new QShortcut(
             guiShortcutRegistry().keySequence(GuiShortcutId::MapMonitorFullscreen),
             this->map_stack);
@@ -643,7 +615,7 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
 #endif
 
         // Selection from anywhere (map click, tables, inspector) is drawn as
-        // the QRhi selection highlight.
+        // the selection highlight.
         connect(this->hydraulic_data, &HydraulicData::signalSelectedTank, surface,
                 [surface](const HydraulicNodeTank &tank)
         {
@@ -675,8 +647,7 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
             surface->setSelectedEntity(InfrastructureEntity::Valve, valve.uuid);
         });
 
-        // Simulation error / stale-result highlights: same triggers as QRhi
-        // (applyDesktopRenderSurfaceHighlights()). The surface ignores
+        // Simulation error / stale-result highlights. The surface ignores
         // unchanged sets, so redundant calls cost nothing on the GPU.
         const std::function<void()> apply_bgfx_highlights = [this, surface]()
         {
@@ -734,9 +705,9 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
             // receives the pointer input.
             this->map_stack_layout->setCurrentWidget(this->map);
 #endif
-            // Match the QRhi activation path: keyboard zoom must use the
-            // continuous GPU-camera animation, not integer MapModel::zoomIn/
-            // zoomOut. Tile zoom is only a derived imagery LOD.
+            // Keyboard zoom must use the continuous GPU-camera animation,
+            // not integer MapModel::zoomIn/zoomOut. Tile zoom is only a
+            // derived imagery LOD.
             this->map->setRenderSurfaceActive(true);
             // bgfx presents the frames, so it is the only navigation clock.
             this->map->setNavigationFrameDriver(true);
@@ -744,9 +715,9 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
             this->map->setOrbitPointerLockWindow(surface->nativeInputWindow());
 #endif
             surface->focusNavigationInput();
-            // The map legend moves from the dock onto the HUD (like the
-            // QRhi path's EntityMapLegendHud): hide the dock's groups and
-            // show the HUD legend with the current symbology.
+            // The map legend moves from the dock onto the HUD: hide the
+            // dock's groups and show the HUD legend with the current
+            // symbology.
             emit signalShowMapLegendNode(VisualNode::None);
             emit signalShowMapLegendLink(VisualLink::None);
             emit signalShowMapLegendHeatmap(VisualHeatmap::None);
@@ -810,424 +781,6 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
         });
     }
 #endif
-#if AOWIS_HAS_QRHI
-    bool rhi_requested = false;
-#ifdef Q_OS_WASM
-    rhi_requested = wasmMapRenderer() == WasmMapRenderer::Rhi;
-#else
-    rhi_requested = desktopMapRenderer() == DesktopMapRenderer::Rhi;
-#endif
-    if (rhi_requested)
-    {
-        MapRhiWidget *rhi_widget =
-            new MapRhiWidget(this->map_model, QStringLiteral("monitor"), this->map_stack);
-        gpu_map_surface_created = true;
-        MapRenderSurface *render_surface = rhi_widget;
-        connect(this->map_menu->mapNavigationWidget(),
-                &MapNavigationWidget::signal3dIconsChanged,
-                rhi_widget, [render_surface](bool enabled)
-        {
-            render_surface->setGlobe3dIconsEnabled(enabled);
-        });
-        QWidget *render_hud_parent = this->map_stack;
-        if (rhi_widget->api() == QRhiWidget::Api::Vulkan)
-            render_hud_parent = rhi_widget;
-        MapRenderHudWidget *render_hud =
-            new MapRenderHudWidget(this->map_model, this->gps, render_hud_parent);
-        MapMonitorDownloadActivityHudWidget *download_activity_hud =
-            new MapMonitorDownloadActivityHudWidget(
-                this->tile_repository, this->terrain_repository, render_surface,
-                this->map_stack);
-        MapMonitorViewModeHudWidget *view_mode_hud =
-            new MapMonitorViewModeHudWidget(
-                this->map_model, render_surface, rhi_widget, this->map_stack);
-        MapMonitorCompassHudWidget *compass_hud =
-            new MapMonitorCompassHudWidget(this->map_model, this->map_stack);
-        MapMonitorScaleHudWidget *scale_hud =
-            new MapMonitorScaleHudWidget(this->map_model, this->map_stack);
-        MapMonitorVerticalControlsHudWidget *vertical_controls_hud =
-            new MapMonitorVerticalControlsHudWidget(
-                this->map_model, render_surface, this->map_stack);
-        EntityMapLegendHud *legend_hud =
-            new EntityMapLegendHud(this->hydraulic_data, this->map_stack);
-        QFrame *scene_fullscreen_hud = nullptr;
-        QToolButton *scene_fullscreen_button = nullptr;
-        QShortcut *scene_fullscreen_shortcut = nullptr;
-#ifndef Q_OS_WASM
-        scene_fullscreen_hud = new QFrame(this->map_stack);
-        scene_fullscreen_hud->setFrameShape(QFrame::StyledPanel);
-        scene_fullscreen_hud->setFrameShadow(QFrame::Raised);
-        scene_fullscreen_hud->setAutoFillBackground(true);
-        scene_fullscreen_hud->setFocusPolicy(Qt::NoFocus);
-        QPalette scene_fullscreen_palette = scene_fullscreen_hud->palette();
-        QColor scene_fullscreen_background = scene_fullscreen_palette.color(QPalette::Window);
-        scene_fullscreen_background.setAlpha(220);
-        scene_fullscreen_palette.setColor(QPalette::Window, scene_fullscreen_background);
-        scene_fullscreen_hud->setPalette(scene_fullscreen_palette);
-
-        scene_fullscreen_button = new QToolButton(scene_fullscreen_hud);
-        scene_fullscreen_button->setAutoRaise(true);
-        const int scene_fullscreen_button_extent = (Sizes::TopControlBarHeight - 8) / 2;
-        const int scene_fullscreen_icon_extent = qMax(1, scene_fullscreen_button_extent - 2);
-        const int scene_fullscreen_hud_padding = 4;
-        scene_fullscreen_button->setFixedSize(
-            scene_fullscreen_button_extent, scene_fullscreen_button_extent);
-        scene_fullscreen_button->setIconSize(
-            QSize(scene_fullscreen_icon_extent, scene_fullscreen_icon_extent));
-        scene_fullscreen_button->setStyleSheet(QStringLiteral("padding: 0;"));
-        scene_fullscreen_button->move(
-            scene_fullscreen_hud_padding, scene_fullscreen_hud_padding);
-        scene_fullscreen_hud->setFixedSize(
-            scene_fullscreen_button_extent + scene_fullscreen_hud_padding * 2,
-            scene_fullscreen_button_extent + scene_fullscreen_hud_padding * 2);
-        scene_fullscreen_shortcut = new QShortcut(
-            guiShortcutRegistry().keySequence(GuiShortcutId::MapMonitorFullscreen),
-            this->map_stack);
-        scene_fullscreen_shortcut->setContext(Qt::ApplicationShortcut);
-        scene_fullscreen_shortcut->setAutoRepeat(false);
-#endif
-        this->desktop_render_surface = render_surface;
-        this->desktop_render_widget = rhi_widget;
-        this->desktop_render_hud = render_hud;
-        this->desktop_download_activity_hud = download_activity_hud;
-        this->desktop_view_mode_hud = view_mode_hud;
-        this->desktop_compass_hud = compass_hud;
-        this->desktop_scale_hud = scale_hud;
-        this->desktop_vertical_controls_hud = vertical_controls_hud;
-        this->desktop_legend_hud = legend_hud;
-        this->desktop_scene_fullscreen_hud = scene_fullscreen_hud;
-        this->desktop_scene_fullscreen_button = scene_fullscreen_button;
-        this->desktop_scene_fullscreen_shortcut = scene_fullscreen_shortcut;
-        this->desktop_render_hud->hide();
-        this->desktop_download_activity_hud->setHudActive(false);
-        this->desktop_view_mode_hud->hide();
-        this->desktop_compass_hud->hide();
-        this->desktop_scale_hud->hide();
-        this->desktop_vertical_controls_hud->hide();
-        this->desktop_legend_hud->setMapMonitorActive(false);
-        this->desktop_legend_hud->hide();
-        if (this->desktop_scene_fullscreen_button != nullptr
-            && this->desktop_scene_fullscreen_shortcut != nullptr)
-        {
-            if (this->desktop_scene_fullscreen_hud != nullptr)
-                this->desktop_scene_fullscreen_hud->hide();
-            this->desktop_scene_fullscreen_shortcut->setEnabled(false);
-            updateDesktopRenderSurfaceFullscreenControl();
-            connect(this->desktop_scene_fullscreen_button, &QToolButton::clicked, this, [this]
-            {
-                setDesktopRenderSurfaceFullscreen(!this->desktop_scene_fullscreen_active);
-            });
-            connect(this->desktop_scene_fullscreen_shortcut, &QShortcut::activated, this, [this]
-            {
-                if (!this->desktop_render_surface_active)
-                    return;
-                if (!this->desktop_scene_fullscreen_active && !isVisible())
-                    return;
-                setDesktopRenderSurfaceFullscreen(!this->desktop_scene_fullscreen_active);
-            });
-            connect(&guiShortcutRegistry(), &GuiShortcutRegistry::shortcutChanged, this,
-                    [this](GuiShortcutId id)
-            {
-                if (id != GuiShortcutId::MapMonitorFullscreen
-                    || this->desktop_scene_fullscreen_shortcut == nullptr)
-                {
-                    return;
-                }
-                this->desktop_scene_fullscreen_shortcut->setKey(
-                    guiShortcutRegistry().keySequence(GuiShortcutId::MapMonitorFullscreen));
-                updateDesktopRenderSurfaceFullscreenControl();
-            });
-            connect(&guiShortcutRegistry(), &GuiShortcutRegistry::shortcutCaptureActiveChanged,
-                    this, [this](bool active)
-            {
-                if (this->desktop_scene_fullscreen_shortcut != nullptr)
-                {
-                    this->desktop_scene_fullscreen_shortcut->setEnabled(
-                        this->desktop_render_surface_active && !active);
-                }
-            });
-            installShortcutEditContextMenu(
-                this->desktop_scene_fullscreen_button, GuiShortcutId::MapMonitorFullscreen);
-        }
-        connect(this->desktop_legend_hud, &EntityMapLegendHud::signalNodeVisualSelected,
-                this, [this](VisualNode visual_node)
-        {
-            this->symbology_settings.visual_node = visual_node;
-            this->map_menu->setNodeVisualSelection(visual_node);
-            showMapLegendNode(visual_node);
-            applySymbology();
-        });
-        connect(this->desktop_legend_hud, &EntityMapLegendHud::signalLinkVisualSelected,
-                this, [this](VisualLink visual_link)
-        {
-            this->symbology_settings.visual_link = visual_link;
-            this->map_menu->setLinkVisualSelection(visual_link);
-            showMapLegendLink(visual_link);
-            applySymbology();
-        });
-        connect(this->desktop_legend_hud, &EntityMapLegendHud::signalHeatmapVisualSelected,
-                this, [this](VisualHeatmap visual_heatmap)
-        {
-            this->symbology_settings.visual_heatmap = visual_heatmap;
-            this->map_menu->setHeatmapVisualSelection(visual_heatmap);
-            showMapLegendHeatmap(visual_heatmap);
-            applySymbology();
-        });
-        connect(this->desktop_legend_hud, &EntityMapLegendHud::signalNodePaletteSelected,
-                this, &MapMonitorContainer::setNodePalette);
-        connect(this->desktop_legend_hud, &EntityMapLegendHud::signalLinkPaletteSelected,
-                this, &MapMonitorContainer::setLinkPalette);
-        connect(this->desktop_legend_hud, &EntityMapLegendHud::signalHeatmapPaletteSelected,
-                this, &MapMonitorContainer::setHeatmapPalette);
-        this->desktop_legend_hud->setNodePalette(
-            this->symbology_settings.node_palette,
-            this->symbology_settings.node_palette_flipped);
-        this->desktop_legend_hud->setLinkPalette(
-            this->symbology_settings.link_palette,
-            this->symbology_settings.link_palette_flipped);
-        this->desktop_legend_hud->setHeatmapPalette(
-            this->symbology_settings.heatmap_palette,
-            this->symbology_settings.heatmap_palette_flipped);
-        render_surface->setTileRepository(this->tile_repository);
-        render_surface->setTerrainRepository(this->terrain_repository);
-        this->map->setRenderSurfaceScreenCoordinateResolver(
-            [render_surface](const QPointF &screen_position, CoordinateWGS84 *coordinate)
-        {
-            return render_surface->terrainCoordinateAtScreen(
-                screen_position, coordinate, true);
-        });
-        this->map->setCachedTerrainElevationResolver(
-            [render_surface](const CoordinateWGS84 &coordinate, double *elevation_m)
-        {
-            return render_surface->cachedTerrainElevationAtCoordinate(
-                coordinate, elevation_m);
-        });
-        this->map->setRenderSurfaceGlobeTerrainPanResolver(
-            [render_surface](const QPoint &delta_pixels)
-        {
-            return render_surface->panGlobeByTerrainPixels(delta_pixels);
-        });
-        render_surface->setBackgroundOpacity(this->network_background_opacity);
-        render_surface->setNetworkSnapshot(this->hydraulic_data->networkRenderSnapshot());
-        applyDesktopRenderSurfaceSymbology();
-        applyDesktopRenderSurfaceHighlights();
-
-        // Probe QRhi at the real map-stack size behind the working fallback
-        // renderer. Vulkan QRhiWidget backing resources are backend-sensitive
-        // across resize/reinitialization, so a successful 1x1 frame must not be
-        // used to promote a surface that has never rendered at its real size.
-        // Keeping the surface in the StackAll layout from the beginning lets the
-        // layout maintain its full geometry while the status label stays
-        // visually on top until signalRendererReady().
-        this->map_stack_layout->addWidget(this->desktop_render_widget);
-        this->desktop_render_widget->show();
-        showRendererStatus(tr("Starting map renderer\u2026"));
-        // Same startup watchdog as for bgfx.
-        QTimer::singleShot(10000, rhi_widget, [this, rhi_widget]()
-        {
-            if (this->desktop_render_surface_active || !rhi_widget->isVisible())
-                return;
-            qWarning() << "RHI map did not present a frame within 10 s";
-            showRendererStatus(tr("The RHI map renderer has not presented a frame after 10 s."));
-        });
-
-        connect(this->hydraulic_data, &HydraulicData::signalNetworkLoaded,
-                rhi_widget, [this, render_surface]
-        {
-            render_surface->setNetworkSnapshot(this->hydraulic_data->networkRenderSnapshot());
-            applyDesktopRenderSurfaceSymbology();
-            applyDesktopRenderSurfaceHighlights();
-        });
-        connect(this->hydraulic_data, &HydraulicData::signalNetworkGeometryChanged,
-                rhi_widget, [this, render_surface](quint64)
-        {
-            render_surface->setNetworkSnapshot(this->hydraulic_data->networkRenderSnapshot());
-            applyDesktopRenderSurfaceSymbology();
-            applyDesktopRenderSurfaceHighlights();
-        });
-        connect(this->hydraulic_data, &HydraulicData::signalNodeChanged, this,
-                [this](InfrastructureEntity, const QUuid &)
-        {
-            if (this->symbology_settings.visual_node != VisualNode::None
-                || this->symbology_settings.visual_heatmap != VisualHeatmap::None)
-            {
-                applyDesktopRenderSurfaceSymbology();
-            }
-            applyDesktopRenderSurfaceHighlights();
-        });
-        connect(this->hydraulic_data, &HydraulicData::signalLinkChanged, this,
-                [this](InfrastructureEntity, const QUuid &)
-        {
-            if (this->symbology_settings.visual_link != VisualLink::None)
-                applyDesktopRenderSurfaceSymbology();
-            applyDesktopRenderSurfaceHighlights();
-        });
-        connect(this->hydraulic_data, &HydraulicData::signalSimulationHeadlossFormulaChanged,
-                this, [this]
-        {
-            if (this->symbology_settings.visual_link == VisualLink::Roughness)
-                applyDesktopRenderSurfaceSymbology();
-        });
-        connect(this->hydraulic_data, &HydraulicData::signalSimulationResultTimelineChanged,
-                this, [this](bool)
-        {
-            applyDesktopRenderSurfaceHighlights();
-            if (this->symbology_settings.show_flow_direction
-                || nodeVisualUsesHydraulicSimulationResult(this->symbology_settings.visual_node)
-                || linkVisualUsesHydraulicSimulationResult(this->symbology_settings.visual_link)
-                || heatmapVisualUsesHydraulicSimulationResult(
-                    this->symbology_settings.visual_heatmap))
-            {
-                applyDesktopRenderSurfaceSymbology();
-            }
-        });
-        connect(this->hydraulic_data,
-                &HydraulicData::signalWaterQualitySimulationResultTimelineChanged,
-                this, [this](bool)
-        {
-            if (this->symbology_settings.visual_node == VisualNode::WaterAge
-                || this->symbology_settings.visual_link == VisualLink::WaterAge
-                || this->symbology_settings.visual_heatmap == VisualHeatmap::WaterAge)
-            {
-                applyDesktopRenderSurfaceSymbology();
-            }
-        });
-        connect(this->hydraulic_data, &HydraulicData::signalCurrentSimulationResultChanged,
-                this, [this](int)
-        {
-            if (this->symbology_settings.show_flow_direction
-                || nodeVisualUsesHydraulicSimulationResult(this->symbology_settings.visual_node)
-                || linkVisualUsesHydraulicSimulationResult(this->symbology_settings.visual_link)
-                || heatmapVisualUsesHydraulicSimulationResult(
-                    this->symbology_settings.visual_heatmap)
-                || this->symbology_settings.visual_node == VisualNode::WaterAge
-                || this->symbology_settings.visual_link == VisualLink::WaterAge
-                || this->symbology_settings.visual_heatmap == VisualHeatmap::WaterAge)
-            {
-                applyDesktopRenderSurfaceSymbology();
-            }
-        });
-        connect(this->hydraulic_data, &HydraulicData::signalSelectedTank, rhi_widget,
-                [render_surface](const HydraulicNodeTank &tank)
-        {
-            render_surface->setSelectedEntity(InfrastructureEntity::Tank, tank.uuid);
-        });
-        connect(this->hydraulic_data, &HydraulicData::signalSelectedReservoir, rhi_widget,
-                [render_surface](const HydraulicNodeReservoir &reservoir)
-        {
-            render_surface->setSelectedEntity(InfrastructureEntity::Reservoir, reservoir.uuid);
-        });
-        connect(this->hydraulic_data, &HydraulicData::signalSelectedJunction, rhi_widget,
-                [render_surface](const HydraulicNodeJunction &junction)
-        {
-            render_surface->setSelectedEntity(InfrastructureEntity::Junction, junction.uuid);
-        });
-        connect(this->hydraulic_data, &HydraulicData::signalSelectedPipe, rhi_widget,
-                [render_surface](const HydraulicLinkPipe &pipe)
-        {
-            render_surface->setSelectedEntity(InfrastructureEntity::Pipe, pipe.uuid);
-        });
-        connect(this->hydraulic_data, &HydraulicData::signalSelectedPump, rhi_widget,
-                [render_surface](const HydraulicLinkPump &pump)
-        {
-            render_surface->setSelectedEntity(InfrastructureEntity::Pump, pump.uuid);
-        });
-        connect(this->hydraulic_data, &HydraulicData::signalSelectedValve, rhi_widget,
-                [render_surface](const HydraulicLinkValve &valve)
-        {
-            render_surface->setSelectedEntity(InfrastructureEntity::Valve, valve.uuid);
-        });
-        connect(rhi_widget, &MapRhiWidget::signalRendererReady, this,
-                [this, rhi_widget, render_hud, download_activity_hud, view_mode_hud]
-        {
-            this->desktop_render_surface_active = true;
-            this->map_stack_layout->setCurrentWidget(rhi_widget);
-            this->map->setRenderSurfaceActive(true);
-            this->renderer_status->hide();
-            rhi_widget->show();
-            // Keep the actual RHI map explicitly above the CPU fallback; HUD
-            // widgets are raised afterwards as usual.
-            rhi_widget->raise();
-
-            render_hud->show();
-            download_activity_hud->setHudActive(true);
-            view_mode_hud->show();
-            if (this->desktop_scene_fullscreen_hud != nullptr)
-            {
-                this->desktop_scene_fullscreen_hud->show();
-                this->desktop_scene_fullscreen_hud->raise();
-            }
-            if (this->desktop_scene_fullscreen_shortcut != nullptr)
-            {
-                this->desktop_scene_fullscreen_shortcut->setEnabled(
-                    !guiShortcutRegistry().shortcutCaptureActive());
-            }
-            updateDesktopRenderSurfaceFullscreenControl();
-            if (this->desktop_legend_hud != nullptr)
-            {
-                this->desktop_legend_hud->setNodeVisual(
-                    this->symbology_settings.visual_node);
-                this->desktop_legend_hud->setLinkVisual(
-                    this->symbology_settings.visual_link);
-                this->desktop_legend_hud->setHeatmapVisual(
-                    this->symbology_settings.visual_heatmap);
-                this->desktop_legend_hud->setMapMonitorActive(true);
-            }
-            emit signalShowMapLegendNode(VisualNode::None);
-            emit signalShowMapLegendLink(VisualLink::None);
-            emit signalShowMapLegendHeatmap(VisualHeatmap::None);
-            positionDesktopHudWidgets();
-            syncDesktopCameraHudVisibility();
-
-            qInfo() << "Monitor map renderer: RHI active.";
-        });
-        connect(rhi_widget, &MapRhiWidget::signalRendererFailed, this,
-                [this](const QString &reason)
-        {
-            if (this->desktop_scene_fullscreen_active)
-                setDesktopRenderSurfaceFullscreen(false);
-            this->desktop_render_surface_active = false;
-            qWarning().noquote()
-                << QStringLiteral("Monitor RHI surface failed (%1). "
-                                  "No map renderer is available.")
-                       .arg(reason);
-            if (this->map_model->viewMode() != MapViewMode::TwoD)
-                this->map_model->setViewMode(MapViewMode::TwoD);
-            this->map->setRenderSurfaceActive(false);
-            showRendererStatus(
-                tr("The RHI map renderer could not start:\n%1").arg(reason));
-            if (this->desktop_render_hud != nullptr)
-                this->desktop_render_hud->hide();
-            if (this->desktop_download_activity_hud != nullptr)
-                this->desktop_download_activity_hud->setHudActive(false);
-            if (this->desktop_view_mode_hud != nullptr)
-                this->desktop_view_mode_hud->hide();
-            if (this->desktop_compass_hud != nullptr)
-                this->desktop_compass_hud->hide();
-            if (this->desktop_scale_hud != nullptr)
-                this->desktop_scale_hud->hide();
-            if (this->desktop_vertical_controls_hud != nullptr)
-                this->desktop_vertical_controls_hud->hide();
-            if (this->desktop_legend_hud != nullptr)
-                this->desktop_legend_hud->setMapMonitorActive(false);
-            if (this->desktop_scene_fullscreen_hud != nullptr)
-                this->desktop_scene_fullscreen_hud->hide();
-            if (this->desktop_scene_fullscreen_shortcut != nullptr)
-                this->desktop_scene_fullscreen_shortcut->setEnabled(false);
-            if (this->desktop_render_widget != nullptr)
-                this->desktop_render_widget->hide();
-            emit signalShowMapLegendNode(this->symbology_settings.visual_node);
-            emit signalShowMapLegendLink(this->symbology_settings.visual_link);
-            emit signalShowMapLegendHeatmap(this->symbology_settings.visual_heatmap);
-        });
-        connect(this->map_model, &MapModel::viewModeChanged, this,
-                [this](MapViewMode)
-        {
-            syncDesktopCameraHudVisibility();
-            applyDesktopRenderSurfaceSymbology();
-        });
-    }
-#endif
     if (!gpu_map_surface_created)
     {
         showRendererStatus(
@@ -1268,10 +821,6 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
     connect(this->map_menu, &MapMonitorMenuWidget::signalNodeDeclutteringChanged, this,
         [this](bool enabled)
     {
-#if AOWIS_HAS_QRHI
-        if (this->desktop_render_surface != nullptr)
-            this->desktop_render_surface->setNodeDeclutteringEnabled(enabled);
-#endif
         if (this->bgfx_render_surface != nullptr)
             this->bgfx_render_surface->setNodeDeclutteringEnabled(enabled);
     });
@@ -1343,14 +892,10 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
 
 MapMonitorContainer::~MapMonitorContainer()
 {
-    // The resolvers capture the render surface (QRhi or bgfx).
+    // The resolvers capture the bgfx surface.
     this->map->setRenderSurfaceScreenCoordinateResolver(MapWidget::ScreenCoordinateResolver());
     this->map->setRenderSurfaceGlobeTerrainPanResolver(MapWidget::GlobeTerrainPanResolver());
     this->map->setCachedTerrainElevationResolver(MapWidget::CachedTerrainElevationResolver());
-#if AOWIS_HAS_QRHI
-    if (this->desktop_scene_fullscreen_active)
-        setDesktopRenderSurfaceFullscreen(false);
-#endif
 #ifndef Q_OS_WASM
     if (this->bgfx_fullscreen_active)
         setBgfxFullscreen(false);
@@ -1365,10 +910,6 @@ void MapMonitorContainer::setNodePalette(NetworkSymbologyPalette palette, bool f
     this->symbology_settings.node_palette = palette;
     this->symbology_settings.node_palette_flipped = flipped;
 
-#if AOWIS_HAS_QRHI
-    if (this->desktop_legend_hud != nullptr)
-        this->desktop_legend_hud->setNodePalette(palette, flipped);
-#endif
 
     if (!changed)
         return;
@@ -1388,10 +929,6 @@ void MapMonitorContainer::setLinkPalette(NetworkSymbologyPalette palette, bool f
     this->symbology_settings.link_palette = palette;
     this->symbology_settings.link_palette_flipped = flipped;
 
-#if AOWIS_HAS_QRHI
-    if (this->desktop_legend_hud != nullptr)
-        this->desktop_legend_hud->setLinkPalette(palette, flipped);
-#endif
 
     if (!changed)
         return;
@@ -1411,10 +948,6 @@ void MapMonitorContainer::setHeatmapPalette(NetworkSymbologyPalette palette, boo
     this->symbology_settings.heatmap_palette = palette;
     this->symbology_settings.heatmap_palette_flipped = flipped;
 
-#if AOWIS_HAS_QRHI
-    if (this->desktop_legend_hud != nullptr)
-        this->desktop_legend_hud->setHeatmapPalette(palette, flipped);
-#endif
 
     if (!changed)
         return;
@@ -1432,14 +965,6 @@ void MapMonitorContainer::showMapLegendNode(VisualNode visual_node)
     // runs next; the dock stays hidden while the bgfx map is active.
     if (this->bgfx_render_surface_active)
         return;
-#if AOWIS_HAS_QRHI
-    if (this->desktop_render_surface_active && this->desktop_legend_hud != nullptr)
-    {
-        this->desktop_legend_hud->setNodeVisual(visual_node);
-        positionDesktopHudWidgets();
-        return;
-    }
-#endif
 
     emit signalShowMapLegendNode(visual_node);
 }
@@ -1450,14 +975,6 @@ void MapMonitorContainer::showMapLegendLink(VisualLink visual_link)
     // runs next; the dock stays hidden while the bgfx map is active.
     if (this->bgfx_render_surface_active)
         return;
-#if AOWIS_HAS_QRHI
-    if (this->desktop_render_surface_active && this->desktop_legend_hud != nullptr)
-    {
-        this->desktop_legend_hud->setLinkVisual(visual_link);
-        positionDesktopHudWidgets();
-        return;
-    }
-#endif
 
     emit signalShowMapLegendLink(visual_link);
 }
@@ -1468,255 +985,13 @@ void MapMonitorContainer::showMapLegendHeatmap(VisualHeatmap visual_heatmap)
     // runs next; the dock stays hidden while the bgfx map is active.
     if (this->bgfx_render_surface_active)
         return;
-#if AOWIS_HAS_QRHI
-    if (this->desktop_render_surface_active && this->desktop_legend_hud != nullptr)
-    {
-        this->desktop_legend_hud->setHeatmapVisual(visual_heatmap);
-        positionDesktopHudWidgets();
-        return;
-    }
-#endif
 
     emit signalShowMapLegendHeatmap(visual_heatmap);
 }
 
-#if AOWIS_HAS_QRHI
-void MapMonitorContainer::positionDesktopHudWidgets()
-{
-    constexpr int hud_margin_px = 12;
-
-    if (this->desktop_render_hud != nullptr)
-    {
-        QWidget *hud_parent = this->desktop_render_hud->parentWidget();
-        if (hud_parent == this->desktop_render_widget
-            && this->desktop_render_widget != nullptr)
-        {
-            this->desktop_render_hud->setGeometry(this->desktop_render_widget->rect());
-        }
-        else
-        {
-            this->desktop_render_hud->setGeometry(this->map_stack->rect());
-        }
-        if (this->desktop_render_hud->isVisible())
-            this->desktop_render_hud->raise();
-    }
-
-    if (this->desktop_download_activity_hud != nullptr)
-    {
-        this->desktop_download_activity_hud->adjustSize();
-        const int download_x = qMax(
-            hud_margin_px,
-            (this->map_stack->width() - this->desktop_download_activity_hud->width()) / 2);
-        this->desktop_download_activity_hud->move(download_x, hud_margin_px);
-        if (this->desktop_download_activity_hud->isVisible())
-            this->desktop_download_activity_hud->raise();
-    }
-
-    if (this->desktop_view_mode_hud != nullptr)
-    {
-        this->desktop_view_mode_hud->adjustSize();
-        this->desktop_view_mode_hud->move(hud_margin_px, hud_margin_px);
-        if (this->desktop_view_mode_hud->isVisible())
-            this->desktop_view_mode_hud->raise();
-    }
-
-    if (this->desktop_vertical_controls_hud != nullptr)
-    {
-        this->desktop_vertical_controls_hud->adjustSize();
-        const int controls_y = qMax(
-            hud_margin_px,
-            this->map_stack->height() - this->desktop_vertical_controls_hud->height()
-                - hud_margin_px);
-        this->desktop_vertical_controls_hud->move(hud_margin_px, controls_y);
-        if (this->desktop_vertical_controls_hud->isVisible())
-            this->desktop_vertical_controls_hud->raise();
-    }
-
-    if (this->desktop_compass_hud != nullptr)
-    {
-        this->desktop_compass_hud->adjustSize();
-        const int compass_x = hud_margin_px
-            + (this->desktop_vertical_controls_hud != nullptr
-                && this->desktop_vertical_controls_hud->isVisible()
-                ? this->desktop_vertical_controls_hud->width() + 8 : 0);
-        const int compass_y = qMax(
-            hud_margin_px,
-            this->map_stack->height() - this->desktop_compass_hud->height() - hud_margin_px);
-        this->desktop_compass_hud->move(compass_x, compass_y);
-        if (this->desktop_compass_hud->isVisible())
-            this->desktop_compass_hud->raise();
-    }
-
-    if (this->desktop_scale_hud != nullptr)
-    {
-        int scale_x = hud_margin_px
-            + (this->desktop_vertical_controls_hud != nullptr
-                && this->desktop_vertical_controls_hud->isVisible()
-                ? this->desktop_vertical_controls_hud->width() + 8 : 0)
-            + (this->desktop_compass_hud != nullptr
-                && this->desktop_compass_hud->isVisible()
-                ? this->desktop_compass_hud->width() + 8 : 0);
-        int scale_y = qMax(
-            hud_margin_px,
-            this->map_stack->height() - this->desktop_scale_hud->height() - hud_margin_px);
-
-        if (scale_x + this->desktop_scale_hud->width()
-            > this->map_stack->width() - hud_margin_px)
-        {
-            int controls_top = this->map_stack->height() - hud_margin_px;
-            if (this->desktop_vertical_controls_hud != nullptr
-                && this->desktop_vertical_controls_hud->isVisible())
-            {
-                controls_top = qMin(controls_top, this->desktop_vertical_controls_hud->y());
-            }
-            if (this->desktop_compass_hud != nullptr
-                && this->desktop_compass_hud->isVisible())
-            {
-                controls_top = qMin(controls_top, this->desktop_compass_hud->y());
-            }
-
-            scale_x = hud_margin_px;
-            scale_y = qMax(
-                hud_margin_px,
-                controls_top - this->desktop_scale_hud->height() - 8);
-        }
-
-        this->desktop_scale_hud->move(scale_x, scale_y);
-        this->desktop_scale_hud->update();
-        if (this->desktop_scale_hud->isVisible())
-            this->desktop_scale_hud->raise();
-    }
-
-    if (this->desktop_scene_fullscreen_hud != nullptr)
-    {
-        const int fullscreen_x = qMax(
-            hud_margin_px,
-            this->map_stack->width() - this->desktop_scene_fullscreen_hud->width()
-                - hud_margin_px);
-        this->desktop_scene_fullscreen_hud->move(fullscreen_x, hud_margin_px);
-        if (this->desktop_scene_fullscreen_hud->isVisible())
-            this->desktop_scene_fullscreen_hud->raise();
-    }
-
-    if (this->desktop_legend_hud != nullptr)
-    {
-        this->desktop_legend_hud->adjustSize();
-        const int legend_x = qMax(
-            hud_margin_px,
-            this->map_stack->width() - this->desktop_legend_hud->width() - hud_margin_px);
-        const int legend_y = qMax(
-            hud_margin_px,
-            this->map_stack->height() - this->desktop_legend_hud->height() - hud_margin_px);
-        this->desktop_legend_hud->move(legend_x, legend_y);
-        if (this->desktop_legend_hud->isVisible())
-            this->desktop_legend_hud->raise();
-    }
-}
-
-void MapMonitorContainer::setDesktopRenderSurfaceFullscreen(bool fullscreen)
-{
-    if (fullscreen == this->desktop_scene_fullscreen_active)
-        return;
-    if (fullscreen && (!this->desktop_render_surface_active || this->desktop_render_widget == nullptr))
-        return;
-
-    if (fullscreen)
-    {
-        const QPoint previous_global_position = this->map_stack->mapToGlobal(QPoint(0, 0));
-        this->layout->removeWidget(this->map_stack);
-        this->map_stack->setParent(nullptr, Qt::Window);
-        this->map_stack->move(previous_global_position);
-        this->desktop_scene_fullscreen_active = true;
-        updateDesktopRenderSurfaceFullscreenControl();
-        this->map_stack->showFullScreen();
-    }
-    else
-    {
-        this->desktop_scene_fullscreen_active = false;
-        this->map_stack->hide();
-        this->map_stack->setWindowState(Qt::WindowNoState);
-        this->map_stack->setParent(this, Qt::Widget);
-        this->layout->addWidget(this->map_stack);
-        this->map_stack->show();
-        updateDesktopRenderSurfaceFullscreenControl();
-    }
-
-    positionDesktopHudWidgets();
-    if (this->desktop_render_widget != nullptr)
-    {
-        this->desktop_render_widget->update();
-        this->desktop_render_widget->setFocus(Qt::ShortcutFocusReason);
-    }
-}
-
-void MapMonitorContainer::updateDesktopRenderSurfaceFullscreenControl()
-{
-    if (this->desktop_scene_fullscreen_button == nullptr)
-        return;
-
-    const QString icon_path = this->desktop_scene_fullscreen_active
-        ? QStringLiteral(":/icon/fullscreen_undo.png")
-        : QStringLiteral(":/icon/fullscreen.png");
-    this->desktop_scene_fullscreen_button->setIcon(QIcon(icon_path));
-
-    const QString shortcut = guiShortcutPresentation(GuiShortcutId::MapMonitorFullscreen);
-    const QString action = this->desktop_scene_fullscreen_active
-        ? QStringLiteral("Exit map fullscreen")
-        : QStringLiteral("Fullscreen map");
-    this->desktop_scene_fullscreen_button->setToolTip(
-        shortcut.isEmpty()
-            ? action
-            : QStringLiteral("%1 [%2]").arg(action, shortcut));
-}
-
-void MapMonitorContainer::syncDesktopCameraHudVisibility()
-{
-    if (this->desktop_compass_hud == nullptr || this->desktop_scale_hud == nullptr
-        || this->desktop_vertical_controls_hud == nullptr)
-    {
-        return;
-    }
-
-    const bool render_surface_active = this->desktop_render_widget != nullptr
-        && this->desktop_render_widget->isVisible()
-        && this->desktop_view_mode_hud != nullptr
-        && this->desktop_view_mode_hud->isVisible();
-    const bool compass_hud_visible = render_surface_active
-        && this->map_model->viewMode() == MapViewMode::Globe;
-    const bool vertical_controls_visible =
-        render_surface_active
-        && this->map_model->viewMode() == MapViewMode::Globe;
-    this->desktop_compass_hud->setVisible(compass_hud_visible);
-    this->desktop_scale_hud->setVisible(render_surface_active);
-    this->desktop_vertical_controls_hud->setVisible(vertical_controls_visible);
-    if (render_surface_active)
-    {
-        if (compass_hud_visible)
-            this->desktop_compass_hud->raise();
-        if (vertical_controls_visible)
-            this->desktop_vertical_controls_hud->raise();
-        this->desktop_scale_hud->raise();
-        positionDesktopHudWidgets();
-    }
-}
-#endif
 
 bool MapMonitorContainer::eventFilter(QObject *watched, QEvent *event)
 {
-#if AOWIS_HAS_QRHI
-    if (watched == this->map_stack && event->type() == QEvent::Close
-        && this->desktop_scene_fullscreen_active)
-    {
-        setDesktopRenderSurfaceFullscreen(false);
-        event->ignore();
-        return true;
-    }
-    if (watched == this->map_stack && event->type() == QEvent::Resize
-        && this->desktop_render_hud != nullptr)
-    {
-        positionDesktopHudWidgets();
-    }
-#endif
 #ifndef Q_OS_WASM
     // Closing the bgfx fullscreen window returns the map to the tab.
     if (watched == this->map_stack && event->type() == QEvent::Close
@@ -1776,24 +1051,6 @@ bool MapMonitorContainer::eventFilter(QObject *watched, QEvent *event)
             QMouseEvent *mouse_event = static_cast<QMouseEvent *>(event);
             if (mouse_event->button() == Qt::LeftButton)
             {
-#if AOWIS_HAS_QRHI
-                if (this->desktop_render_widget != nullptr
-                    && this->desktop_render_surface != nullptr
-                    && this->desktop_render_widget->isVisible())
-                {
-                    const MapRenderHit hit = this->desktop_render_surface->hitTest(
-                        mouse_event->position());
-                    if (hit.isValid()
-                        && selectNetworkEntity(hit.render_id, hit.entity_type, hit.uuid))
-                    {
-                        this->desktop_render_surface->setSelectedEntity(hit.entity_type, hit.uuid);
-                        mouse_event->accept();
-                        return true;
-                    }
-                    this->desktop_render_surface->setSelectedEntity(
-                        InfrastructureEntity::Unknown, QUuid());
-                }
-#endif
                 if (selectBgfxNetworkEntityAt(mouse_event->position()))
                 {
                     mouse_event->accept();
@@ -1825,8 +1082,7 @@ bool MapMonitorContainer::selectBgfxNetworkEntityAt(const QPointF &position)
     if (!this->bgfx_render_surface_active || this->bgfx_render_surface == nullptr
         || this->bgfx_render_widget == nullptr || !this->bgfx_render_widget->isVisible())
         return false;
-    // Same behaviour as the QRhi click path: a hit selects the entity (the
-    // highlight follows HydraulicData's selection signal), a miss clears it.
+    // A hit selects the entity (the highlight follows HydraulicData's selection signal), a miss clears it.
     const MapRenderHit hit = this->bgfx_render_surface->hitTest(position);
     if (hit.isValid() && selectNetworkEntity(hit.render_id, hit.entity_type, hit.uuid))
     {
@@ -1903,15 +1159,6 @@ void MapMonitorContainer::updateNetworkHover(
         return;
     }
 
-#if AOWIS_HAS_QRHI
-    if (this->desktop_render_widget != nullptr
-        && this->desktop_render_surface != nullptr
-        && this->desktop_render_widget->isVisible())
-    {
-        setNetworkHovered(this->desktop_render_surface->hitTest(position).isValid());
-        return;
-    }
-#endif
 
     if (this->bgfx_render_surface_active && this->bgfx_render_surface != nullptr
         && this->bgfx_render_widget != nullptr && this->bgfx_render_widget->isVisible())
@@ -2009,7 +1256,7 @@ void MapMonitorContainer::handleBgfxHudAction(int action, int group, int value, 
             break;
         case MapBgfxHud::Action::ViewMode3d:
             // Offered (enabled) only with the bgfx globe (on by default,
-            // AOWIS_BGFX_GLOBE=0 disables it: MapBgfxSurface::globePreviewEnabled()).
+            // AOWIS_BGFX_GLOBE=0 disables it: MapBgfxSurface::globeEnabled()).
             if (this->bgfx_surface != nullptr && this->bgfx_surface->globeAvailable()
                 && this->map_model->viewMode() != MapViewMode::Globe)
                 this->map_model->setViewMode(MapViewMode::Globe, this->map->size());
@@ -2020,8 +1267,8 @@ void MapMonitorContainer::handleBgfxHudAction(int action, int group, int value, 
 #endif
             break;
         case MapBgfxHud::Action::LegendVisual:
-            // Same as the QRhi legend HUD's combos: settings, the left menu's
-            // radio buttons, then one symbology resolve (which also pushes
+            // Same as the left menu's radio buttons: settings, the radio
+            // buttons themselves, then one symbology resolve (which also pushes
             // the new legend range).
             if (group == 0)
             {
@@ -2153,29 +1400,6 @@ void MapMonitorContainer::setBgfxFullscreen(bool fullscreen)
 #endif
 }
 
-#if AOWIS_HAS_QRHI
-void MapMonitorContainer::applyDesktopRenderSurfaceSymbology()
-{
-    if (this->desktop_render_surface == nullptr)
-        return;
-
-    this->symbology_settings = this->symbology_settings.bounded();
-    const NetworkSymbologyRanges ranges =
-        this->hydraulic_data->symbologyRanges(this->symbology_settings);
-    this->desktop_render_surface->setSymbology(resolveMapNetworkRenderSymbology(
-        *this->hydraulic_data, this->symbology_settings, ranges));
-}
-
-void MapMonitorContainer::applyDesktopRenderSurfaceHighlights()
-{
-    if (this->desktop_render_surface == nullptr || this->hydraulic_data == nullptr)
-        return;
-
-    this->desktop_render_surface->setSimulationErrorEntities(
-        this->hydraulic_data->simulationErrorEntities(),
-        this->hydraulic_data->simulationStaleDiagnosticEntityUuids());
-}
-#endif
 
 void MapMonitorContainer::applySymbology()
 {
@@ -2183,13 +1407,6 @@ void MapMonitorContainer::applySymbology()
 
     const NetworkSymbologyRanges ranges =
         this->hydraulic_data->symbologyRanges(this->symbology_settings);
-#if AOWIS_HAS_QRHI
-    if (this->desktop_render_surface != nullptr)
-    {
-        this->desktop_render_surface->setSymbology(resolveMapNetworkRenderSymbology(
-            *this->hydraulic_data, this->symbology_settings, ranges));
-    }
-#endif
     if (this->bgfx_render_surface != nullptr)
     {
         this->bgfx_render_surface->setSymbology(resolveMapNetworkRenderSymbology(
@@ -2238,14 +1455,6 @@ void MapMonitorContainer::applyVisualControlSymbology()
         this->visual_control_symbology_apply_pending = false;
         this->symbology_settings = this->symbology_settings.bounded();
 
-#if AOWIS_HAS_QRHI
-        if (this->desktop_render_surface_active && this->desktop_render_surface != nullptr)
-        {
-            this->desktop_render_surface->setVisualControlSettings(
-                this->symbology_settings);
-            return;
-        }
-#endif
         applySymbology();
     });
 }
@@ -2257,10 +1466,6 @@ void MapMonitorContainer::setNetworkBackgroundOpacity(int opacity)
         return;
 
     this->network_background_opacity = bounded_opacity;
-#if AOWIS_HAS_QRHI
-    if (this->desktop_render_surface != nullptr)
-        this->desktop_render_surface->setBackgroundOpacity(bounded_opacity);
-#endif
 }
 
 
@@ -2392,7 +1597,6 @@ void MapMonitorMenuWidget::addGroupVisualSettings()
     QCheckBox *check_node_decluttering = new QCheckBox(
         QStringLiteral("Declutter Overlapping Nodes"), this);
     check_node_decluttering->setChecked(true);
-    check_node_decluttering->setVisible(rhiMonitorRendererConfigured());
     check_node_decluttering->setToolTip(QStringLiteral(
         "Separates exact or near-exact node coordinates by at least 1 m for rendering and picking. "
         "Disable this to render nodes at their exact geographic positions."));
@@ -2695,7 +1899,7 @@ void MapMonitorMenuWidget::addGroupNodeVisuals()
     vbox->addWidget(radio_node_lake);
     
     vbox->addWidget(label_chlorine);
-    group->setCollapsed(shouldCollapseRhiMonitorSymbologyGroups());
+    group->setCollapsed(false);
 }
 void MapMonitorMenuWidget::addGroupLinkVisuals()
 {
@@ -2765,7 +1969,7 @@ void MapMonitorMenuWidget::addGroupLinkVisuals()
     vbox->addWidget(radio_link_chlorine);
     vbox->addWidget(radio_link_river);
     vbox->addWidget(radio_link_lake);
-    group->setCollapsed(shouldCollapseRhiMonitorSymbologyGroups());
+    group->setCollapsed(false);
 }
 
 void MapMonitorMenuWidget::addGroupHeatmapVisuals()
@@ -2843,5 +2047,5 @@ void MapMonitorMenuWidget::addGroupHeatmapVisuals()
     vbox->addWidget(radio_chlorine);
     vbox->addWidget(radio_river);
     vbox->addWidget(radio_lake);
-    group->setCollapsed(shouldCollapseRhiMonitorSymbologyGroups());
+    group->setCollapsed(false);
 }

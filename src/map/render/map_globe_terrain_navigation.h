@@ -28,9 +28,8 @@ class MapTerrainRepository;
 // - the pointer coordinate with its DEM altitude, and cached DEM elevations
 //   at the LOD the surface shows (2D footer, X-Ray classification later).
 //
-// This is the bgfx port of the terrain code in MapRhiWidget (same constants,
-// same sampling, same filter); that copy goes with src/map/rhi/ at the end of
-// Phase 3. The owner keeps it fed: setSurfacePreparation() with the globe it
+// Ported from the removed QRhi map widget (same constants, same sampling,
+// same filter). The owner keeps it fed: setSurfacePreparation() with the globe it
 // draws, setViewportSize() with the logical size of the map, and calls
 // syncCameraHeight() on camera changes and on every frame while following().
 class MapGlobeTerrainNavigation

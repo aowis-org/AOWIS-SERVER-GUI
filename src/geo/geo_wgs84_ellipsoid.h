@@ -11,7 +11,7 @@
 // ellipsoid shape rather than the flat Web Mercator plane used by the 2D
 // view modes. Also provides the shared orbit-camera basis, screen-ray/
 // ellipsoid intersection, and ECEF -> geodetic conversion used by both the
-// GPU camera (MapRhiCamera) and the CPU-side picking/panning math (MapModel)
+// GPU camera (MapGlobeCamera) and the CPU-side picking/panning math (MapModel)
 // -- mirroring how the 2D view already keeps its own screen<->geo
 // conversions in MapModel independent of the GPU camera (see
 // MapModel::wgs84FromScreen()/screenFromWgs84()).
@@ -58,7 +58,7 @@ public:
     // from the local horizon), matching the same yaw/pitch/distance orbit
     // shape as the map orbit camera, anchored to the ellipsoid's
     // local frame instead of the flat Web Mercator plane. Shared by
-    // MapRhiCamera (GPU view/projection matrix) and MapModel (CPU-side
+    // MapGlobeCamera (GPU view/projection matrix) and MapModel (CPU-side
     // screen-ray picking for click-drag panning), so the two stay in sync
     // by construction instead of by keeping two hand-written copies of this
     // math in agreement.
@@ -200,7 +200,7 @@ public:
     // what makes the result safe to feed into a GPU view matrix at close-in
     // Globe zoom, where orbitCameraBasis() itself is not (see the
     // EcefPositionD comment above). origin_ecef should be
-    // MapRhiCamera::globeRenderOriginEcef() (or the exact ECEF position the
+    // MapGlobeCamera::renderOriginEcef() (or the exact ECEF position the
     // caller has otherwise agreed to render relative to) -- passing
     // anything far from the actual eye/target defeats the purpose, since
     // the whole point is that eye/target stay *close to* origin_ecef so
@@ -230,14 +230,11 @@ public:
     // Maps a screen position to a world-space ray through the given orbit
     // camera basis (same vertical_fov_deg/viewport convention as the GPU
     // perspective projection built from that same basis). This is the one
-    // place the NDC -> ray formula lives; MapRhiCamera's GPU-side globe ray
+    // place the NDC -> ray formula lives; MapGlobeCamera's GPU-side globe ray
     // and MapModel's CPU-side globe picking/panning each build their own
     // OrbitCameraBasis (they know different things: synced camera state vs.
     // model state) but both route the actual ray math through here instead
-    // of keeping their own copies of the same formula. MapRhiGlobeRenderer's
-    // visible-tile-window sampling still has its own, pre-existing copy of
-    // this same math (kept as-is here to avoid touching that tuned, hot
-    // path); routing it through this function too is a reasonable follow-up.
+    // of keeping their own copies of the same formula.
     static bool screenRay(
         const OrbitCameraBasis &basis, const QPointF &screen_position,
         const QSize &viewport, double vertical_fov_deg,

@@ -6,7 +6,7 @@
 
 // Canonical vertical-placement policy for the Globe renderer.
 //
-// Keep this independent of QRhi (and of any future GPU backend): terrain,
+// Keep this independent of the GPU backend: terrain,
 // network geometry, picking/culling helpers and camera-follow code all need
 // to agree on how a physical elevation becomes a rendered height above the
 // WGS84 ellipsoid. Centralizing that rule here prevents the individual

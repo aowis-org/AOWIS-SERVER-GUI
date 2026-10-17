@@ -8,18 +8,16 @@
 
 class QKeyEvent;
 
-// No CPU renderer: a legacy "cpu" ini value is mapped to a GPU renderer.
+// bgfx is the only map renderer. Legacy ini values ("cpu", "rhi" and in the
+// browser "browser") are accepted with a warning and select bgfx. Both enums
+// and their ini keys go away in roadmap Phase 4.
 enum class DesktopMapRenderer
 {
-    Rhi,
     Bgfx
 };
 
-// WebAssembly map renderer. The JavaScript/WebGL "browser" renderer was
-// removed; an old "browser" ini value selects bgfx.
 enum class WasmMapRenderer
 {
-    Rhi,
     Bgfx
 };
 
@@ -77,13 +75,13 @@ struct GuiMapPerformanceConfiguration
 {
     // Target on-screen size, in pixels, of one terrain relief mesh cell.
     // Smaller values keep a denser (higher quality) mesh out to a greater
-    // distance; larger values let quality fall off sooner. Mirrors
-    // MapRhiBasemapRenderer's TerrainTargetCellSizePixels default.
+    // distance; larger values let quality fall off sooner
+    // (MapGlobeSurfaceScene's terrain LOD).
     double terrain_lod_target_cell_size_px = 32.0;
     // Highest zoom level at which the terrain DEM is still fetched/used at
     // increasing resolution; beyond this the same elevation data is reused
-    // and just re-subdivided rather than re-fetched at a finer level.
-    // Mirrors MapRhiBasemapRenderer's TerrainReliefMaximumZoom default.
+    // and just re-subdivided rather than re-fetched at a finer level
+    // (lower bound MapGlobeSurfaceScene::TerrainReliefMinimumZoom).
     int terrain_max_detail_zoom = 14;
     // Lowest zoom level at which the focus/crosshair tile's terrain mesh is
     // still forced to maximum detail regardless of camera distance, instead
@@ -92,17 +90,12 @@ struct GuiMapPerformanceConfiguration
     // falloff's un-forced behavior; lower this to keep full detail at the
     // focus across a wider zoom range.
     int terrain_full_detail_zoom = 19;
-    // Whether the RHI 3D renderer's texture-array draw-call batching is
-    // used at all. Purely a performance path -- disabling it always falls
-    // back to the per-tile path, never changes what is drawn.
-    bool array_batching_enabled = true;
 };
 
 struct GuiConfiguration
 {
     bool examples_builtin_enable = true;
-    // bgfx is the map renderer on every platform. QRhi stays selectable
-    // explicitly ("rhi") only until the bgfx globe exists (roadmap Phase 3).
+    // bgfx is the map renderer on every platform.
     DesktopMapRenderer map_desktop_renderer = DesktopMapRenderer::Bgfx;
     WasmMapRenderer map_wasm_renderer = WasmMapRenderer::Bgfx;
     GuiSymbologyPaletteConfiguration symbology_palettes;
@@ -117,10 +110,8 @@ QKeySequence guiShortcutKeySequence(const QString &shortcut);
 bool guiShortcutMatches(const QKeyEvent *event, const QString &shortcut,
                         Qt::KeyboardModifiers allowed_extra_modifiers = Qt::NoModifier);
 DesktopMapRenderer desktopMapRenderer();
-bool desktopMapRhiBuildAvailable();
 const char *desktopMapRendererName(DesktopMapRenderer renderer);
 WasmMapRenderer wasmMapRenderer();
-bool wasmMapRhiBuildAvailable();
 const char *wasmMapRendererName(WasmMapRenderer renderer);
 bool saveGuiNodeSymbologyPalette(NetworkSymbologyPalette palette, bool flipped);
 bool saveGuiLinkSymbologyPalette(NetworkSymbologyPalette palette, bool flipped);

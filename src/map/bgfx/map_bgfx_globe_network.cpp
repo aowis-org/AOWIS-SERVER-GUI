@@ -380,7 +380,7 @@ void MapBgfxGlobeNetwork::synchronize()
     if (this->symbology_pending)
     {
         this->symbology_pending = false;
-        // What changed decides the streams, as MapRhiWidget::setSymbology().
+        // What changed decides the streams (as the former QRhi globe did).
         const MapNetworkRenderSymbology &previous = this->applied_symbology;
         const MapNetworkRenderSymbology &next = this->symbology;
         const bool first = !this->symbology_applied;
@@ -700,7 +700,7 @@ MapBgfxGlobeNetwork::FrameResult MapBgfxGlobeNetwork::render(bgfx::ViewId view, 
     const bgfx::TextureHandle no_texture = BGFX_INVALID_HANDLE;
     const bgfx::UniformHandle no_sampler = BGFX_INVALID_HANDLE;
     const bool show_junctions = resources.show_junctions;
-    // Draw order of the QRhi globe network (MapRhiGlobeNetworkBackend::draw).
+    // Draw order of the former QRhi globe network, kept as it was.
     // Solid: the whole network once through the terrain first.
     if (this->underground_mode == MapUndergroundMode::Solid)
     {

@@ -227,7 +227,8 @@ public:
     // horizon).
     void panGlobeByPointerDrag(const QPoint &previous_screen_position,
                                const QPoint &new_screen_position, const QSize &viewport);
-    // Hybrid terrain-aware counterpart used by the RHI Globe path. The
+    // Hybrid terrain-aware counterpart used by the Globe (MapWidget's terrain
+    // pan resolver, MapGlobeTerrainNavigation). The
     // ellipsoid drag remains the stable baseline; terrain_weight blends in
     // the exact rendered-DEM drag and is expected to approach zero for
     // shallow/grazing view rays. The terrain rotation is additionally capped
@@ -240,7 +241,7 @@ public:
         const GeoWgs84Ellipsoid::EcefPositionD &new_terrain_ecef,
         double terrain_weight);
     // Model-only ellipsoid fallback for the geodetic coordinate under
-    // screen_position. The RHI Globe path resolves against its rendered DEM
+    // screen_position. The Globe resolves against its rendered DEM
     // first because MapModel intentionally has no renderer/terrain-mesh access.
     bool globeCoordinateAtScreen(const QPoint &screen_position, const QSize &viewport,
                                  CoordinateWGS84 *coordinate) const;

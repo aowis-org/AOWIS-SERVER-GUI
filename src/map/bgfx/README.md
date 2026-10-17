@@ -1,12 +1,15 @@
-# Experimental production bgfx Map Monitor
+# bgfx map (Map Monitor and Map Editor)
 
 The surface is integrated into the actual Map Monitor on desktop and WASM and
 built by default (`AOWIS_ENABLE_BGFX_MAP=ON`). The desktop CPU (QPainter) map
 monitor was removed: it displayed the network at the integer tile zoom and was
 the source of step-wise zoom. Without a working GPU surface the monitor shows a
-status message, never a CPU-rendered map. bgfx is the default renderer on
-desktop and WASM. QRhi remains selectable (`gui/map_desktop_renderer=rhi`,
-`map_wasm_renderer=rhi`) for the monitor until the bgfx globe is done. The
+status message, never a CPU-rendered map. bgfx is the only map renderer on
+desktop and WASM: the QRhi renderer (`src/map/rhi`, its `qt_add_shaders`
+shaders and the QWidget HUD controls) was removed once the bgfx globe was
+complete (roadmap Phase 3 exit, 2026-10-17); the old renderer values
+`gui/map_desktop_renderer=rhi` and `map_wasm_renderer=rhi` select bgfx with a
+warning. Qt ShaderTools is no longer needed. The
 map editor draws with bgfx only (roadmap Phase 2); the QPainter editor
 (`MapEditorRenderer`), its QRhi overlay path and `MapWidget`'s CPU tile
 painting were removed. The JavaScript/WebGL map renderer (monitor and
@@ -336,11 +339,12 @@ per-batch origins and culling are still mandatory for larger extents.
 Do not reintroduce integer-zoom geometry caching on this new GPU path. Imagery
 LOD will remain independent from retained network geometry.
 
-## Globe (Phase 3, in progress)
+## Globe (Phase 3)
 
-On by default since slice 3b (2026-10-17): the HUD offers 3D in the Map
-Monitor and Globe mode draws on bgfx. `AOWIS_BGFX_GLOBE=0` (environment)
-switches it off (3D disabled again). The editor never offers it
+Globe mode draws on bgfx; the QRhi globe it replaces was removed with the
+rest of QRhi. "QRhi" below names the behaviour that was ported. The HUD
+offers 3D in the Map Monitor; `AOWIS_BGFX_GLOBE=0` (environment, for
+diagnosis) switches it off (3D disabled). The editor never offers it
 (`MapBgfxSurface::setGlobeOffered(false)`).
 
 Slice 1, the terrain surface (`map_bgfx_globe_surface.*`):

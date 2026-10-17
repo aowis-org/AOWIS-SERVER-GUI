@@ -97,20 +97,17 @@ else
     cp "$BUILD_CONFIG" "$DIST_CONFIG"
 fi
 
-# Renderer value check for preserved configurations. bgfx is the map renderer;
-# the JavaScript "browser" renderer was removed (rewritten to bgfx, the app
-# would map it anyway). An explicit "rhi" is respected but reported: it was the old
-# template default, so older deployments still carry it without anyone having
-# chosen it.
+# Renderer value check for preserved configurations. bgfx is the only map
+# renderer: the retired values "browser" (JavaScript renderer) and "rhi" (QRhi,
+# the old template default) are rewritten to bgfx; the app would map them anyway.
 for aowis_config in "$BUILD_CONFIG" "$DIST_CONFIG"; do
     [ -f "$aowis_config" ] || continue
-    if grep -Eq '^[[:space:]]*map_wasm_renderer[[:space:]]*=[[:space:]]*browser[[:space:]]*$' "$aowis_config"; then
-        sed -i -E 's/^([[:space:]]*map_wasm_renderer[[:space:]]*=[[:space:]]*)browser[[:space:]]*$/\1bgfx/' "$aowis_config"
-        echo "NOTE: $aowis_config: map_wasm_renderer=browser is retired; changed to bgfx."
-    elif grep -Eq '^[[:space:]]*map_wasm_renderer[[:space:]]*=[[:space:]]*rhi[[:space:]]*$' "$aowis_config"; then
-        echo "NOTE: $aowis_config still selects map_wasm_renderer=rhi (old default)."
-        echo "      Set map_wasm_renderer=bgfx there (or delete the line) to use bgfx."
-    fi
+    for retired_renderer in browser rhi; do
+        if grep -Eq "^[[:space:]]*map_wasm_renderer[[:space:]]*=[[:space:]]*${retired_renderer}[[:space:]]*\$" "$aowis_config"; then
+            sed -i -E "s/^([[:space:]]*map_wasm_renderer[[:space:]]*=[[:space:]]*)${retired_renderer}[[:space:]]*\$/\\1bgfx/" "$aowis_config"
+            echo "NOTE: $aowis_config: map_wasm_renderer=${retired_renderer} is retired; changed to bgfx."
+        fi
+    done
 done
 
 echo "=== WASM build finished ==="

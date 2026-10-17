@@ -37,19 +37,10 @@
 class HydraulicData;
 class MapTerrainRepository;
 class MapRenderSurface;
-class MapRenderHudWidget;
-class MapMonitorDownloadActivityHudWidget;
-class MapMonitorViewModeHudWidget;
-class MapMonitorCompassHudWidget;
-class MapMonitorScaleHudWidget;
-class MapMonitorVerticalControlsHudWidget;
-class EntityMapLegendHud;
 class MapBgfxSurface;
 class MapBgfxGlobeHudController;
-class QFrame;
 class QTimer;
 class QShortcut;
-class QToolButton;
 
 #ifdef Q_OS_WASM
 #include "gps/gps_provider_dummy.h"
@@ -151,28 +142,12 @@ private:
     // Shown while no GPU map surface is active (startup or failure). There
     // is deliberately no CPU or JavaScript map renderer behind it.
     QLabel *renderer_status = nullptr;
-#if AOWIS_HAS_QRHI
-    MapRenderSurface *desktop_render_surface = nullptr;
-    QWidget *desktop_render_widget = nullptr;
-    MapRenderHudWidget *desktop_render_hud = nullptr;
-    MapMonitorDownloadActivityHudWidget *desktop_download_activity_hud = nullptr;
-    MapMonitorViewModeHudWidget *desktop_view_mode_hud = nullptr;
-    MapMonitorCompassHudWidget *desktop_compass_hud = nullptr;
-    MapMonitorScaleHudWidget *desktop_scale_hud = nullptr;
-    MapMonitorVerticalControlsHudWidget *desktop_vertical_controls_hud = nullptr;
-    EntityMapLegendHud *desktop_legend_hud = nullptr;
-    QFrame *desktop_scene_fullscreen_hud = nullptr;
-    QToolButton *desktop_scene_fullscreen_button = nullptr;
-    QShortcut *desktop_scene_fullscreen_shortcut = nullptr;
-    bool desktop_scene_fullscreen_active = false;
-    bool desktop_render_surface_active = false;
-#endif
     MapMonitorMenuWidget *map_menu = nullptr;
     int network_background_opacity = 0;
     NetworkSymbologySettings symbology_settings;
     bool visual_control_symbology_apply_pending = false;
-    // bgfx monitor surface (or nullptr). Receives the same resolved
-    // symbology as the QRhi surface through applySymbology().
+    // bgfx monitor surface (or nullptr). Receives the resolved symbology
+    // through applySymbology().
     MapRenderSurface *bgfx_render_surface = nullptr;
     // The same object as a widget (visibility), and whether it presents
     // frames: picking and hover only run against a live bgfx surface.
@@ -191,7 +166,8 @@ private:
     int bgfx_terrain_active = 0;
     int bgfx_terrain_queued = 0;
     // Map fullscreen for the bgfx surface (desktop): the HUD button and the
-    // MapMonitorFullscreen shortcut, same reparenting as the QRhi path.
+    // MapMonitorFullscreen shortcut: the map stack is reparented into its
+    // own full-screen window.
     QShortcut *bgfx_fullscreen_shortcut = nullptr;
     bool bgfx_fullscreen_active = false;
     // Pointer shape the bgfx HUD wants under the pointer (pointing hand over
@@ -235,14 +211,6 @@ private:
         Qt::KeyboardModifiers modifiers);
     void setNetworkHovered(bool hovered);
     void showRendererStatus(const QString &text);
-#if AOWIS_HAS_QRHI
-    void applyDesktopRenderSurfaceSymbology();
-    void applyDesktopRenderSurfaceHighlights();
-    void positionDesktopHudWidgets();
-    void syncDesktopCameraHudVisibility();
-    void setDesktopRenderSurfaceFullscreen(bool fullscreen);
-    void updateDesktopRenderSurfaceFullscreenControl();
-#endif
     void showMapLegendNode(VisualNode visual_node);
     void showMapLegendLink(VisualLink visual_link);
     void showMapLegendHeatmap(VisualHeatmap visual_heatmap);

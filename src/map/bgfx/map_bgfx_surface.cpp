@@ -556,7 +556,7 @@ void MapBgfxSurface::globeTerrainMeshProgress(int *completed, int *total,
     this->globe_surface->terrainMeshProgress(completed, total, active);
 }
 
-bool MapBgfxSurface::globePreviewEnabled()
+bool MapBgfxSurface::globeEnabled()
 {
     // On unless AOWIS_BGFX_GLOBE is set to 0.
     static const bool enabled = []()
@@ -1404,8 +1404,7 @@ void MapBgfxSurface::renderHud(const QSizeF &logical, const MapBgfx2d::Camera &c
     this->hud_text_cache.setDevicePixelRatio(ratio);
     if (hud_screen != nullptr)
         this->hud_text_cache.setLogicalDpi(hud_screen->logicalDotsPerInch());
-    // 3D is offered with the bgfx globe (Phase 3 preview, see
-    // globePreviewEnabled()).
+    // 3D is offered with the bgfx globe (see globeEnabled()).
     this->hud.setViewMode(this->camera_state.mode == MapViewMode::TwoD, this->globe_ready);
     MapBgfxHud::FrameInputs inputs;
     inputs.viewport = logical;
@@ -1766,10 +1765,10 @@ bool MapBgfxSurface::initializeBackend()
         const bool imagery_ready = network_ready && this->imagery_gpu.initialize();
         const bool hud_ready = imagery_ready && this->hud_gpu.initialize()
             && this->overlay_gpu.initialize() && this->label_gpu.initialize();
-        // The globe is optional: without it (or without the preview switch)
+        // The globe is optional: without it (or with AOWIS_BGFX_GLOBE=0)
         // the 2D map works as before and the HUD offers no 3D.
         this->globe_ready = network_ready && imagery_ready && hud_ready
-            && this->globe_offered && globePreviewEnabled() && this->globe_surface->initialize();
+            && this->globe_offered && globeEnabled() && this->globe_surface->initialize();
         // The network on the globe: without it the terrain still works.
         this->globe_network_ready = this->globe_ready && this->globe_network.initialize();
         if (!network_ready || !imagery_ready || !hud_ready)
@@ -2360,7 +2359,7 @@ void MapBgfxSurface::syncGlobeHeatmap()
 
 MapNetworkRenderSymbology MapBgfxSurface::globeSymbology() const
 {
-    // As MapRhiWidget::setSymbology() for the monitor: a neutral icon fill
+    // As the former QRhi monitor: a neutral icon fill
     // on dark windows, a soft pink on light ones (visibility on imagery).
     MapNetworkRenderSymbology themed = this->symbology;
     const QColor window_color = palette().color(QPalette::Window);

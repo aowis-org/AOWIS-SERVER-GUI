@@ -139,14 +139,14 @@ public:
     bool mapTilesVisible() const;
     void globeTerrainMeshProgress(int *completed, int *total, bool *active) const override;
 
-    // --- Globe on bgfx (roadmap Phase 3, in progress) -----------------------------
-    // Slices 1-5: terrain surface (imagery, DEM relief, caps, wireframe),
+    // --- Globe on bgfx (roadmap Phase 3) ------------------------------------------
+    // Terrain surface (imagery, DEM relief, caps, wireframe),
     // terrain-aware navigation, the network and its heatmap, picking and
     // the globe HUD (compass, camera sliders, underground mode, toggles,
     // terrain-mesh progress, scale). On by default; AOWIS_BGFX_GLOBE=0
     // switches it off (the HUD then offers no 3D).
-    static bool globePreviewEnabled();
-    // The globe surface initialized on this device (preview enabled).
+    static bool globeEnabled();
+    // The globe surface initialized on this device (globe enabled).
     bool globeAvailable() const { return this->globe_ready; }
     // Surfaces that never show the globe (the editor, 2D only) skip its GPU
     // setup and offer no 3D. Call before the surface is first shown.
@@ -297,8 +297,8 @@ private:
     // QRhi monitor (light theme: soft pink).
     MapNetworkRenderSymbology globeSymbology() const;
     // The globe heatmap's markers (node positions, ramp colours of the
-    // heatmap metric), radius and solid centre from the symbology, as
-    // MapRhiWidget::syncGlobeHeatmapOverlay(): a pixel radius is converted
+    // heatmap metric), radius and solid centre from the symbology (as the
+    // former QRhi globe did): a pixel radius is converted
     // at the current orbit distance when the heatmap data or style change.
     void syncGlobeHeatmap();
     // X-Ray classification against the cached DEM, 500 ms after the last

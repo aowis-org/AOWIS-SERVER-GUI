@@ -12,7 +12,7 @@ struct MapNodeDeclutterInput
     QPointF world_center;
 };
 
-// Shared real-world separation used by both the flat RHI scene and the
+// Shared real-world separation used by both the flat bgfx scene and the
 // Globe scene. Keep this deliberately small: decluttering exists to split
 // exact/near-exact modeling coincidences, not to spread ordinary dense
 // network geometry apart.

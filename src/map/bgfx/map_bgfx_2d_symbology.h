@@ -10,9 +10,8 @@
 
 // Maps the backend-neutral MapNetworkRenderSymbology onto the bgfx 2D
 // attribute stream (colours, flow sign) and uniforms (sizes). Same rules as
-// the QRhi scene (map_rhi_scene.cpp: applyLinkColor, applyNodeColor,
-// appendIcon, appendHeatmap, flowDirectionColor) so both renderers agree while
-// RHI exists.
+// the former QRhi 2D scene (its applyLinkColor, applyNodeColor, appendIcon,
+// appendHeatmap, flowDirectionColor) and the globe network scene.
 namespace MapBgfx2dSymbology
 {
 // Demand-point attachment lines: fixed hairline width, like QRhi (0.75 px

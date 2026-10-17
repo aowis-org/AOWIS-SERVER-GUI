@@ -5,7 +5,7 @@
 #include <QVector3D>
 
 // Backend-neutral retained Globe instance layouts. These are scene data, not
-// QRhi resources; renderer backends may upload the same layouts directly.
+// GPU resources; the renderer builds its vertex streams from them.
 struct MapGlobeTankInstance
 {
     quint32 render_id = 0;

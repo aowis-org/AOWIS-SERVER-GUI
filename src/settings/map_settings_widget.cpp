@@ -4,7 +4,6 @@
 #include "config/map_server_client_configuration.h"
 #include "widgets/slider_number_control.h"
 
-#include <QCheckBox>
 #include <QColor>
 #include <QFont>
 #include <QFormLayout>
@@ -26,8 +25,8 @@ constexpr double NavigationSensitivityMinimum = 0.1;
 constexpr double NavigationSensitivityMaximum = 1.5;
 constexpr double NavigationSensitivityStep = 0.05;
 
-// Mirrors the bounds map_rhi_basemap_renderer.cpp enforces on this value
-// (TerrainReliefMinimumZoom) and MapModel::MaxZoom.
+// The bounds the globe terrain enforces on this value
+// (MapGlobeSurfaceScene::TerrainReliefMinimumZoom) and MapModel::MaxZoom.
 constexpr int TerrainMinDetailZoomBound = 8;
 constexpr int TerrainMaxDetailZoomBound = 19;
 
@@ -223,17 +222,6 @@ void MapSettingsWidget::buildPerformanceSection(QWidget *parent_widget)
                        "falloff."),
         group));
 
-    this->array_batching_checkbox = new QCheckBox(
-        QStringLiteral("Enable draw-call batching (texture array)"), group);
-    this->array_batching_checkbox->setChecked(current.array_batching_enabled);
-    form->addRow(QString(), this->array_batching_checkbox);
-    form->addRow(QString(), helpLabel(
-        QStringLiteral("Draws multiple already-loaded basemap tiles in a single GPU call instead of "
-                       "one call per tile. Purely a performance optimization -- tiles still loading "
-                       "always draw individually regardless of this setting, so turning it off never "
-                       "changes what is shown, only how many draw calls it takes."),
-        group));
-
     group_layout->addLayout(form);
 
     this->performance_status = new QLabel(group);
@@ -255,8 +243,6 @@ void MapSettingsWidget::buildPerformanceSection(QWidget *parent_widget)
             this, [this](double) { schedulePerformanceSave(); });
     connect(this->terrain_full_detail_zoom_control, &SliderNumberControl::valueChanged,
             this, [this](double) { schedulePerformanceSave(); });
-    connect(this->array_batching_checkbox, &QCheckBox::toggled,
-            this, [this](bool) { schedulePerformanceSave(); });
 
     connect(restore_defaults, &QPushButton::clicked, this, [this]
     {
@@ -264,7 +250,6 @@ void MapSettingsWidget::buildPerformanceSection(QWidget *parent_widget)
         this->terrain_lod_target_control->setValue(defaults.terrain_lod_target_cell_size_px);
         this->terrain_max_detail_zoom_control->setValue(double(defaults.terrain_max_detail_zoom));
         this->terrain_full_detail_zoom_control->setValue(double(defaults.terrain_full_detail_zoom));
-        this->array_batching_checkbox->setChecked(defaults.array_batching_enabled);
         savePerformanceSettingsNow();
     });
 
@@ -363,7 +348,6 @@ void MapSettingsWidget::savePerformanceSettingsNow()
     configuration.terrain_lod_target_cell_size_px = this->terrain_lod_target_control->value();
     configuration.terrain_max_detail_zoom = int(this->terrain_max_detail_zoom_control->value());
     configuration.terrain_full_detail_zoom = int(this->terrain_full_detail_zoom_control->value());
-    configuration.array_batching_enabled = this->array_batching_checkbox->isChecked();
 
     if (saveGuiMapPerformanceConfiguration(configuration))
         showPerformanceStatus(QStringLiteral("Saved."), false);

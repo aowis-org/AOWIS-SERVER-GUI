@@ -16,21 +16,13 @@ find_package(Qt6 REQUIRED COMPONENTS
     Sql
     OPTIONAL_COMPONENTS
     GuiPrivate
-    ShaderTools
 )
-
-set(AOWIS_HAS_QRHI 0)
-if(Qt6_VERSION VERSION_GREATER_EQUAL 6.7
-   AND TARGET Qt6::GuiPrivate
-   AND Qt6ShaderTools_FOUND)
-    set(AOWIS_HAS_QRHI 1)
-endif()
 
 set(AOWIS_HAS_WAYLAND_POINTER_LOCK 0)
 if(UNIX AND NOT APPLE AND NOT EMSCRIPTEN
    AND Qt6_VERSION VERSION_GREATER_EQUAL 6.5
    AND TARGET Qt6::GuiPrivate)
-    # The RHI desktop build already has Qt GuiPrivate. Use Qt's public
+    # Qt GuiPrivate (also needed by bgfx for native handles). Use Qt's public
     # Wayland application native interface plus the Wayland client runtime
     # directly; do not require the separately packaged Qt WaylandClient
     # development module or system wayland-protocols XML files.
@@ -102,8 +94,8 @@ add_subdirectory(external/AOWIS-SERVER-EPANET EXCLUDE_FROM_ALL)
 # (cmake/aowis_bgfx_shaders.cmake); the shader compiler is an opt-in
 # developer tool (-DAOWIS_BGFX_SHADER_TOOLS=ON).
 option(AOWIS_BUILD_BGFX_PROBE "Build the independent bgfx window/stacking probe" OFF)
-# ON by default: there is no CPU map renderer any more, so the Map Monitor
-# needs bgfx (or QRhi until it is removed) to show a map at all.
+# ON by default: bgfx is the only map renderer, so without it the Map
+# Monitor shows no map at all.
 option(AOWIS_ENABLE_BGFX_MAP "Enable the bgfx Map Monitor surface" ON)
 if(AOWIS_BUILD_BGFX_PROBE OR AOWIS_ENABLE_BGFX_MAP)
     include(cmake/aowis_bgfx.cmake)
@@ -339,8 +331,6 @@ qt_add_executable(aowis-server-gui
     src/map/render/map_globe_heatmap_scene.h
     src/map/render/map_globe_heatmap_scene.cpp
     src/map/render/map_render_surface.h
-    src/map/render/map_render_hud_widget.h
-    src/map/render/map_render_hud_widget.cpp
     src/map/render/map_network_render_symbology.h
     src/map/render/map_label_settings.h
     src/map/render/map_network_render_symbology.cpp
@@ -417,12 +407,13 @@ endif()
 
 target_compile_definitions(aowis-server-gui
     PRIVATE
-        AOWIS_HAS_QRHI=${AOWIS_HAS_QRHI}
         AOWIS_HAS_BGFX=$<BOOL:${AOWIS_ENABLE_BGFX_MAP}>
         AOWIS_HAS_WAYLAND_POINTER_LOCK=${AOWIS_HAS_WAYLAND_POINTER_LOCK}
 )
 
 if(AOWIS_HAS_WAYLAND_POINTER_LOCK)
+    # qpa/qplatformnativeinterface.h (the wl_surface of a window).
+    target_link_libraries(aowis-server-gui PRIVATE Qt6::GuiPrivate)
     message(STATUS "AOWIS Wayland relative-pointer orbit support: enabled (runtime protocol binding)")
 elseif(UNIX AND NOT APPLE AND NOT EMSCRIPTEN)
     message(STATUS "AOWIS Wayland relative-pointer orbit support: unavailable (Qt 6.5+ GuiPrivate required)")
@@ -538,131 +529,14 @@ if(AOWIS_ENABLE_BGFX_MAP)
     # The Emscripten version shim reaches this target through bgfx -> bx.
 endif()
 
-if(AOWIS_HAS_QRHI)
-    target_sources(aowis-server-gui
-        PRIVATE
-            src/map/rhi/map_rhi_basemap_renderer.h
-            src/map/rhi/map_rhi_basemap_renderer.cpp
-            src/map/rhi/map_rhi_camera.h
-            src/map/rhi/map_rhi_camera.cpp
-            src/map/rhi/map_rhi_globe_network_backend.h
-            src/map/rhi/map_rhi_globe_network_backend.cpp
-            src/map/rhi/map_rhi_globe_surface_backend.h
-            src/map/rhi/map_rhi_globe_surface_backend.cpp
-            src/map/monitor/map_monitor_hud_controls.h
-            src/map/monitor/map_monitor_hud_controls.cpp
-            src/map/rhi/map_rhi_scene.h
-            src/map/rhi/map_rhi_scene.cpp
-            src/map/rhi/map_rhi_network_style.h
-            src/map/rhi/map_rhi_network_style.cpp
-            src/map/rhi/map_rhi_globe_renderer.h
-            src/map/rhi/map_rhi_globe_renderer.cpp
-            src/map/rhi/map_rhi_globe_terrain_height_cache.h
-            src/map/rhi/map_rhi_globe_terrain_height_cache.cpp
-            src/map/rhi/map_rhi_widget.h
-            src/map/rhi/map_rhi_widget.cpp
+if(EMSCRIPTEN)
+    # The map needs WebGL 2 / OpenGL ES 3 (bgfx's GLES 3 renderer and its
+    # essl shaders). Requiring it for every context also drops Emscripten's
+    # WebGL 1 code paths; no part of the application uses WebGL 1.
+    target_link_options(aowis-server-gui PRIVATE
+        "-sMIN_WEBGL_VERSION=2"
+        "-sMAX_WEBGL_VERSION=2"
     )
-    target_link_libraries(aowis-server-gui PRIVATE Qt6::GuiPrivate)
-
-    if(EMSCRIPTEN)
-        qt_add_shaders(aowis-server-gui "aowis_map_rhi_shaders"
-            GLSL
-                "300 es"
-            PREFIX
-                "/aowis/map/rhi"
-            BASE
-                "src/map/rhi/shaders"
-            FILES
-                src/map/rhi/shaders/map_rhi_link.vert
-                src/map/rhi/shaders/map_rhi_link.frag
-                src/map/rhi/shaders/map_rhi_link_xray.frag
-                src/map/rhi/shaders/map_rhi_globe_flow_direction.vert
-                src/map/rhi/shaders/map_rhi_globe_flow_direction.frag
-                src/map/rhi/shaders/map_rhi_node.vert
-                src/map/rhi/shaders/map_rhi_node.frag
-                src/map/rhi/shaders/map_rhi_icon.vert
-                src/map/rhi/shaders/map_rhi_icon.frag
-                src/map/rhi/shaders/map_rhi_basemap.vert
-                src/map/rhi/shaders/map_rhi_basemap.frag
-                src/map/rhi/shaders/map_rhi_basemap_array.vert
-                src/map/rhi/shaders/map_rhi_basemap_array.frag
-                src/map/rhi/shaders/map_rhi_heatmap.vert
-                src/map/rhi/shaders/map_rhi_heatmap.frag
-                src/map/rhi/shaders/map_rhi_junction.vert
-                src/map/rhi/shaders/map_rhi_junction.frag
-                src/map/rhi/shaders/map_rhi_junction_xray.frag
-                src/map/rhi/shaders/map_rhi_tank.vert
-                src/map/rhi/shaders/map_rhi_tank.frag
-                src/map/rhi/shaders/map_rhi_globe.vert
-                src/map/rhi/shaders/map_rhi_globe.frag
-                src/map/rhi/shaders/map_rhi_globe_array.vert
-                src/map/rhi/shaders/map_rhi_globe_array.frag
-                src/map/rhi/shaders/map_rhi_globe_heatmap_array.vert
-                src/map/rhi/shaders/map_rhi_globe_heatmap_array.frag
-                src/map/rhi/shaders/map_rhi_globe_heatmap_bake.vert
-                src/map/rhi/shaders/map_rhi_globe_heatmap_bake.frag
-                src/map/rhi/shaders/map_rhi_globe_wireframe.vert
-                src/map/rhi/shaders/map_rhi_globe_wireframe.frag
-        )
-    else()
-        qt_add_shaders(aowis-server-gui "aowis_map_rhi_shaders"
-            PREFIX
-                "/aowis/map/rhi"
-            BASE
-                "src/map/rhi/shaders"
-            FILES
-                src/map/rhi/shaders/map_rhi_link.vert
-                src/map/rhi/shaders/map_rhi_link.frag
-                src/map/rhi/shaders/map_rhi_link_xray.frag
-                src/map/rhi/shaders/map_rhi_globe_flow_direction.vert
-                src/map/rhi/shaders/map_rhi_globe_flow_direction.frag
-                src/map/rhi/shaders/map_rhi_node.vert
-                src/map/rhi/shaders/map_rhi_node.frag
-                src/map/rhi/shaders/map_rhi_icon.vert
-                src/map/rhi/shaders/map_rhi_icon.frag
-                src/map/rhi/shaders/map_rhi_basemap.vert
-                src/map/rhi/shaders/map_rhi_basemap.frag
-                src/map/rhi/shaders/map_rhi_basemap_array.vert
-                src/map/rhi/shaders/map_rhi_basemap_array.frag
-                src/map/rhi/shaders/map_rhi_heatmap.vert
-                src/map/rhi/shaders/map_rhi_heatmap.frag
-                src/map/rhi/shaders/map_rhi_junction.vert
-                src/map/rhi/shaders/map_rhi_junction.frag
-                src/map/rhi/shaders/map_rhi_junction_xray.frag
-                src/map/rhi/shaders/map_rhi_tank.vert
-                src/map/rhi/shaders/map_rhi_tank.frag
-                src/map/rhi/shaders/map_rhi_globe.vert
-                src/map/rhi/shaders/map_rhi_globe.frag
-                src/map/rhi/shaders/map_rhi_globe_array.vert
-                src/map/rhi/shaders/map_rhi_globe_array.frag
-                src/map/rhi/shaders/map_rhi_globe_heatmap_array.vert
-                src/map/rhi/shaders/map_rhi_globe_heatmap_array.frag
-                src/map/rhi/shaders/map_rhi_globe_heatmap_bake.vert
-                src/map/rhi/shaders/map_rhi_globe_heatmap_bake.frag
-                src/map/rhi/shaders/map_rhi_globe_wireframe.vert
-                src/map/rhi/shaders/map_rhi_globe_wireframe.frag
-        )
-    endif()
-
-    if(EMSCRIPTEN)
-        # AOWIS RHI intentionally targets WebGL 2 / OpenGL ES 3 in the browser.
-        # Instancing and derivative-heavy map shaders are core functionality there,
-        # and avoiding a WebGL 1 compatibility path keeps the renderer identical to
-        # the native QRhi implementation.
-        target_link_options(aowis-server-gui PRIVATE
-            "-sMIN_WEBGL_VERSION=2"
-            "-sMAX_WEBGL_VERSION=2"
-        )
-        message(STATUS "AOWIS QRhi compile support: enabled for WebAssembly/WebGL 2")
-    else()
-        message(STATUS "AOWIS desktop QRhi support: enabled")
-    endif()
-else()
-    if(EMSCRIPTEN)
-        message(STATUS "AOWIS QRhi compile support: unavailable for WebAssembly (Qt 6.7+, GuiPrivate and ShaderTools are required)")
-    else()
-        message(STATUS "AOWIS desktop QRhi support: unavailable (Qt 6.7+, GuiPrivate and ShaderTools are required); CPU map renderer remains available")
-    endif()
 endif()
 
 if(NOT EMSCRIPTEN)
@@ -937,32 +811,6 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
     # Add future performance targets here and label their CTest tests "performance".
     add_custom_target(aowis-benchmarks
         DEPENDS aowis-unit-presentation-benchmark)
-
-    # Baseline for retained-scene work during the bgfx migration. It creates
-    # 10,000 demand points and attachments and measures repeated integer zoom
-    # crossings on the actual retained 2D scene preparation code. CTest only
-    # enforces structural checks; timings are informational and will change.
-    add_executable(aowis-map-zoom-baseline-benchmark
-        tests/map_zoom_render_baseline_benchmark.cpp
-        src/map/rhi/map_rhi_scene.cpp
-        src/map/rhi/map_rhi_network_style.cpp
-        src/map/render/map_node_declutter.cpp
-        src/map/render/map_render_cache_math.cpp
-        src/map/render/map_icon_atlas.cpp
-        src/geo/geo_web_mercator.cpp
-    )
-    target_include_directories(aowis-map-zoom-baseline-benchmark PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/src
-        ${CMAKE_CURRENT_SOURCE_DIR}/external/AOWIS-SERVER-MODEL/include
-    )
-    target_link_libraries(aowis-map-zoom-baseline-benchmark PRIVATE
-        Qt6::Core Qt6::Gui AOWIS::ServerModel)
-    add_test(NAME aowis-map-zoom-baseline-benchmark
-        COMMAND aowis-map-zoom-baseline-benchmark)
-    set_tests_properties(aowis-map-zoom-baseline-benchmark PROPERTIES
-        LABELS "aowis;performance"
-        ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
-    add_dependencies(aowis-benchmarks aowis-map-zoom-baseline-benchmark)
 
     # Step 2: camera changes and imagery LOD do not invalidate the retained
     # network scene. These are fast deterministic policy checks, not timings.
@@ -1263,7 +1111,6 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
             aowis-unit-cross-surface-acceptance-tests
             aowis-valve-setting-sort-policy-tests
             aowis-unit-presentation-benchmark
-            aowis-map-zoom-baseline-benchmark
             aowis-map-camera-invalidation-tests
             aowis-map-zoom-animation-tests
             aowis-map-retained-network-scene-tests

@@ -586,8 +586,8 @@ void MapTileRepository::decodeTileWithQt(const QString &key, const QByteArray &d
     {
         QImage image;
         image.loadFromData(data);
-        // The renderers' texture format (bgfx RGBA8, QRhi RGBA8888), here on
-        // the decode thread instead of per upload on the GUI thread.
+        // The renderer's texture format (bgfx RGBA8), here on the decode
+        // thread instead of per upload on the GUI thread.
         if (!image.isNull() && image.format() != QImage::Format_RGBA8888)
             image = image.convertToFormat(QImage::Format_RGBA8888);
 
