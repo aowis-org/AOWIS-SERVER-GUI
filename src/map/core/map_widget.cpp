@@ -1022,11 +1022,20 @@ void MapWidget::panMapByPixels(const QPoint &delta, bool keyboard_pan)
         this->m_model->panByPixelsGlobeKeyboard(delta, size());
         return;
     }
-    // Drag over the drawn terrain first; the ellipsoid where there is none.
-    const bool terrain_pan_handled = this->render_surface_globe_terrain_pan_resolver
-        && this->render_surface_globe_terrain_pan_resolver(delta);
-    if (!terrain_pan_handled)
-        this->m_model->panByPixelsGlobe(delta, size());
+    // The ground under the crosshair follows the pointer: the globe turns on
+    // the sphere through the drawn surface there (terrain, else the
+    // ellipsoid the model finds itself).
+    double crosshair_radius_m = 0.0;
+    GeoWgs84Ellipsoid::EcefPositionD crosshair_point;
+    if (this->render_surface_globe_surface_point_resolver
+        && this->render_surface_globe_surface_point_resolver(
+            QPointF(width() * 0.5, height() * 0.5), &crosshair_point))
+    {
+        crosshair_radius_m = std::sqrt(crosshair_point.x * crosshair_point.x
+                                       + crosshair_point.y * crosshair_point.y
+                                       + crosshair_point.z * crosshair_point.z);
+    }
+    this->m_model->panByPixelsGlobe(delta, size(), crosshair_radius_m);
 }
 
 void MapWidget::panUp()
@@ -1583,9 +1592,9 @@ void MapWidget::setRenderSurfaceScreenCoordinateResolver(ScreenCoordinateResolve
     this->render_surface_screen_coordinate_resolver = std::move(resolver);
 }
 
-void MapWidget::setRenderSurfaceGlobeTerrainPanResolver(GlobeTerrainPanResolver resolver)
+void MapWidget::setRenderSurfaceGlobeSurfacePointResolver(GlobeSurfacePointResolver resolver)
 {
-    this->render_surface_globe_terrain_pan_resolver = std::move(resolver);
+    this->render_surface_globe_surface_point_resolver = std::move(resolver);
 }
 
 void MapWidget::setCachedTerrainElevationResolver(CachedTerrainElevationResolver resolver)

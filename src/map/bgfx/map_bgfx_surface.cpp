@@ -626,13 +626,17 @@ bool MapBgfxSurface::globeSurfaceRayHitAtScreen(const QPointF &screen_position,
     return this->terrain_navigation.surfaceRayHitAtScreen(screen_position, hit);
 }
 
-bool MapBgfxSurface::panGlobeByTerrainPixels(const QPoint &delta_pixels)
+bool MapBgfxSurface::globeSurfacePointAtScreen(const QPointF &screen_position,
+                                               GeoWgs84Ellipsoid::EcefPositionD *point)
 {
-    // Only over drawn terrain meshes; false lets MapWidget pan the ellipsoid.
     if (!this->globe_ready)
         return false;
     this->terrain_navigation.setViewportSize(globeViewportSize());
-    return this->terrain_navigation.panByTerrainPixels(delta_pixels);
+    MapGlobeSurfaceHit hit;
+    if (!this->terrain_navigation.surfaceRayHitAtScreen(screen_position, &hit))
+        return false;
+    *point = hit.ecef_position;
+    return true;
 }
 
 void MapBgfxSurface::setTerrainWireframeVisible(bool visible)

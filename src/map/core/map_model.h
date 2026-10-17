@@ -4,16 +4,16 @@
 #include <QObject>
 #include <QPoint>
 #include <QPointF>
-#include <QQuaternion>
 #include <QSize>
 #include <QString>
-#include <QVector3D>
 
 #include "common/_enums_structs.h"
 #include "geo/geo_metric_projection.h"
 #include "geo/geo_web_mercator.h"
 #include "geo/geo_wgs84_ellipsoid.h"
 #include "map/render/map_camera_view_state.h"
+
+struct MapGlobeScreenRay;
 
 enum class MapView3dNavigationState
 {
@@ -96,6 +96,10 @@ public:
     // side of it, which reads as "the globe isn't centered". Middle-drag
     // still tilts away from this if a person wants the oblique look.
     static constexpr double DefaultViewGlobePitchDeg = 90.0;
+    // North-up (the compass) is held while panning below this latitude.
+    // Closer to a pole, north swings around the crosshair with every step,
+    // so a pan there releases it and turns the view rigidly.
+    static constexpr double GlobeNorthUpMaximumLatitudeDeg = 80.0;
     static constexpr double ViewGlobeOrbitYawDegreesPerPixel = 0.35;
     static constexpr double ViewGlobeOrbitPitchDegreesPerPixel = 0.25;
 
@@ -168,7 +172,14 @@ public:
     // an odd-sized viewport and makes repeated zoom steps drift laterally.
     void zoomByAt(double steps, const QPointF &anchorPos, const QSize &viewport);
     void panByPixels(const QPoint &delta, const QSize &viewport);
-    void panByPixelsGlobe(const QPoint &delta, const QSize &viewport);
+    // Drag pan: turns the globe about its centre so the ground under the
+    // crosshair moves by delta pixels. crosshair_radius_m is the distance
+    // of the drawn surface at the crosshair (terrain) from the Earth's
+    // centre; 0 takes the ellipsoid there.
+    void panByPixelsGlobe(const QPoint &delta, const QSize &viewport, double crosshair_radius_m);
+    // Keys: a pitch-independent ground speed from the orbit distance. Both
+    // pans are rigid turns of the camera rig (rotateGlobe()): they cross the
+    // poles.
     void panByPixelsGlobeKeyboard(const QPoint &delta, const QSize &viewport);
 
     void setProvider(MapProvider provider);
@@ -205,28 +216,6 @@ public:
         double camera_collision_lift_m, const QSize &viewport = QSize());
     void orbitViewGlobe(double yaw_delta_deg, double pitch_delta_deg);
     void orbitViewGlobeByPointerDelta(const QPoint &delta_pixels, bool include_pitch);
-    // Marble/Google-Earth style "grab and drag": ray-casts previous_screen_position
-    // and new_screen_position against the WGS84 ellipsoid (using the *current*,
-    // not-yet-updated camera for both, so a single drag step is a single
-    // consistent rotation) and rotates the globe so the ground point that was
-    // under previous_screen_position ends up under new_screen_position. A no-op,
-    // rather than a jump, if either ray misses the globe (e.g. dragging past the
-    // horizon).
-    void panGlobeByPointerDrag(const QPoint &previous_screen_position,
-                               const QPoint &new_screen_position, const QSize &viewport);
-    // Hybrid terrain-aware counterpart used by the Globe (MapWidget's terrain
-    // pan resolver, MapGlobeTerrainNavigation). The
-    // ellipsoid drag remains the stable baseline; terrain_weight blends in
-    // the exact rendered-DEM drag and is expected to approach zero for
-    // shallow/grazing view rays. The terrain rotation is additionally capped
-    // relative to the ellipsoid rotation so terrain relief can never turn a
-    // small requested pixel pan into a large camera jump.
-    bool panGlobeByTerrainPointerDrag(
-        const QPoint &previous_screen_position, const QPoint &new_screen_position,
-        const QSize &viewport,
-        const GeoWgs84Ellipsoid::EcefPositionD &previous_terrain_ecef,
-        const GeoWgs84Ellipsoid::EcefPositionD &new_terrain_ecef,
-        double terrain_weight);
     // Model-only ellipsoid fallback for the geodetic coordinate under
     // screen_position. The Globe resolves against its rendered DEM
     // first because MapModel intentionally has no renderer/terrain-mesh access.
@@ -261,9 +250,17 @@ private:
     double view2dWorldSizePx() const;
     void clampCenter(const QSize &viewport);
     void emitCenterChanged();
-    bool globeScreenRay(const QPoint &screen_position, const QSize &viewport,
-                        QVector3D *eye, QVector3D *direction) const;
-    void applyGlobePanRotation(const QQuaternion &rotation);
+    // The rendered globe camera's ray through screen_position.
+    bool globeScreenRay(const QPointF &screen_position, const QSize &viewport,
+                        MapGlobeScreenRay *ray) const;
+    // Where that ray meets the sphere of radius_m about the Earth's centre
+    // (its closest approach, lifted onto the sphere, when it passes by).
+    bool globeSpherePointAtScreen(const QPointF &screen_position, const QSize &viewport,
+                                  double radius_m, GeoWgs84Ellipsoid::EcefPositionD *point) const;
+    // Turns the camera rig (target and view direction) by angle_rad about
+    // the unit axis through the Earth's centre. North-up holds the yaw up
+    // to GlobeNorthUpMaximumLatitudeDeg and is released beyond.
+    void rotateGlobe(const GeoWgs84Ellipsoid::EcefPositionD &axis, double angle_rad);
     QString providerPath() const;
 
     double m_view_2d_continuous_zoom = 18.0;

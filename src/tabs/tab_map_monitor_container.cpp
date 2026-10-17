@@ -426,7 +426,7 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
         surface->setTerrainRepository(this->terrain_repository);
         // Terrain-aware navigation (Phase 3, slice 2): pointer coordinates
         // with DEM altitude (the 2D footer reads cached DEM tiles too), globe
-        // pans anchored to the drawn terrain. MapWidget keeps owning the
+        // pans on the drawn terrain at the crosshair. MapWidget keeps owning the
         // navigation.
         this->map->setRenderSurfaceScreenCoordinateResolver(
             [surface](const QPointF &screen_position, CoordinateWGS84 *coordinate)
@@ -438,10 +438,10 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
         {
             return surface->cachedTerrainElevationAtCoordinate(coordinate, elevation_m);
         });
-        this->map->setRenderSurfaceGlobeTerrainPanResolver(
-            [surface](const QPoint &delta_pixels)
+        this->map->setRenderSurfaceGlobeSurfacePointResolver(
+            [surface](const QPointF &screen_position, GeoWgs84Ellipsoid::EcefPositionD *point)
         {
-            return surface->panGlobeByTerrainPixels(delta_pixels);
+            return surface->globeSurfacePointAtScreen(screen_position, point);
         });
         // Globe network (slice 3): tanks and reservoirs as 3D models.
         connect(this->map_menu->mapNavigationWidget(),
@@ -871,7 +871,7 @@ MapMonitorContainer::~MapMonitorContainer()
 {
     // The resolvers capture the bgfx surface.
     this->map->setRenderSurfaceScreenCoordinateResolver(MapWidget::ScreenCoordinateResolver());
-    this->map->setRenderSurfaceGlobeTerrainPanResolver(MapWidget::GlobeTerrainPanResolver());
+    this->map->setRenderSurfaceGlobeSurfacePointResolver(MapWidget::GlobeSurfacePointResolver());
     this->map->setCachedTerrainElevationResolver(MapWidget::CachedTerrainElevationResolver());
 #ifndef Q_OS_WASM
     if (this->bgfx_fullscreen_active)

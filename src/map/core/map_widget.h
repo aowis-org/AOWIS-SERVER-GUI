@@ -45,8 +45,10 @@ class MapWidget : public QWidget
 public:
     using ScreenCoordinateResolver =
         std::function<bool(const QPointF &screen_position, CoordinateWGS84 *coordinate)>;
-    using GlobeTerrainPanResolver =
-        std::function<bool(const QPoint &delta_pixels)>;
+    // The drawn globe surface (terrain mesh, else ellipsoid) under a screen
+    // position, in ECEF metres.
+    using GlobeSurfacePointResolver =
+        std::function<bool(const QPointF &screen_position, GeoWgs84Ellipsoid::EcefPositionD *point)>;
     using CachedTerrainElevationResolver = MapCachedTerrainElevationLookup;
 
     explicit MapWidget(MapModel *model, MapTileRepository *tile_repository, GpsProvider *gps, QWidget *parent = nullptr);
@@ -87,7 +89,7 @@ public:
 
     void setEdgePanningEnabled(bool enabled);
     void setRenderSurfaceScreenCoordinateResolver(ScreenCoordinateResolver resolver);
-    void setRenderSurfaceGlobeTerrainPanResolver(GlobeTerrainPanResolver resolver);
+    void setRenderSurfaceGlobeSurfacePointResolver(GlobeSurfacePointResolver resolver);
     void setCachedTerrainElevationResolver(CachedTerrainElevationResolver resolver);
 
 public slots:
@@ -211,7 +213,7 @@ private:
     NavigationKeyIdentity pan_key_down_identity;
     bool pan_fast_modifier_pressed = false;
     ScreenCoordinateResolver render_surface_screen_coordinate_resolver;
-    GlobeTerrainPanResolver render_surface_globe_terrain_pan_resolver;
+    GlobeSurfacePointResolver render_surface_globe_surface_point_resolver;
     CachedTerrainElevationResolver cached_terrain_elevation_resolver;
     bool zoom_in_key_pressed = false;
     bool zoom_out_key_pressed = false;

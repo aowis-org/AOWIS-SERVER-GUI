@@ -4,13 +4,12 @@
 #include "map/render/map_render_cache_math.h"
 #include "config/gui_configuration.h"
 #include "geo/geo_wgs84_ellipsoid.h"
+#include "map/render/map_globe_picking.h"
 
 #include <algorithm>
 #include <cmath>
 #include <limits>
 
-#include <QQuaternion>
-#include <QVector3D>
 #include <QtMath>
 
 namespace
@@ -24,40 +23,51 @@ double normalizedYawDegrees(double yaw_deg)
     return normalized;
 }
 
-QVector3D normalizedEcefDirection(const GeoWgs84Ellipsoid::EcefPositionD &position)
+double ecefLength(const GeoWgs84Ellipsoid::EcefPositionD &vector)
 {
-    const double length = std::sqrt(
-        position.x * position.x
-        + position.y * position.y
-        + position.z * position.z);
-    if (!std::isfinite(length) || length <= 1e-9)
-        return QVector3D();
-
-    return QVector3D(
-        float(position.x / length),
-        float(position.y / length),
-        float(position.z / length));
+    return std::sqrt(vector.x * vector.x + vector.y * vector.y + vector.z * vector.z);
 }
 
-double quaternionRotationAngleRadians(const QQuaternion &rotation)
+// A turn about a unit axis through the Earth's centre.
+struct GlobeRotation
 {
-    const QQuaternion normalized_rotation = rotation.normalized();
-    const double scalar = qBound(
-        -1.0, std::abs(double(normalized_rotation.scalar())), 1.0);
-    return 2.0 * std::acos(scalar);
+    GeoWgs84Ellipsoid::EcefPositionD axis;
+    double angle_rad = 0.0;
+};
+
+// The shortest turn carrying the direction of from onto that of to: about
+// from x to, by the angle between them.
+GlobeRotation globeRotationBetween(
+    const GeoWgs84Ellipsoid::EcefPositionD &from, const GeoWgs84Ellipsoid::EcefPositionD &to)
+{
+    GlobeRotation rotation;
+    GeoWgs84Ellipsoid::EcefPositionD axis;
+    axis.x = from.y * to.z - from.z * to.y;
+    axis.y = from.z * to.x - from.x * to.z;
+    axis.z = from.x * to.y - from.y * to.x;
+    const double axis_length = ecefLength(axis);
+    if (!(axis_length > 0.0))
+        return rotation;
+    rotation.axis.x = axis.x / axis_length;
+    rotation.axis.y = axis.y / axis_length;
+    rotation.axis.z = axis.z / axis_length;
+    rotation.angle_rad = std::atan2(axis_length, from.x * to.x + from.y * to.y + from.z * to.z);
+    return rotation;
 }
 
-QQuaternion limitedRotation(
-    const QQuaternion &rotation, double maximum_angle_rad)
+// Rodrigues' rotation of vector about the rotation's unit axis.
+GeoWgs84Ellipsoid::EcefPositionD rotatedEcef(
+    const GlobeRotation &rotation, const GeoWgs84Ellipsoid::EcefPositionD &vector)
 {
-    const double angle_rad = quaternionRotationAngleRadians(rotation);
-    if (!(angle_rad > maximum_angle_rad) || angle_rad <= 1e-12)
-        return rotation.normalized();
-
-    const double fraction = qBound(0.0, maximum_angle_rad / angle_rad, 1.0);
-    return QQuaternion::slerp(
-        QQuaternion(1.0f, 0.0f, 0.0f, 0.0f),
-        rotation.normalized(), float(fraction));
+    const GeoWgs84Ellipsoid::EcefPositionD &axis = rotation.axis;
+    const double cosine = std::cos(rotation.angle_rad);
+    const double sine = std::sin(rotation.angle_rad);
+    const double along = (axis.x * vector.x + axis.y * vector.y + axis.z * vector.z) * (1.0 - cosine);
+    GeoWgs84Ellipsoid::EcefPositionD rotated;
+    rotated.x = vector.x * cosine + (axis.y * vector.z - axis.z * vector.y) * sine + axis.x * along;
+    rotated.y = vector.y * cosine + (axis.z * vector.x - axis.x * vector.z) * sine + axis.y * along;
+    rotated.z = vector.z * cosine + (axis.x * vector.y - axis.y * vector.x) * sine + axis.z * along;
+    return rotated;
 }
 
 bool coordinatesEqual(double first, double second)
@@ -431,43 +441,38 @@ void MapModel::panByPixels(const QPoint &delta, const QSize &viewport)
 }
 
 bool MapModel::globeScreenRay(
-    const QPoint &screen_position, const QSize &viewport,
-    QVector3D *eye, QVector3D *direction) const
+    const QPointF &screen_position, const QSize &viewport, MapGlobeScreenRay *ray) const
 {
-    const double pitch_deg = qBound(
+    // The rendered camera's ray (MapGlobeCamera::screenRay()), eye in double
+    // precision: an Earth-scale float eye is quantised by about half a metre.
+    MapGlobeScreenRayParameters parameters;
+    parameters.target_lon_deg = this->m_centerLon;
+    parameters.target_lat_deg = this->m_centerLat;
+    parameters.yaw_deg = this->m_view_globe_yaw_deg;
+    parameters.pitch_deg = qBound(
         MinViewGlobePitchDeg, this->m_view_globe_pitch_deg, MaxViewGlobePitchDeg);
-    const double distance_m = qMax(MinViewGlobeDistanceM, this->m_view_globe_distance_m);
-    const GeoWgs84Ellipsoid::OrbitCameraBasis basis = GeoWgs84Ellipsoid::orbitCameraBasis(
-        this->m_centerLon, this->m_centerLat,
-        this->m_view_globe_yaw_deg, pitch_deg, distance_m,
-        this->m_view_globe_vertical_offset_m,
-        this->m_view_globe_camera_collision_lift_m);
-
-    // Same FOV as the Globe GPU projection, using the shared NDC -> ray
-    // formula. This has to stay in lockstep with the rendered camera so the
-    // ray corresponds to the pixel the person is actually looking at.
-    return GeoWgs84Ellipsoid::screenRay(
-        basis, QPointF(screen_position), viewport, GlobeFieldOfViewDeg, eye, direction);
+    parameters.distance_m = qMax(MinViewGlobeDistanceM, this->m_view_globe_distance_m);
+    parameters.target_height_m = this->m_view_globe_vertical_offset_m;
+    parameters.collision_lift_m = this->m_view_globe_camera_collision_lift_m;
+    parameters.field_of_view_deg = GlobeFieldOfViewDeg;
+    return mapGlobeBuildScreenRay(screen_position, viewport, parameters, ray);
 }
 
 bool MapModel::globeCoordinateAtScreen(
     const QPoint &screen_position, const QSize &viewport, CoordinateWGS84 *coordinate) const
 {
-    if (coordinate == nullptr)
+    MapGlobeScreenRay ray;
+    GeoWgs84Ellipsoid::EcefPositionD point;
+    double distance_m = 0.0;
+    if (!globeScreenRay(QPointF(screen_position), viewport, &ray)
+        || !GeoWgs84Ellipsoid::rayIntersection(ray.origin_ecef, ray.direction, &point, &distance_m))
+    {
         return false;
-
-    QVector3D eye;
-    QVector3D direction;
-    if (!globeScreenRay(screen_position, viewport, &eye, &direction))
-        return false;
-
-    QVector3D intersection;
-    if (!GeoWgs84Ellipsoid::rayIntersection(eye, direction, &intersection))
-        return false;
+    }
 
     double lon_deg = 0.0;
     double lat_deg = 0.0;
-    if (!GeoWgs84Ellipsoid::ecefToGeodetic(intersection, &lon_deg, &lat_deg))
+    if (!GeoWgs84Ellipsoid::ecefToGeodetic(point, &lon_deg, &lat_deg))
         return false;
 
     coordinate->longitude_deg = lon_deg;
@@ -475,176 +480,149 @@ bool MapModel::globeCoordinateAtScreen(
     return true;
 }
 
-void MapModel::panGlobeByPointerDrag(
-    const QPoint &previous_screen_position, const QPoint &new_screen_position,
-    const QSize &viewport)
+bool MapModel::globeSpherePointAtScreen(
+    const QPointF &screen_position, const QSize &viewport, double radius_m,
+    GeoWgs84Ellipsoid::EcefPositionD *point) const
 {
-    if (previous_screen_position == new_screen_position)
-        return;
+    MapGlobeScreenRay ray;
+    if (!globeScreenRay(screen_position, viewport, &ray))
+        return false;
 
-    QVector3D eye;
-    QVector3D direction;
-    if (!globeScreenRay(previous_screen_position, viewport, &eye, &direction))
-        return;
-    QVector3D previous_point;
-    if (!GeoWgs84Ellipsoid::rayIntersection(eye, direction, &previous_point))
-        return;
-
-    if (!globeScreenRay(new_screen_position, viewport, &eye, &direction))
-        return;
-    QVector3D new_point;
-    if (!GeoWgs84Ellipsoid::rayIntersection(eye, direction, &new_point))
-        return;
-
-    const QQuaternion rotation = QQuaternion::rotationTo(
-        new_point.normalized(), previous_point.normalized());
-    applyGlobePanRotation(rotation);
-}
-
-bool MapModel::panGlobeByTerrainPointerDrag(
-    const QPoint &previous_screen_position, const QPoint &new_screen_position,
-    const QSize &viewport,
-    const GeoWgs84Ellipsoid::EcefPositionD &previous_terrain_ecef,
-    const GeoWgs84Ellipsoid::EcefPositionD &new_terrain_ecef,
-    double terrain_weight)
-{
-    if (previous_screen_position == new_screen_position
-        || !viewport.isValid())
+    const GeoWgs84Ellipsoid::EcefPositionD &origin = ray.origin_ecef;
+    const double direction_x = double(ray.direction.x());
+    const double direction_y = double(ray.direction.y());
+    const double direction_z = double(ray.direction.z());
+    const double origin_along = origin.x * direction_x + origin.y * direction_y + origin.z * direction_z;
+    const double origin_length_squared = origin.x * origin.x + origin.y * origin.y + origin.z * origin.z;
+    const double discriminant = origin_along * origin_along - (origin_length_squared - radius_m * radius_m);
+    double distance_m = -origin_along;
+    if (discriminant >= 0.0)
     {
-        return false;
+        // The nearer forward hit; the farther one when the eye is inside the
+        // sphere (low in a valley below the crosshair's terrain).
+        const double root = std::sqrt(discriminant);
+        distance_m = -origin_along - root > 0.0 ? -origin_along - root : -origin_along + root;
     }
-
-    QVector3D eye;
-    QVector3D direction;
-    if (!globeScreenRay(previous_screen_position, viewport, &eye, &direction))
+    if (!(distance_m > 0.0))
         return false;
-    QVector3D previous_ellipsoid_point;
-    if (!GeoWgs84Ellipsoid::rayIntersection(
-            eye, direction, &previous_ellipsoid_point))
+    point->x = origin.x + direction_x * distance_m;
+    point->y = origin.y + direction_y * distance_m;
+    point->z = origin.z + direction_z * distance_m;
+    if (discriminant < 0.0)
     {
-        return false;
+        // A ray past the sphere (beyond the horizon): its closest approach,
+        // lifted onto the sphere, so a drag over the globe's edge goes on
+        // along the silhouette instead of stopping.
+        const double scale = radius_m / ecefLength(*point);
+        point->x *= scale;
+        point->y *= scale;
+        point->z *= scale;
     }
-
-    if (!globeScreenRay(new_screen_position, viewport, &eye, &direction))
-        return false;
-    QVector3D new_ellipsoid_point;
-    if (!GeoWgs84Ellipsoid::rayIntersection(
-            eye, direction, &new_ellipsoid_point))
-    {
-        return false;
-    }
-
-    const QQuaternion ellipsoid_rotation = QQuaternion::rotationTo(
-        new_ellipsoid_point.normalized(), previous_ellipsoid_point.normalized());
-
-    const QVector3D previous_terrain_direction =
-        normalizedEcefDirection(previous_terrain_ecef);
-    const QVector3D new_terrain_direction =
-        normalizedEcefDirection(new_terrain_ecef);
-    if (previous_terrain_direction.lengthSquared() <= 1e-12f
-        || new_terrain_direction.lengthSquared() <= 1e-12f)
-    {
-        return false;
-    }
-
-    QQuaternion terrain_rotation = QQuaternion::rotationTo(
-        new_terrain_direction, previous_terrain_direction);
-
-    // Relief viewed almost tangentially can make two adjacent screen rays hit
-    // terrain points that are very far apart. Keep the existing ellipsoid pan
-    // as the hard speed reference: even with terrain_weight == 1, the DEM
-    // rotation may be at most slightly larger than the baseline requested by
-    // the same pixel delta. This prevents cliffs/ridges from creating a sudden
-    // high-speed pan while still allowing nearby relief to influence the drag.
-    const double ellipsoid_angle_rad =
-        quaternionRotationAngleRadians(ellipsoid_rotation);
-    const double maximum_terrain_angle_rad = qMax(
-        ellipsoid_angle_rad * 1.35,
-        qDegreesToRadians(0.002));
-    terrain_rotation = limitedRotation(
-        terrain_rotation, maximum_terrain_angle_rad);
-
-    const double blend = qBound(0.0, terrain_weight, 1.0);
-    const QQuaternion blended_rotation = QQuaternion::slerp(
-        ellipsoid_rotation.normalized(), terrain_rotation.normalized(),
-        float(blend));
-    applyGlobePanRotation(blended_rotation);
     return true;
 }
 
-void MapModel::applyGlobePanRotation(const QQuaternion &rotation)
+void MapModel::panByPixelsGlobe(const QPoint &delta, const QSize &viewport, double crosshair_radius_m)
 {
-    if (rotation.isNull())
+    if (delta.isNull() || !viewport.isValid())
         return;
 
-    const GeoWgs84Ellipsoid::OrbitCameraBasis old_camera_basis =
-        GeoWgs84Ellipsoid::orbitCameraBasis(
-            this->m_centerLon, this->m_centerLat,
-            this->m_view_globe_yaw_deg,
-            qBound(MinViewGlobePitchDeg, this->m_view_globe_pitch_deg, MaxViewGlobePitchDeg),
-            qMax(MinViewGlobeDistanceM, this->m_view_globe_distance_m),
-            this->m_view_globe_vertical_offset_m,
-            this->m_view_globe_camera_collision_lift_m);
-    const QVector3D target_ecef = old_camera_basis.target;
+    // The ground under the crosshair moves by delta pixels: the points at
+    // the crosshair minus delta and at the crosshair, both on the sphere
+    // through the drawn surface at the crosshair (centred on the Earth's
+    // centre), are turned onto each other. The speed thus follows the
+    // terrain at the crosshair (its height, how far away it is, how steeply
+    // it is seen), not a fixed angle per pixel; and two rays a few pixels
+    // apart never land on unrelated relief (a near ridge, a far valley).
+    // Without a drawn surface the crosshair's ellipsoid point gives the
+    // sphere.
+    const QPointF crosshair(viewport.width() * 0.5, viewport.height() * 0.5);
+    double radius_m = crosshair_radius_m;
+    if (!(radius_m > 0.0))
+    {
+        MapGlobeScreenRay ray;
+        GeoWgs84Ellipsoid::EcefPositionD crosshair_point;
+        double distance_m = 0.0;
+        if (!globeScreenRay(crosshair, viewport, &ray)
+            || !GeoWgs84Ellipsoid::rayIntersection(ray.origin_ecef, ray.direction, &crosshair_point,
+                                                   &distance_m))
+        {
+            return;
+        }
+        radius_m = ecefLength(crosshair_point);
+    }
 
-    // Rotating the camera's target by the rotation that maps the new surface
-    // point back onto the previous one is equivalent to rotating the globe
-    // itself so the grabbed ground point follows the requested pixel motion.
-    const QVector3D rotated_target = rotation.rotatedVector(target_ecef);
-
-    double lon_deg = 0.0;
-    double lat_deg = 0.0;
-    if (!GeoWgs84Ellipsoid::ecefToGeodetic(rotated_target, &lon_deg, &lat_deg))
+    GeoWgs84Ellipsoid::EcefPositionD previous_point;
+    GeoWgs84Ellipsoid::EcefPositionD new_point;
+    if (!globeSpherePointAtScreen(crosshair - QPointF(delta), viewport, radius_m, &previous_point)
+        || !globeSpherePointAtScreen(crosshair, viewport, radius_m, &new_point))
+    {
         return;
+    }
+    // The camera rig turns from the crosshair's point to the grabbed one:
+    // the same as the globe turning the other way under a fixed camera.
+    const GlobeRotation rotation = globeRotationBetween(new_point, previous_point);
+    rotateGlobe(rotation.axis, rotation.angle_rad);
+}
 
-    const double next_lon_deg = GeoWebMercator::normalizeLongitude(lon_deg);
-    const double next_lat_deg = std::clamp(lat_deg, -90.0, 90.0);
+void MapModel::rotateGlobe(const GeoWgs84Ellipsoid::EcefPositionD &axis, double angle_rad)
+{
+    if (!(std::abs(angle_rad) > 0.0))
+        return;
+    GlobeRotation rotation;
+    rotation.axis = axis;
+    rotation.angle_rad = angle_rad;
 
-    QVector3D transported_right = rotation.rotatedVector(old_camera_basis.right);
+    // The camera rig (target, screen-right direction) turned rigidly about
+    // the Earth's centre, in double precision, then expressed as target
+    // longitude/latitude and yaw again. A rigid turn has no preferred axis,
+    // so it runs through and across the poles without a jump: the
+    // longitude may swing by 180 degrees there, and the yaw taken from the
+    // turned screen-right direction swings with it.
+    const GeoWgs84Ellipsoid::EcefPositionD target =
+        GeoWgs84Ellipsoid::geodeticToEcefD(this->m_centerLon, this->m_centerLat, 0.0);
+    const GeoWgs84Ellipsoid::LocalFrame frame =
+        GeoWgs84Ellipsoid::localFrameAtGeodetic(this->m_centerLon, this->m_centerLat, 0.0);
+    const double yaw_rad = qDegreesToRadians(this->m_view_globe_yaw_deg);
+    GeoWgs84Ellipsoid::EcefPositionD right;
+    right.x = double(frame.east.x()) * std::cos(yaw_rad) + double(frame.north.x()) * std::sin(yaw_rad);
+    right.y = double(frame.east.y()) * std::cos(yaw_rad) + double(frame.north.y()) * std::sin(yaw_rad);
+    right.z = double(frame.east.z()) * std::cos(yaw_rad) + double(frame.north.z()) * std::sin(yaw_rad);
+
+    double next_lon_deg = 0.0;
+    double next_lat_deg = 0.0;
+    if (!GeoWgs84Ellipsoid::ecefToGeodetic(rotatedEcef(rotation, target), &next_lon_deg, &next_lat_deg))
+        return;
+    next_lon_deg = GeoWebMercator::normalizeLongitude(next_lon_deg);
+    next_lat_deg = std::clamp(next_lat_deg, -90.0, 90.0);
+
+    const GeoWgs84Ellipsoid::EcefPositionD turned_right = rotatedEcef(rotation, right);
     const GeoWgs84Ellipsoid::LocalFrame next_frame =
         GeoWgs84Ellipsoid::localFrameAtGeodetic(next_lon_deg, next_lat_deg, 0.0);
-    transported_right -= next_frame.up
-        * QVector3D::dotProduct(transported_right, next_frame.up);
-    if (transported_right.lengthSquared() <= 1e-12f)
-        return;
-    transported_right.normalize();
+    const double right_east = turned_right.x * double(next_frame.east.x())
+        + turned_right.y * double(next_frame.east.y()) + turned_right.z * double(next_frame.east.z());
+    const double right_north = turned_right.x * double(next_frame.north.x())
+        + turned_right.y * double(next_frame.north.y()) + turned_right.z * double(next_frame.north.z());
+    const double rigid_yaw_deg = normalizedYawDegrees(qRadiansToDegrees(std::atan2(right_north, right_east)));
 
-    double next_yaw_deg = this->m_view_globe_yaw_deg;
+    double next_yaw_deg = rigid_yaw_deg;
     if (this->m_view_globe_north_up_locked)
     {
-        // North-up lock must suppress the small parallel-transport heading
-        // drift produced by ordinary movement over a curved surface, but it
-        // must NOT force yaw back to zero at a pole. Latitude/longitude has an
-        // unavoidable tangent-frame discontinuity there: after crossing a
-        // pole the canonical longitude can jump by 180 degrees, which flips
-        // east/north even though the physical camera orientation is smooth.
-        //
-        // Keep the locked yaw unchanged during normal panning. At each step,
-        // compare that candidate screen-right direction with the physically
-        // transported screen-right vector. If the canonical tangent frame has
-        // flipped, the two directions become opposite; adding exactly 180
-        // degrees cancels the coordinate-frame flip without reintroducing the
-        // ordinary curved-surface wobble that the lock is meant to suppress.
-        const double yaw_rad = qDegreesToRadians(next_yaw_deg);
-        const QVector3D locked_right =
-            next_frame.east * float(std::cos(yaw_rad))
-            + next_frame.north * float(std::sin(yaw_rad));
-        if (QVector3D::dotProduct(locked_right, transported_right) < 0.0f)
-            next_yaw_deg = normalizedYawDegrees(next_yaw_deg + 180.0);
-    }
-    else
-    {
-        // For a freely rotated globe, transport the actual ECEF screen-right
-        // direction through the same drag rotation, then re-express that
-        // physical direction as yaw in the new local tangent frame. Thus a
-        // longitude jump is cancelled by the corresponding yaw change and the
-        // camera orientation stays continuous through and across either pole.
-        const double right_east =
-            double(QVector3D::dotProduct(transported_right, next_frame.east));
-        const double right_north =
-            double(QVector3D::dotProduct(transported_right, next_frame.north));
-        next_yaw_deg = normalizedYawDegrees(
-            qRadiansToDegrees(std::atan2(right_north, right_east)));
+        // North-up holds the yaw against the small heading drift of a rigid
+        // turn over the curved surface. Near a pole north swings around the
+        // target with every step (a pass beside the pole would spin the view
+        // about the crosshair), and across one it points backwards: there
+        // the lock is released and the turn stays rigid; the compass
+        // restores north up.
+        const double hold_yaw_rad = qDegreesToRadians(this->m_view_globe_yaw_deg);
+        const double hold_right_east = std::cos(hold_yaw_rad);
+        const double hold_right_north = std::sin(hold_yaw_rad);
+        const bool hold = std::max(std::abs(this->m_centerLat), std::abs(next_lat_deg))
+                <= GlobeNorthUpMaximumLatitudeDeg
+            && hold_right_east * right_east + hold_right_north * right_north > 0.0;
+        if (hold)
+            next_yaw_deg = this->m_view_globe_yaw_deg;
+        else
+            this->m_view_globe_north_up_locked = false;
     }
 
     // Update center and yaw as one state change before emitting either signal.
@@ -666,21 +644,6 @@ void MapModel::applyGlobePanRotation(const QQuaternion &rotation)
         emitCenterChanged();
     if (yaw_changed)
         emit viewGlobeCameraChanged();
-}
-
-void MapModel::panByPixelsGlobe(const QPoint &delta, const QSize &viewport)
-{
-    if (delta.isNull() || !viewport.isValid())
-        return;
-
-    // Same "grab the point at screen center and drag it by delta pixels"
-    // shape as a direct screen-space drag, but via the ellipsoid ray-cast
-    // instead of the flat-plane ground offset. The screen center is always
-    // a safe ray to cast -- the camera's forward vector is, by
-    // construction, aimed exactly at the current target, which is always a
-    // point on the ellipsoid.
-    const QPoint viewport_center(viewport.width() / 2, viewport.height() / 2);
-    panGlobeByPointerDrag(viewport_center - delta, viewport_center, viewport);
 }
 
 void MapModel::panByPixelsGlobeKeyboard(
@@ -717,16 +680,19 @@ void MapModel::panByPixelsGlobeKeyboard(
         -screen_right_north * double(delta.x())
         + screen_up_north * double(delta.y()));
 
-    double next_lon_deg = 0.0;
-    double next_lat_deg = 0.0;
-    if (!GeoWgs84Ellipsoid::offsetGeodetic(
-            this->m_centerLon, this->m_centerLat,
-            east_m, north_m, &next_lon_deg, &next_lat_deg))
-    {
-        return;
-    }
-
-    setCenter(next_lon_deg, next_lat_deg, viewport);
+    // The same rigid turn as a drag (rotateGlobe()), so keys run over the
+    // poles too: the target moves along the great circle heading east_m /
+    // north_m, about the axis normal to its direction and that heading.
+    const GeoWgs84Ellipsoid::LocalFrame frame =
+        GeoWgs84Ellipsoid::localFrameAtGeodetic(this->m_centerLon, this->m_centerLat, 0.0);
+    GeoWgs84Ellipsoid::EcefPositionD heading;
+    heading.x = double(frame.east.x()) * east_m + double(frame.north.x()) * north_m;
+    heading.y = double(frame.east.y()) * east_m + double(frame.north.y()) * north_m;
+    heading.z = double(frame.east.z()) * east_m + double(frame.north.z()) * north_m;
+    const GeoWgs84Ellipsoid::EcefPositionD target =
+        GeoWgs84Ellipsoid::geodeticToEcefD(this->m_centerLon, this->m_centerLat, 0.0);
+    rotateGlobe(globeRotationBetween(target, heading).axis,
+                std::hypot(east_m, north_m) / ecefLength(target));
 }
 
 void MapModel::clampCenter(const QSize &viewport)

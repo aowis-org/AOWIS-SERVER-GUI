@@ -37,40 +37,6 @@ constexpr double GlobeCollisionFollowTimeConstantSeconds = 0.16;
 constexpr double GlobeTerrainFollowSettlePixels = 0.25;
 constexpr double GlobeTerrainFollowMinimumSettleDistanceM = 0.01;
 constexpr double GlobeTerrainMaximumTimeStepSeconds = 1.0 / 30.0;
-// DEM-derived panning is useful when the ray meets the ground decisively, but
-// becomes ill-conditioned near the horizon. Blend it in between roughly 12
-// and 30 degrees above the local tangent plane; below the lower threshold the
-// existing ellipsoid drag is used unchanged.
-constexpr double GlobeTerrainPanMinimumIncidence = 0.20791169081775931;
-constexpr double GlobeTerrainPanFullIncidence = 0.5;
-
-double smoothStep(double edge0, double edge1, double value)
-{
-    if (!(edge1 > edge0))
-        return value >= edge1 ? 1.0 : 0.0;
-
-    const double t = qBound(0.0, (value - edge0) / (edge1 - edge0), 1.0);
-    return t * t * (3.0 - 2.0 * t);
-}
-
-// |cos| of the angle between the eye ray and the local vertical at the hit.
-double globeTerrainRayIncidence(const GeoWgs84Ellipsoid::EcefPositionD &eye,
-                                const MapGlobeSurfaceHit &hit)
-{
-    const double ray_x = hit.ecef_position.x - eye.x;
-    const double ray_y = hit.ecef_position.y - eye.y;
-    const double ray_z = hit.ecef_position.z - eye.z;
-    const double ray_length = std::sqrt(ray_x * ray_x + ray_y * ray_y + ray_z * ray_z);
-    if (!std::isfinite(ray_length) || ray_length <= 1e-9)
-        return 0.0;
-
-    const GeoWgs84Ellipsoid::LocalFrame frame = GeoWgs84Ellipsoid::localFrameAtGeodetic(
-        hit.coordinate.longitude_deg, hit.coordinate.latitude_deg, hit.surface_height_m);
-    const double dot = (ray_x * double(frame.up.x())
-                        + ray_y * double(frame.up.y())
-                        + ray_z * double(frame.up.z())) / ray_length;
-    return qBound(0.0, std::abs(dot), 1.0);
-}
 
 double approachExponentially(double current, double target, double time_constant_seconds,
                              double elapsed_seconds)
@@ -495,42 +461,6 @@ bool MapGlobeTerrainNavigation::surfaceRayHitAtScreen(const QPointF &screen_posi
     hit->distance_m = hit_distance_m;
     hit->source = source;
     return hit->isValid();
-}
-
-bool MapGlobeTerrainNavigation::panByTerrainPixels(const QPoint &delta_pixels)
-{
-    if (delta_pixels.isNull() || this->map_model == nullptr
-        || this->map_model->viewMode() != MapViewMode::Globe || !this->viewport_size.isValid())
-    {
-        return false;
-    }
-
-    // Preserve the existing pan semantics exactly: panByPixelsGlobe() treats
-    // a delta as "grab the viewport center minus delta and move it to the
-    // viewport center". Only the surface supplying those two points changes.
-    const QPoint viewport_center(this->viewport_size.width() / 2, this->viewport_size.height() / 2);
-    const QPoint previous_position = viewport_center - delta_pixels;
-
-    MapGlobeSurfaceHit previous_hit;
-    MapGlobeSurfaceHit new_hit;
-    if (!surfaceRayHitAtScreen(QPointF(previous_position), &previous_hit)
-        || !surfaceRayHitAtScreen(QPointF(viewport_center), &new_hit)
-        || !previous_hit.isTerrainMesh() || !new_hit.isTerrainMesh())
-    {
-        return false;
-    }
-
-    const GeoWgs84Ellipsoid::EcefPositionD eye = currentEyeEcef(*this->map_model);
-    const double incidence = qMin(globeTerrainRayIncidence(eye, previous_hit),
-                                  globeTerrainRayIncidence(eye, new_hit));
-    const double terrain_weight = smoothStep(GlobeTerrainPanMinimumIncidence,
-                                             GlobeTerrainPanFullIncidence, incidence);
-    if (terrain_weight <= 0.0)
-        return false;
-
-    return this->map_model->panGlobeByTerrainPointerDrag(
-        previous_position, viewport_center, this->viewport_size, previous_hit.ecef_position,
-        new_hit.ecef_position, terrain_weight);
 }
 
 bool MapGlobeTerrainNavigation::terrainCoordinateAtScreen(const QPointF &screen_position,

@@ -4,7 +4,6 @@
 #include "map/render/map_render_types.h"
 
 #include <QElapsedTimer>
-#include <QPoint>
 #include <QPointF>
 #include <QSize>
 
@@ -22,9 +21,9 @@ class MapTerrainRepository;
 // - screen rays against the rendered surface: the retained DEM meshes of
 //   MapGlobeSurfacePreparation (the exact triangles on screen), the WGS84
 //   ellipsoid where no mesh is loaded;
-// - terrain-anchored panning: the grabbed DEM point stays under the pointer
-//   (MapModel::panGlobeByTerrainPointerDrag), blended out near the horizon
-//   where the ray hits the ground at a grazing angle;
+// - terrain-anchored panning: the drawn surface at the crosshair sets the
+//   sphere MapModel::panByPixelsGlobe() turns the globe on, so the ground
+//   under the crosshair follows the pointer;
 // - the pointer coordinate with its DEM altitude, and cached DEM elevations
 //   at the LOD the surface shows (2D footer, X-Ray classification later).
 //
@@ -58,10 +57,6 @@ public:
     // Ray from the screen position (logical pixels, top-left origin) against
     // the rendered DEM meshes, else the ellipsoid. false: the ray misses.
     bool surfaceRayHitAtScreen(const QPointF &screen_position, MapGlobeSurfaceHit *hit) const;
-    // MapWidget's Globe pointer pan with the grabbed DEM point kept under the
-    // pointer. false: not applicable (no mesh hit, grazing angle); MapWidget
-    // then pans over the ellipsoid.
-    bool panByTerrainPixels(const QPoint &delta_pixels);
     // Pointer coordinate: Globe -> surface ray (altitude from the DEM when a
     // mesh was hit); 2D -> the flat map's coordinate with a cached altitude.
     bool terrainCoordinateAtScreen(const QPointF &screen_position, CoordinateWGS84 *coordinate);

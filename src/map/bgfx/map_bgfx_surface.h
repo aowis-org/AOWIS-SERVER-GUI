@@ -79,7 +79,11 @@ public:
                                             double *elevation_m) const;
     bool globeSurfaceRayHitAtScreen(const QPointF &screen_position,
                                     MapGlobeSurfaceHit *hit) const;
-    bool panGlobeByTerrainPixels(const QPoint &delta_pixels);
+    // The drawn globe surface (terrain mesh, else ellipsoid) under a screen
+    // position, with the camera as the model has it now: the crosshair's
+    // sets the sphere a pointer pan turns the globe on.
+    bool globeSurfacePointAtScreen(const QPointF &screen_position,
+                                   GeoWgs84Ellipsoid::EcefPositionD *point);
 
     // Keyboard events originate from the embedded QWindow on native desktop.
     // Forward them to the shared map-navigation owner; bgfx must not implement

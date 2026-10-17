@@ -413,10 +413,25 @@ backend-neutral, the port of MapRhiWidget's terrain code):
   while `following()` (no extra timer).
 * Rays against the drawn surface (`MapGlobeSurfacePreparation`'s retained
   meshes, ellipsoid elsewhere): the pointer coordinate with DEM altitude,
-  `globeSurfaceRayHitAtScreen()`, and globe pans anchored to the grabbed DEM
-  point (`MapModel::panGlobeByTerrainPointerDrag`, blended out at grazing
-  angles). The Map Monitor installs MapWidget's resolvers for the bgfx
-  surface as for QRhi; the 2D footer altitude reads cached DEM tiles too.
+  `globeSurfaceRayHitAtScreen()`, and the crosshair's surface point for
+  pans (`globeSurfacePointAtScreen()`). The Map Monitor installs MapWidget's
+  resolvers for the bgfx surface; the 2D footer altitude reads cached DEM
+  tiles too.
+* Pans (`MapModel::panByPixelsGlobe()`): the ground under the crosshair
+  moves with the pointer. The rays at the crosshair minus the pointer delta
+  and at the crosshair meet the sphere through the drawn surface at the
+  crosshair (about the Earth's centre); the camera rig turns rigidly, in
+  double precision, from one point onto the other (`rotateGlobe()`). Speed
+  thus follows the terrain at the crosshair (height, distance, viewing
+  angle), not a fixed angle per pixel; nearby rays never land on unrelated
+  relief, and a ray past the horizon takes its closest approach to the
+  sphere. Keys turn the rig the same way along the great circle of the
+  pressed direction. A rigid turn has no preferred axis, so pans cross the
+  poles: the longitude swings by 180 degrees there and the yaw, taken from
+  the turned screen-right direction, swings with it. North-up (compass) holds
+  the yaw against the turn's small heading drift up to 80 degrees latitude;
+  closer to a pole north spins around the crosshair with every step, so the
+  pan releases the lock there and stays rigid.
 * A vertical exaggeration change rebuilds the terrain meshes (vertex
   patches); a network opened in Globe mode requests its DEM tiles at once.
 
