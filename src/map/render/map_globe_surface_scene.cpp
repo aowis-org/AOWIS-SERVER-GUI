@@ -23,10 +23,17 @@ constexpr int GlobeQuadtreeRootZoom = 0;
 constexpr double GlobeQuadtreeSubdivideScreenPx = 512.0;
 constexpr double GlobeQuadtreeMergeScreenPx = 256.0;
 constexpr int GlobeQuadtreeMaxVisitedNodes = 20000;
-constexpr double GlobeQuadtreeViewConeMarginRad = 0.5;
+// Slack around the exact view cone (quadtreeNodeInViewCone()) for camera
+// rotation until the next window rebuild. It was 0.5 while the cone ignored
+// the aspect ratio; with the corners included, 0.25 keeps a 4:3 view at the
+// same leaf count.
+constexpr double GlobeQuadtreeViewConeMarginRad = 0.25;
 constexpr double GlobeQuadtreeHorizonOcclusionMarginFactor = 3.0;
 constexpr int GlobeQuadtreeViewConeCullMinZoom = 2;
 constexpr int GlobeTerrainMinimumLodCellCount = 1;
+// Relief assumed where no DEM covering a node is cached yet: from the
+// ellipsoid to above the highest summit (raw DEM metres).
+constexpr double UnknownTerrainMaximumElevationM = 9000.0;
 
 int terrainZoomForImageryZoom(int imagery_zoom)
 {
@@ -99,6 +106,48 @@ void quadtreeNodeBoundingSphere(
     *radius_m = max_distance;
 }
 
+// Elevation range (raw DEM metres) of the finest cached DEM tile covering a
+// node: its own terrain tile, else the nearest cached ancestor, whose range
+// contains that of every descendant. False when none is cached.
+bool cachedTerrainElevationRange(
+    int zoom,
+    int tile_x,
+    int tile_y,
+    const MapTerrainRepository *terrain_repository,
+    double *minimum_elevation_m,
+    double *maximum_elevation_m)
+{
+    const int terrain_zoom = terrainZoomForImageryZoom(zoom);
+    for (int candidate_zoom = terrain_zoom;
+         candidate_zoom >= MapGlobeSurfaceScene::TerrainReliefMinimumZoom;
+         --candidate_zoom)
+    {
+        const int shift = zoom - candidate_zoom;
+        const MapTerrainTile *terrain_tile = terrain_repository->tile(
+            terrainDatasetId(), candidate_zoom,
+            quint32(tile_x) >> shift, quint32(tile_y) >> shift);
+        if (terrain_tile != nullptr
+            && terrainDatumUsable(terrain_tile->vertical_datum)
+            && std::isfinite(terrain_tile->minimum_elevation_m)
+            && std::isfinite(terrain_tile->maximum_elevation_m))
+        {
+            *minimum_elevation_m = terrain_tile->minimum_elevation_m;
+            *maximum_elevation_m = terrain_tile->maximum_elevation_m;
+            return true;
+        }
+    }
+    return false;
+}
+
+// Bounding sphere for horizon and view-cone culling: the node's surface
+// patch between the lowest and highest relief that can be drawn there.
+//
+// The relief range must hold before the node's own DEM tile is cached. A
+// node bounded on the ellipsoid under high terrain lies kilometres below
+// the drawn surface; close to the camera it then left the view cone, was
+// never refined into leaves, so its DEM was never requested either: a
+// permanent hole next to the camera. Hence the nearest cached ancestor's
+// range, and without any cached DEM the whole possible range.
 void quadtreeNodeVisibilityBoundingSphere(
     int zoom,
     int tile_x,
@@ -115,26 +164,18 @@ void quadtreeNodeVisibilityBoundingSphere(
     if (terrain_repository != nullptr
         && zoom >= MapGlobeSurfaceScene::TerrainReliefMinimumZoom)
     {
-        const int terrain_zoom = terrainZoomForImageryZoom(zoom);
-        const int zoom_delta = zoom - terrain_zoom;
-        const quint32 terrain_x = quint32(tile_x) >> zoom_delta;
-        const quint32 terrain_y = quint32(tile_y) >> zoom_delta;
-        const MapTerrainTile *terrain_tile = terrain_repository->tile(
-            terrainDatasetId(), terrain_zoom, terrain_x, terrain_y);
-        if (terrain_tile != nullptr
-            && terrainDatumUsable(terrain_tile->vertical_datum)
-            && std::isfinite(terrain_tile->minimum_elevation_m)
-            && std::isfinite(terrain_tile->maximum_elevation_m))
-        {
-            const double first_elevation_m = vertical_transform.terrainHeightM(
-                terrain_tile->minimum_elevation_m);
-            const double second_elevation_m = vertical_transform.terrainHeightM(
-                terrain_tile->maximum_elevation_m);
-            minimum_elevation_m = qMin(
-                0.0, qMin(first_elevation_m, second_elevation_m));
-            maximum_elevation_m = qMax(
-                0.0, qMax(first_elevation_m, second_elevation_m));
-        }
+        double dem_minimum_m = 0.0;
+        double dem_maximum_m = UnknownTerrainMaximumElevationM;
+        cachedTerrainElevationRange(
+            zoom, tile_x, tile_y, terrain_repository, &dem_minimum_m, &dem_maximum_m);
+        const double first_elevation_m = vertical_transform.terrainHeightM(dem_minimum_m);
+        const double second_elevation_m = vertical_transform.terrainHeightM(dem_maximum_m);
+        // The flat ellipsoid stays inside: drawn where relief is not
+        // available at all (no DEM anywhere above the node).
+        minimum_elevation_m = qMin(
+            0.0, qMin(first_elevation_m, second_elevation_m));
+        maximum_elevation_m = qMax(
+            0.0, qMax(first_elevation_m, second_elevation_m));
     }
 
     const double reference_elevation_m =
@@ -166,27 +207,30 @@ bool quadtreeNodeOccludedByHorizon(
             - qMax(1.0, node_radius_m * GlobeQuadtreeHorizonOcclusionMarginFactor);
 }
 
+// view_cone_half_angle_rad: the frustum's half-angle around the view axis
+// at its corners (the vertical half FOV widened by the aspect ratio). A
+// sphere meets the cone when its centre direction is off the axis by at most
+// that half-angle plus its own angular radius asin(r / d), also when the
+// centre lies behind the eye (a large node can reach into a frustum corner
+// from there).
 bool quadtreeNodeInViewCone(
     const QVector3D &node_center,
     double node_radius_m,
     const GeoWgs84Ellipsoid::OrbitCameraBasis &camera_basis,
-    double half_fov_rad)
+    double view_cone_half_angle_rad)
 {
     const QVector3D to_node = node_center - camera_basis.eye;
     const double distance = double(to_node.length());
-    if (distance <= 1e-6)
+    if (distance <= node_radius_m)
         return true;
 
     const double forward_component = double(
         QVector3D::dotProduct(to_node, camera_basis.forward));
-    if (forward_component <= 0.0)
-        return node_radius_m > distance;
-
-    const double angular_radius_rad = std::atan2(node_radius_m, distance);
+    const double angular_radius_rad = std::asin(node_radius_m / distance);
     const double view_angle_rad = std::acos(
         qBound(-1.0, forward_component / distance, 1.0));
     return view_angle_rad
-        <= half_fov_rad + angular_radius_rad + GlobeQuadtreeViewConeMarginRad;
+        <= view_cone_half_angle_rad + angular_radius_rad + GlobeQuadtreeViewConeMarginRad;
 }
 
 double quadtreeNodeProjectedSizePx(
@@ -225,7 +269,7 @@ void collectQuadtreeLeaves(
     double vertical_exaggeration,
     double viewport_height_px,
     double tan_half_fov,
-    double half_fov_rad,
+    double view_cone_half_angle_rad,
     const QSet<quint64> &previously_subdivided_nodes,
     QSet<quint64> *currently_subdivided_nodes,
     QVector<MapGlobeQuadtreeLeaf> *leaves,
@@ -257,7 +301,7 @@ void collectQuadtreeLeaves(
             visibility_node_center,
             visibility_node_radius_m,
             visibility_camera_basis,
-            half_fov_rad))
+            view_cone_half_angle_rad))
     {
         return;
     }
@@ -343,7 +387,7 @@ void collectQuadtreeLeaves(
             vertical_exaggeration,
             viewport_height_px,
             tan_half_fov,
-            half_fov_rad,
+            view_cone_half_angle_rad,
             previously_subdivided_nodes,
             currently_subdivided_nodes,
             leaves,
@@ -390,6 +434,12 @@ QVector<MapGlobeQuadtreeLeaf> MapGlobeSurfaceScene::selectVisibleLeaves(
     const double half_fov_rad = qDegreesToRadians(
         MapModel::GlobeFieldOfViewDeg * 0.5);
     const double tan_half_fov = std::tan(half_fov_rad);
+    // The view cone must contain the whole frustum, i.e. its corners. The
+    // vertical half FOV alone culled visible terrain at the left and right
+    // edges of wide viewports (21:9, a wide map pane: at 3:1 the side edges
+    // are 51 degrees off axis, the corners 53).
+    const double aspect = double(qMax(1, viewport_size.width())) / viewport_height_px;
+    const double view_cone_half_angle_rad = std::atan(tan_half_fov * std::hypot(1.0, aspect));
 
     QSet<quint64> currently_subdivided_nodes;
     int visit_budget = GlobeQuadtreeMaxVisitedNodes;
@@ -403,7 +453,7 @@ QVector<MapGlobeQuadtreeLeaf> MapGlobeSurfaceScene::selectVisibleLeaves(
         map_model.view3dVerticalExaggeration(),
         viewport_height_px,
         tan_half_fov,
-        half_fov_rad,
+        view_cone_half_angle_rad,
         this->previously_subdivided_quadtree_nodes,
         &currently_subdivided_nodes,
         &leaves,

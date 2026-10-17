@@ -23,6 +23,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <limits>
 
 namespace
@@ -693,6 +694,104 @@ void testTerrainMeshGenerationAndStitching()
         && invalid_zoom_order.cell_count == 0,
         "terrain mesh rejects imagery zoom below terrain zoom");
 }
+
+// Stand-in DEM while a tile's own DEM is loading
+// (MapGlobeSurfacePreparation::applyAncestorTerrainStandIns()): the matching
+// part of a cached coarser tile, resampled at the tile's own address.
+void testTerrainStandInFromAncestor()
+{
+    // Ancestor at zoom 10 holding a plane over its normalised extent; bilinear
+    // resampling reproduces a plane exactly.
+    const std::function<double(double, double)> plane = [](double u, double v)
+    {
+        return 1000.0 + 400.0 * u + 200.0 * v;
+    };
+    MapTerrainTile ancestor;
+    ancestor.address.zoom = 10;
+    ancestor.address.x = 512;
+    ancestor.address.y = 340;
+    ancestor.dataset = QStringLiteral("copernicus-glo30");
+    ancestor.nominal_resolution_m = 30.0;
+    ancestor.vertical_datum = MapTerrainVerticalDatum::Egm2008;
+    ancestor.elevations_m.resize(MapTerrainTileSampleCount);
+    for (int row = 0; row < MapTerrainTileGridSize; ++row)
+    {
+        for (int column = 0; column < MapTerrainTileGridSize; ++column)
+        {
+            ancestor.elevations_m[row * MapTerrainTileGridSize + column] = float(plane(
+                double(column) / MapTerrainTileCellCount, double(row) / MapTerrainTileCellCount));
+        }
+    }
+
+    // Two levels finer: column 3, row 1 of the ancestor's 4 x 4 descendants,
+    // i.e. u 0.75..1.0, v 0.25..0.5 of the ancestor.
+    MapTerrainTileAddress address;
+    address.zoom = 12;
+    address.x = 512 * 4 + 3;
+    address.y = 340 * 4 + 1;
+    const MapTerrainTile stand_in = mapTerrainTileFromAncestor(ancestor, address);
+    expectTrue(stand_in.address.zoom == 12 && stand_in.address.x == address.x
+        && stand_in.address.y == address.y,
+        "stand-in DEM has the requested address");
+    expectTrue(stand_in.vertical_datum == ancestor.vertical_datum
+        && stand_in.dataset == ancestor.dataset,
+        "stand-in DEM keeps the ancestor's dataset and datum");
+    expectTrue(stand_in.elevations_m.size() == MapTerrainTileSampleCount,
+        "stand-in DEM is a full sample grid");
+    if (stand_in.elevations_m.size() != MapTerrainTileSampleCount)
+        return;
+    expectNear(stand_in.elevations_m.at(0), plane(0.75, 0.25), 1e-3,
+        "stand-in top-left sample is the ancestor at the sub-rectangle corner");
+    expectNear(stand_in.elevations_m.at(MapTerrainTileSampleCount - 1), plane(1.0, 0.5), 1e-3,
+        "stand-in bottom-right sample is the ancestor at the opposite corner");
+    expectNear(stand_in.elevations_m.at(32 * MapTerrainTileGridSize + 32), plane(0.875, 0.375), 1e-3,
+        "stand-in centre sample is the ancestor at the sub-rectangle centre");
+    expectNear(stand_in.minimum_elevation_m, plane(0.75, 0.25), 1e-3,
+        "stand-in minimum is the range of the resampled part");
+    expectNear(stand_in.maximum_elevation_m, plane(1.0, 0.5), 1e-3,
+        "stand-in maximum is the range of the resampled part");
+
+    // A mesh from the stand-in has the grid the tile's own DEM will give it
+    // (replaced in place later) and lies on the ancestor's relief.
+    MapTerrainMeshRequest request;
+    request.terrain_tile = stand_in;
+    request.terrain_available = true;
+    request.virtual_x = int(address.x) * 2;
+    request.tile_x = int(address.x) * 2;
+    request.y = int(address.y) * 2;
+    request.imagery_zoom = 13;
+    request.terrain_zoom = 12;
+    request.requested_cell_count = 16;
+    const GeoWgs84Ellipsoid::EcefPositionD origin = GeoWgs84Ellipsoid::geodeticToEcefD(
+        GeoWebMercator::tileXToLon(double(request.tile_x), 13),
+        GeoWebMercator::tileYToLat(double(request.y), 13), 0.0);
+    request.globe_render_origin_x = origin.x;
+    request.globe_render_origin_y = origin.y;
+    request.globe_render_origin_z = origin.z;
+    const MapTerrainMeshResult result = buildTerrainMeshResult(request);
+    expectTrue(result.cell_count == 16 && result.vertices.size() == 17 * 17,
+        "stand-in mesh has the final mesh's grid");
+    if (result.vertices.size() != 17 * 17)
+        return;
+    // The imagery tile is the top-left quarter of the terrain tile.
+    const std::function<double(const MapTerrainMeshVertex &)> height_m =
+        [&origin](const MapTerrainMeshVertex &vertex)
+    {
+        GeoWgs84Ellipsoid::EcefPositionD position;
+        position.x = origin.x + double(vertex.x);
+        position.y = origin.y + double(vertex.y);
+        position.z = origin.z + double(vertex.z);
+        double longitude_deg = 0.0;
+        double latitude_deg = 0.0;
+        double height = 0.0;
+        GeoWgs84Ellipsoid::ecefToGeodetic(position, &longitude_deg, &latitude_deg, &height);
+        return height;
+    };
+    expectNear(height_m(result.vertices.constFirst()), plane(0.75, 0.25), 0.05,
+        "stand-in mesh corner lies on the ancestor relief");
+    expectNear(height_m(result.vertices.constLast()), plane(0.875, 0.375), 0.05,
+        "stand-in mesh opposite corner lies on the ancestor relief");
+}
 }
 
 int main()
@@ -708,5 +807,6 @@ int main()
     test_harness.runCase("heatmap scene", testHeatmapScene);
     test_harness.runCase("globe model geometry", testGlobeModelGeometry);
     test_harness.runCase("terrain mesh generation and stitching", testTerrainMeshGenerationAndStitching);
+    test_harness.runCase("terrain stand-in from ancestor", testTerrainStandInFromAncestor);
     return test_harness.finish();
 }

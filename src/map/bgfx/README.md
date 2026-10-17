@@ -364,6 +364,23 @@ Slice 1, the terrain surface (`map_bgfx_globe_surface.*`):
   texture coordinates mapped into the ancestor's cell, no CPU compositing),
   or a solid colour (nothing loaded; polar caps). Uploads share the 8 per
   frame budget; requests go to the tile repository in one batch per window.
+* View-cone culling covers the frustum's corners: the cone's half-angle is
+  the vertical half FOV widened by the aspect ratio, a node is kept when its
+  direction is off-axis by at most that plus its angular radius asin(r/d)
+  (also with its centre behind the eye), plus 0.25 rad slack for rotation
+  until the next window rebuild. With the vertical FOV only, wide viewports
+  lost terrain sections at their left and right edges.
+* DEM still loading: culling bounds a quadtree node by its own DEM tile's
+  elevation range, else by its nearest cached ancestor's, else by the whole
+  possible range (ellipsoid to 9 km). A node bounded on the ellipsoid under
+  high terrain used to leave the view cone close to the camera, was never
+  refined, so its DEM was never requested (a permanent hole next to the eye).
+  A leaf whose own DEM is not cached is drawn from the nearest cached
+  coarser DEM tile, resampled at its own DEM address
+  (`mapTerrainTileFromAncestor()`, built on the GUI thread in
+  `applyAncestorTerrainStandIns()`, again when a finer one arrives): same
+  grid as the final mesh, which then replaces it in place; flat on the
+  ellipsoid only where no DEM is cached at all.
 * Globe shaders (`vs/fs_globe_surface`, `vs/fs_globe_wireframe`) declare
   their vec3 positions in `varying_globe.def.sc`; the 2D shaders keep
   `varying.def.sc` (and byte-identical binaries).

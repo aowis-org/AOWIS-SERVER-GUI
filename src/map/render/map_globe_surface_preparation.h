@@ -20,6 +20,8 @@
 class MapModel;
 class MapTerrainRepository;
 class MapTerrainMeshScheduler;
+struct MapTerrainMeshRequest;
+struct MapTerrainTile;
 enum class MapTerrainVerticalDatum;
 
 struct MapGlobeSurfaceTerrainRayRowBounds
@@ -57,6 +59,10 @@ struct MapGlobeSurfaceTile
     quint64 terrain_mesh_request_id = 0;
     bool terrain_mesh_applied = false;
     bool terrain_mesh_has_relief = false;
+    // While the tile's own DEM is loading, its mesh is built from the
+    // nearest cached coarser DEM tile (applyAncestorTerrainStandIns()): the
+    // zoom of that tile, -1 when the mesh is flat or from the own DEM.
+    int terrain_stand_in_zoom = -1;
 
     QVector3D terrain_ray_bounds_min;
     QVector3D terrain_ray_bounds_max;
@@ -144,6 +150,15 @@ private:
     void updateTerrainStitchCellCounts(
         QVector<MapGlobeSurfaceTile> *tiles) const;
     void updateTerrainRayBounds(MapGlobeSurfaceTile *tile);
+    // Mesh request for a window tile built from terrain_tile (its own DEM or
+    // a stand-in at its DEM address).
+    MapTerrainMeshRequest terrainMeshRequest(
+        const MapGlobeSurfaceTile &tile, const MapTerrainTile &terrain_tile) const;
+    // Tiles whose own DEM is not cached yet get their mesh from the nearest
+    // cached coarser DEM tile, built here on the GUI thread and written in
+    // place (patches appended), and again when a finer one arrives. The own
+    // DEM's mesh replaces it as usual (scheduleReadyTerrainMeshes()).
+    bool applyAncestorTerrainStandIns(QVector<MapGlobeSurfaceVertexPatch> *vertex_patches);
     bool currentTerrainLodMatches(const QSize &viewport_size) const;
     void appendWireframeEdges(
         const QVector<MapGlobeSurfaceVertex> &vertices,

@@ -270,6 +270,9 @@ void MapGlobeSurfacePreparation::invalidateTerrain()
             continue;
         tile.terrain_mesh_request_id = 0;
         tile.terrain_mesh_applied = false;
+        // Stand-in meshes are rebuilt as well (the next
+        // applyAncestorTerrainStandIns()).
+        tile.terrain_stand_in_zoom = -1;
     }
 }
 
@@ -696,6 +699,8 @@ void MapGlobeSurfacePreparation::rebuildWindow(
                     previous_tile.terrain_mesh_applied;
                 tile.terrain_mesh_has_relief =
                     previous_tile.terrain_mesh_has_relief;
+                tile.terrain_stand_in_zoom =
+                    previous_tile.terrain_stand_in_zoom;
                 reused = true;
             }
         }
@@ -729,36 +734,8 @@ void MapGlobeSurfacePreparation::rebuildWindow(
                         this->reported_orthometric_datum_warning = true;
                     }
 
-                    MapTerrainMeshRequest request;
-                    request.terrain_key = tile.terrain_key;
-                    request.terrain_tile = *terrain_tile;
-                    request.terrain_available = true;
-                    request.virtual_x = tile.virtual_x;
-                    request.tile_x = tile.tile_x;
-                    request.y = tile.tile_y;
-                    request.imagery_zoom = tile.zoom;
-                    request.terrain_zoom = tile.terrain_zoom;
-                    request.requested_cell_count = tile.terrain_cell_count;
-                    request.stitch_top_cell_count =
-                        tile.terrain_stitch_top_cell_count;
-                    request.stitch_right_cell_count =
-                        tile.terrain_stitch_right_cell_count;
-                    request.stitch_bottom_cell_count =
-                        tile.terrain_stitch_bottom_cell_count;
-                    request.stitch_left_cell_count =
-                        tile.terrain_stitch_left_cell_count;
-                    if (this->map_model != nullptr)
-                    {
-                        request.globe_vertical_exaggeration =
-                            this->map_model->view3dVerticalExaggeration();
-                    }
-                    request.globe_render_origin_x =
-                        this->render_origin_ecef.x;
-                    request.globe_render_origin_y =
-                        this->render_origin_ecef.y;
-                    request.globe_render_origin_z =
-                        this->render_origin_ecef.z;
-
+                    const MapTerrainMeshRequest request =
+                        terrainMeshRequest(tile, *terrain_tile);
                     const MapTerrainMeshResult result =
                         buildTerrainMeshResult(request);
                     if (result.vertices.size() == expected_vertex_count)
@@ -1072,35 +1049,106 @@ void MapGlobeSurfacePreparation::scheduleReadyTerrainMeshes()
             this->reported_orthometric_datum_warning = true;
         }
 
-        MapTerrainMeshRequest request;
+        MapTerrainMeshRequest request = terrainMeshRequest(*tile, *terrain_tile);
         request.request_id = this->next_terrain_mesh_request_id++;
-        request.terrain_key = tile->terrain_key;
-        request.terrain_tile = *terrain_tile;
-        request.terrain_available =
-            terrain_tile->elevations_m.size() == MapTerrainTileSampleCount;
-        request.virtual_x = tile->virtual_x;
-        request.tile_x = tile->tile_x;
-        request.y = tile->tile_y;
-        request.imagery_zoom = tile->zoom;
-        request.terrain_zoom = tile->terrain_zoom;
-        request.requested_cell_count = tile->terrain_cell_count;
-        request.stitch_top_cell_count =
-            tile->terrain_stitch_top_cell_count;
-        request.stitch_right_cell_count =
-            tile->terrain_stitch_right_cell_count;
-        request.stitch_bottom_cell_count =
-            tile->terrain_stitch_bottom_cell_count;
-        request.stitch_left_cell_count =
-            tile->terrain_stitch_left_cell_count;
-        request.globe_vertical_exaggeration =
-            this->map_model->view3dVerticalExaggeration();
-        request.globe_render_origin_x = this->render_origin_ecef.x;
-        request.globe_render_origin_y = this->render_origin_ecef.y;
-        request.globe_render_origin_z = this->render_origin_ecef.z;
-
         tile->terrain_mesh_request_id = request.request_id;
         this->terrain_mesh_scheduler->submit(request);
     }
+}
+
+MapTerrainMeshRequest MapGlobeSurfacePreparation::terrainMeshRequest(
+    const MapGlobeSurfaceTile &tile, const MapTerrainTile &terrain_tile) const
+{
+    MapTerrainMeshRequest request;
+    request.terrain_key = tile.terrain_key;
+    request.terrain_tile = terrain_tile;
+    request.terrain_available =
+        terrain_tile.elevations_m.size() == MapTerrainTileSampleCount;
+    request.virtual_x = tile.virtual_x;
+    request.tile_x = tile.tile_x;
+    request.y = tile.tile_y;
+    request.imagery_zoom = tile.zoom;
+    request.terrain_zoom = tile.terrain_zoom;
+    request.requested_cell_count = tile.terrain_cell_count;
+    request.stitch_top_cell_count = tile.terrain_stitch_top_cell_count;
+    request.stitch_right_cell_count = tile.terrain_stitch_right_cell_count;
+    request.stitch_bottom_cell_count = tile.terrain_stitch_bottom_cell_count;
+    request.stitch_left_cell_count = tile.terrain_stitch_left_cell_count;
+    if (this->map_model != nullptr)
+        request.globe_vertical_exaggeration = this->map_model->view3dVerticalExaggeration();
+    request.globe_render_origin_x = this->render_origin_ecef.x;
+    request.globe_render_origin_y = this->render_origin_ecef.y;
+    request.globe_render_origin_z = this->render_origin_ecef.z;
+    return request;
+}
+
+bool MapGlobeSurfacePreparation::applyAncestorTerrainStandIns(
+    QVector<MapGlobeSurfaceVertexPatch> *vertex_patches)
+{
+    if (this->terrain_repository == nullptr)
+        return false;
+
+    bool geometry_changed = false;
+    for (MapGlobeSurfaceTile &tile : this->window_tiles)
+    {
+        // Only meshes still waiting for their own DEM (not yet requested as
+        // a mesh, so the DEM is not cached).
+        if (tile.terrain_key.isEmpty() || tile.terrain_mesh_applied
+            || tile.terrain_mesh_request_id != 0 || tile.vertex_count <= 0
+            || this->terrain_repository->tile(tile.terrain_key) != nullptr)
+        {
+            continue;
+        }
+
+        // The finest cached ancestor, if finer than the current stand-in.
+        MapTerrainTileAddress address;
+        address.zoom = tile.terrain_zoom;
+        address.x = quint32(tile.tile_x) >> (tile.zoom - tile.terrain_zoom);
+        address.y = quint32(tile.tile_y) >> (tile.zoom - tile.terrain_zoom);
+        const MapTerrainTile *ancestor = nullptr;
+        for (int ancestor_zoom = tile.terrain_zoom - 1;
+             ancestor_zoom >= GlobeTerrainReliefMinimumZoom
+             && ancestor_zoom > tile.terrain_stand_in_zoom;
+             --ancestor_zoom)
+        {
+            const int shift = tile.terrain_zoom - ancestor_zoom;
+            const MapTerrainTile *candidate = this->terrain_repository->tile(
+                mapGlobeTerrainDatasetId(), ancestor_zoom, address.x >> shift, address.y >> shift);
+            if (candidate != nullptr
+                && candidate->elevations_m.size() == MapTerrainTileSampleCount
+                && mapGlobeTerrainDatumUsable(candidate->vertical_datum))
+            {
+                ancestor = candidate;
+                break;
+            }
+        }
+        if (ancestor == nullptr)
+            continue;
+
+        // Same grid, stitching and LOD as the final mesh: only the source
+        // heights are coarser.
+        const MapTerrainMeshResult result = buildTerrainMeshResult(
+            terrainMeshRequest(tile, mapTerrainTileFromAncestor(*ancestor, address)));
+        if (result.vertices.size() != tile.vertex_count)
+            continue;
+
+        for (qsizetype index = 0; index < result.vertices.size(); ++index)
+        {
+            const MapTerrainMeshVertex &vertex = result.vertices.at(index);
+            this->window_vertices[tile.first_vertex + index] =
+                MapGlobeSurfaceVertex{vertex.x, vertex.y, vertex.z, vertex.u, vertex.v};
+        }
+        tile.terrain_mesh_has_relief = true;
+        tile.terrain_stand_in_zoom = ancestor->address.zoom;
+        updateTerrainRayBounds(&tile);
+        geometry_changed = true;
+        if (vertex_patches != nullptr)
+        {
+            vertex_patches->append(MapGlobeSurfaceVertexPatch{
+                tile.first_vertex, result.vertices.size()});
+        }
+    }
+    return geometry_changed;
 }
 
 bool MapGlobeSurfacePreparation::applyReadyTerrainMeshes(
@@ -1108,13 +1156,10 @@ bool MapGlobeSurfacePreparation::applyReadyTerrainMeshes(
 {
     if (vertex_patches != nullptr)
         vertex_patches->clear();
-    if (this->terrain_mesh_scheduler == nullptr)
-        return false;
 
     QVector<MapTerrainMeshResult> results;
-    this->terrain_mesh_scheduler->collectReady(&results);
-    if (results.isEmpty())
-        return false;
+    if (this->terrain_mesh_scheduler != nullptr)
+        this->terrain_mesh_scheduler->collectReady(&results);
 
     bool geometry_changed = false;
     for (const MapTerrainMeshResult &result : results)
@@ -1172,6 +1217,7 @@ bool MapGlobeSurfacePreparation::applyReadyTerrainMeshes(
 
             tile.terrain_mesh_applied = true;
             tile.terrain_mesh_has_relief = true;
+            tile.terrain_stand_in_zoom = -1;
             this->updateTerrainRayBounds(&tile);
             geometry_changed = true;
             if (vertex_patches != nullptr)
@@ -1182,6 +1228,9 @@ bool MapGlobeSurfacePreparation::applyReadyTerrainMeshes(
             break;
         }
     }
+
+    if (applyAncestorTerrainStandIns(vertex_patches))
+        geometry_changed = true;
 
     if (geometry_changed && this->wireframe_visible)
         this->rebuildWireframeVertices();

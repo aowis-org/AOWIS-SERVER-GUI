@@ -87,6 +87,15 @@ struct MapTerrainMeshResult
 // Builds one Globe terrain vertex grid. Pure and thread-safe.
 MapTerrainMeshResult buildTerrainMeshResult(const MapTerrainMeshRequest &request);
 
+// Stand-in DEM tile at `address`, bilinearly resampled from the matching
+// sub-rectangle of a cached coarser `ancestor` tile (same dataset, lower
+// zoom, covering address). Used while the tile's own DEM is still loading:
+// a mesh built from it has the same grid as the final one (so the real mesh
+// later replaces it in place) and lies at the right height instead of on
+// the ellipsoid. Pure and thread-safe.
+MapTerrainTile mapTerrainTileFromAncestor(
+    const MapTerrainTile &ancestor, const MapTerrainTileAddress &address);
+
 // Runs buildTerrainMeshResult() on a dedicated background thread so DEM
 // resampling for newly-needed Globe terrain never blocks the render thread.
 class MapTerrainMeshScheduler : public QThread

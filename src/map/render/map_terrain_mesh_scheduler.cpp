@@ -8,7 +8,9 @@
 #include <QVector3D>
 #include <QtMath>
 
+#include <algorithm>
 #include <cmath>
+#include <limits>
 #include <utility>
 
 namespace
@@ -349,6 +351,45 @@ MapTerrainMeshResult buildTerrainMeshResult(const MapTerrainMeshRequest &request
         }
     }
 
+    return result;
+}
+
+MapTerrainTile mapTerrainTileFromAncestor(
+    const MapTerrainTile &ancestor, const MapTerrainTileAddress &address)
+{
+    MapTerrainTile result;
+    result.address = address;
+    result.dataset = ancestor.dataset;
+    result.nominal_resolution_m = ancestor.nominal_resolution_m;
+    result.vertical_datum = ancestor.vertical_datum;
+
+    // The address's extent inside the ancestor in its normalised 0..1 grid
+    // coordinates: 1 / 2^delta wide, offset by the address's index among the
+    // ancestor's descendants at that zoom.
+    const int zoom_delta = address.zoom - ancestor.address.zoom;
+    const double extent = std::ldexp(1.0, -zoom_delta);
+    const double u_min =
+        (double(address.x) - std::ldexp(double(ancestor.address.x), zoom_delta)) * extent;
+    const double v_min =
+        (double(address.y) - std::ldexp(double(ancestor.address.y), zoom_delta)) * extent;
+
+    result.elevations_m.resize(MapTerrainTileSampleCount);
+    double minimum_m = std::numeric_limits<double>::infinity();
+    double maximum_m = -std::numeric_limits<double>::infinity();
+    for (int row = 0; row < MapTerrainTileGridSize; ++row)
+    {
+        const double v = v_min + extent * double(row) / double(MapTerrainTileCellCount);
+        for (int column = 0; column < MapTerrainTileGridSize; ++column)
+        {
+            const double u = u_min + extent * double(column) / double(MapTerrainTileCellCount);
+            const float elevation_m = bilinearTerrainSample(ancestor, u, v);
+            result.elevations_m[row * MapTerrainTileGridSize + column] = elevation_m;
+            minimum_m = std::min(minimum_m, double(elevation_m));
+            maximum_m = std::max(maximum_m, double(elevation_m));
+        }
+    }
+    result.minimum_elevation_m = minimum_m;
+    result.maximum_elevation_m = maximum_m;
     return result;
 }
 
