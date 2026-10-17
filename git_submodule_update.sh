@@ -6,17 +6,19 @@ cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
 
 usage() {
     cat <<'HELP'
-Usage: ./git_submodule_update.sh [--bgfx | --all | --help]
+Usage: ./git_submodule_update.sh [--geographiclib | --bgfx | --all | --help]
 
-  (no option)  Update existing AOWIS and GeographicLib submodules from
-               their tracked remote branches (original behavior).
+  (no option)  Update AOWIS submodules from their tracked remote branches,
+               and pin GeographicLib to the tested stable release r2.7.
+  --geographiclib
+               Pin only GeographicLib to r2.7; do not update AOWIS/bgfx.
   --bgfx       Initialize/update bgfx, bx and bimg to their upstream master
                (shallow, sparse; see tools/bgfx_sparse_checkout.sh).
                Does not touch the AOWIS and GeographicLib submodules.
                Afterwards regenerate the committed bgfx shaders with
                ./compile_linux.sh --shader-tools and commit them together
                with the new gitlinks: shader binaries must match bgfx.
-  --all        Update both groups.
+  --all        Update AOWIS, GeographicLib and bgfx groups.
   --help       Show this help.
 
 On the first --bgfx run, any missing bgfx/bx/bimg Git submodules are
@@ -26,10 +28,16 @@ HELP
 }
 
 standard_paths=(
-    external/GeographicLib
     external/AOWIS-SERVER-EPANET
     external/AOWIS-SERVER-MODEL
 )
+
+# Deliberate release pin: a new GeographicLib version requires an explicit
+# compatibility check on Linux, Windows (MinGW), and WebAssembly, followed by
+# updating this tag and committing the superproject's submodule gitlink.
+# Never follow GeographicLib's default/development branch with --remote.
+geographiclib_tag="r2.7"
+geographiclib_path="external/GeographicLib"
 
 bgfx_paths=(
     external/bx
@@ -68,7 +76,37 @@ ensure_bgfx_submodules_registered() {
     done
 }
 
+update_geographiclib() {
+    # First initialize the submodule at the revision pinned by the
+    # superproject, then fetch exactly the stable release tag. The release
+    # checkout contains VERSION, so GeographicLib does not default to -Werror
+    # as its development checkout does.
+    if [[ "$(git ls-files --stage -- "$geographiclib_path")" != '160000 '* ]]; then
+        printf 'GeographicLib is not registered as a Git submodule: %s\n' \
+            "$geographiclib_path" >&2
+        return 1
+    fi
+    # Do not restore the old superproject-pinned development commit on every
+    # run while the caller has not yet committed the newly selected gitlink.
+    if [[ ! -e "$geographiclib_path/.git" ]]; then
+        git submodule update --init -- "$geographiclib_path"
+    fi
+    git -C "$geographiclib_path" fetch --no-tags origin "tag" "$geographiclib_tag"
+    git -C "$geographiclib_path" checkout --detach "refs/tags/$geographiclib_tag"
+
+    local actual_version
+    actual_version="$(cat "$geographiclib_path/VERSION")"
+    if [[ "$actual_version" != "${geographiclib_tag#r}" ]]; then
+        printf 'Unexpected GeographicLib VERSION: %s (expected %s)\n' \
+            "$actual_version" "${geographiclib_tag#r}" >&2
+        return 1
+    fi
+    printf 'GeographicLib pinned to stable %s. Commit the changed %s gitlink.\n' \
+        "$geographiclib_tag" "$geographiclib_path"
+}
+
 update_standard() {
+    update_geographiclib
     git submodule update --init --recursive --remote -- "${standard_paths[@]}"
 }
 
@@ -84,6 +122,10 @@ case "${1:-}" in
     '')
         [[ $# -eq 0 ]] || { usage >&2; exit 2; }
         update_standard
+        ;;
+    --geographiclib)
+        [[ $# -eq 1 ]] || { usage >&2; exit 2; }
+        update_geographiclib
         ;;
     --bgfx)
         [[ $# -eq 1 ]] || { usage >&2; exit 2; }
