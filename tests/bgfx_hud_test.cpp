@@ -512,6 +512,46 @@ void testHud()
         hud.setKeyboardPan(QPointF());
         hud.build(&canvas, &cache, frameInputs(true), palette);
 
+        // The tooltips list the configured keys under the description: the
+        // joystick's (description, blank, "Keys:", four directions, Shift)
+        // is ten lines high, a zoom button's five.
+        MapBgfxHud::NavigationKeys keys;
+        keys.pan_up = QStringLiteral("W");
+        keys.pan_down = QStringLiteral("S");
+        keys.pan_left = QStringLiteral("A");
+        keys.pan_right = QStringLiteral("D");
+        keys.zoom_in = QStringLiteral("E");
+        keys.zoom_out = QStringLiteral("Q");
+        hud.setNavigationKeys(keys);
+        const std::function<double(double, double)> tooltip_height = [&](double x, double y)
+        {
+            bool over = false;
+            hud.mouseMove(0.5 * ViewportWidth, 0.5 * ViewportHeight, &over);
+            hud.build(&canvas, &cache, frameInputs(true), palette);
+            hud.mouseMove(x, y, &over);
+            MapBgfxHud::FrameInputs later = frameInputs(true);
+            hud.build(&canvas, &cache, later, palette);
+            later.time_s += MapBgfxHud::TooltipDelayS + 0.05;
+            hud.build(&canvas, &cache, later, palette);
+            const quint32 tooltip_abgr = MapBgfxHudCanvas::premultipliedAbgr(palette.tooltip);
+            double top = 1e9;
+            double bottom = -1e9;
+            for (const MapBgfxHudVertex &vertex : canvas.vertices())
+            {
+                if (vertex.abgr != tooltip_abgr)
+                    continue;
+                top = std::min(top, double(vertex.y));
+                bottom = std::max(bottom, double(vertex.y));
+            }
+            return bottom - top;
+        };
+        const double line_height = QFontMetricsF(font).lineSpacing();
+        const double joystick_tooltip = tooltip_height(cx, cy + 25.0);
+        std::printf("joystick tooltip %.0f px, line %.1f px\n", joystick_tooltip, line_height);
+        req(joystick_tooltip >= 9.5 * line_height, "the joystick's tooltip lists the pan keys");
+        hud.mouseMove(0.5 * ViewportWidth, 0.5 * ViewportHeight, nullptr);
+        hud.build(&canvas, &cache, frameInputs(true), palette);
+
         // Zoom buttons, stacked under the joystick: in above out.
         ActionScan zoom = scanActions(&hud, 1.0);
         hud.takeCommands();
@@ -529,6 +569,11 @@ void testHud()
             "the wheel over the joystick goes to the map");
         req(hud.wheelZoomsAtCrosshair(zoom_out.center().x(), zoom_out.center().y()),
             "so does the wheel over the zoom buttons");
+        const double zoom_tooltip = tooltip_height(zoom_in.center().x(), zoom_in.center().y());
+        req(zoom_tooltip >= 3.5 * line_height && zoom_tooltip < 7.0 * line_height,
+            "a zoom button's tooltip names its key");
+        hud.mouseMove(0.5 * ViewportWidth, 0.5 * ViewportHeight, nullptr);
+        hud.build(&canvas, &cache, frameInputs(true), palette);
         req(!hud.wheelZoomsAtCrosshair(MapBgfxHud::MarginPx + 3.0, MapBgfxHud::MarginPx + 3.0)
                 && hud.mouseWheel(MapBgfxHud::MarginPx + 3.0, MapBgfxHud::MarginPx + 3.0, 120.0),
             "over the top-left panel it does not");

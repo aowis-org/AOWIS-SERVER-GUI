@@ -112,7 +112,7 @@ public:
     // One line on where startup stands (initialization, frame loop, frames),
     // for the startup watchdog and failure messages.
     QString startupDiagnostics() const;
-    void focusNavigationInput();
+    void focusNavigationInput(Qt::FocusReason reason = Qt::OtherFocusReason);
 
     void setNetworkSnapshot(const NetworkRenderSnapshot &snapshot);
     // Editor move preview: these entities are drawn transparent (colour

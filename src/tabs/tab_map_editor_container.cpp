@@ -816,6 +816,13 @@ bool MapEditorContainer::eventFilter(QObject *watched, QEvent *event)
     }
     if (watched == this->map_canvas)
     {
+#ifdef Q_OS_WASM
+        // A press on the map or a HUD element brings the keys back to the
+        // canvas (desktop: MapBgfxSurface does it for its native window),
+        // also when the HUD consumes the press.
+        if (event->type() == QEvent::MouseButtonPress)
+            this->map_canvas->setFocus(Qt::MouseFocusReason);
+#endif
         // A joystick drag's release belongs to the map only: the editor
         // tool never saw its press (the HUD took it).
         if (event->type() == QEvent::MouseButtonRelease && this->map->joystickPanActive())

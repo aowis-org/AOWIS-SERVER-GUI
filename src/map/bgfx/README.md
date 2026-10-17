@@ -172,7 +172,16 @@ frame:
   over the joystick and the zoom buttons zooms the map about the crosshair
   (`MapBgfxHud::wheelZoomsAtCrosshair()`; the surface re-anchors the event),
   also during a drag (`MapWidget::handleWheelEvent()` anchors at the
-  crosshair while the joystick holds the pointer).
+  crosshair while the joystick holds the pointer). The joystick's and the
+  zoom buttons' tooltips list the configured keys under their description
+  (`MapBgfxHud::setNavigationKeys()`, kept current by the surface from the
+  shortcut registry).
+* Keyboard focus: any press on the map or a HUD element brings the keys
+  back to the map (`MapBgfxSurface::focusNavigationInput(Qt::MouseFocusReason)`:
+  the map's window activated, then QWidget focus on the surface, or the
+  editor's canvas, plus the native window's activation where the platform
+  allows it; Wayland never activates a subsurface by itself; WASM: the
+  containers focus the map / canvas on every press, also one the HUD takes).
 * Map legend (slice 6b), bottom right, like `EntityMapLegendHud`: node /
   link / heatmap metric combos (list opens on press, below or above the
   combo and tall enough for every entry; only when neither side has room it

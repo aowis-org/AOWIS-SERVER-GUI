@@ -915,9 +915,23 @@ void MapBgfxHud::joystick(MapBgfxHudCanvas *canvas, const FrameInputs &inputs, c
                          this->joystick_active ? palette.highlight : palette.border);
     canvas->strokeCircle(knob_x, knob_y, knob_radius - 5.0, 1.0, withAlpha(palette.border, 110));
 
+    // The configured pan keys under the description; the arrow keys always
+    // pan too, Shift makes either faster.
+    const std::function<QString(const QString &, const QString &, const QString &)> key_line =
+        [](const QString &name, const QString &configured, const QString &arrow)
+    {
+        return configured.isEmpty() ? QStringLiteral("\n%1: %2").arg(name, arrow)
+                                    : QStringLiteral("\n%1: %2, %3").arg(name, configured, arrow);
+    };
+    const NavigationKeys &keys = this->navigation_keys;
     addHitBox(rect, target, true, Cursor::PointingHand,
               QStringLiteral("Pan joystick\nPress and push the mouse: the map pans in that direction,\n"
-                             "faster the further you push. Release to stop."));
+                             "faster the further you push. Release to stop. Mouse wheel: zoom.\n\nKeys:")
+                  + key_line(QStringLiteral("Up"), keys.pan_up, QStringLiteral("\u2191"))
+                  + key_line(QStringLiteral("Down"), keys.pan_down, QStringLiteral("\u2193"))
+                  + key_line(QStringLiteral("Left"), keys.pan_left, QStringLiteral("\u2190"))
+                  + key_line(QStringLiteral("Right"), keys.pan_right, QStringLiteral("\u2192"))
+                  + QStringLiteral("\nFaster: hold Shift"));
 }
 
 void MapBgfxHud::zoomButtons(MapBgfxHudCanvas *canvas, MapBgfxHudTextCache *cache, const FrameInputs &inputs,
@@ -942,12 +956,18 @@ void MapBgfxHud::zoomButtons(MapBgfxHudCanvas *canvas, MapBgfxHudTextCache *cach
     };
     const ZoomButton buttons[2] = {{Element::ZoomIn, &this->zoom_in_image, "zoom-in", "Zoom in"},
                                    {Element::ZoomOut, &this->zoom_out_image, "zoom-out", "Zoom out"}};
+    // The configured key under the description.
+    const QString keys[2] = {this->navigation_keys.zoom_in, this->navigation_keys.zoom_out};
+    int index = 0;
     double y = frame.y + FramePaddingPx;
     for (const ZoomButton &button : buttons)
     {
         const MapBgfxHudRect rect{frame.x + FramePaddingPx, y, ZoomButtonExtentPx, ZoomButtonExtentPx};
+        const QString &key = keys[index++];
         drawButton(canvas, cache, rect, QString(), Target{button.element, -1, -1}, true, false, palette,
-                   QString::fromLatin1(button.tooltip));
+                   QString::fromLatin1(button.tooltip)
+                       + QStringLiteral("\nMouse wheel over the joystick or here: zoom\n\nKey: %1")
+                             .arg(key.isEmpty() ? QStringLiteral("none") : key));
         if (!button.image->isNull())
         {
             const double icon_extent = ZoomButtonExtentPx - 6.0;

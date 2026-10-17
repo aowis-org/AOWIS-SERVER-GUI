@@ -281,6 +281,18 @@ public:
     // Pan joystick: the knob's deflection (|deflection| <= 1, screen
     // directions) and whether a joystick drag is running.
     void setJoystick(const QPointF &deflection, bool active);
+    // The configured navigation keys (shortcut texts, empty: none), listed
+    // in the joystick's and the zoom buttons' tooltips.
+    struct NavigationKeys
+    {
+        QString pan_up;
+        QString pan_down;
+        QString pan_left;
+        QString pan_right;
+        QString zoom_in;
+        QString zoom_out;
+    };
+    void setNavigationKeys(const NavigationKeys &keys) { this->navigation_keys = keys; }
     // Keyboard pan keys held: the view's direction (x right, y down; each
     // -1, 0 or 1). The joystick's arrows glow for them too.
     void setKeyboardPan(const QPointF &direction) { this->keyboard_pan_direction = direction; }
@@ -546,6 +558,7 @@ private:
     QPointF joystick_deflection;
     bool joystick_active = false;
     QPointF keyboard_pan_direction;
+    NavigationKeys navigation_keys;
     // Joystick and zoom buttons of the last build (wheel zooms there).
     MapBgfxHudRect joystick_rect;
     MapBgfxHudRect zoom_rect;

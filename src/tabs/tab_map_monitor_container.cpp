@@ -975,6 +975,13 @@ bool MapMonitorContainer::eventFilter(QObject *watched, QEvent *event)
         return true;
     }
 
+#ifdef Q_OS_WASM
+    // A press on the map or a HUD element brings the keys back to the map
+    // (desktop: MapBgfxSurface does it for its native window), also when
+    // the HUD consumes the press.
+    if (watched == this->map && event->type() == QEvent::MouseButtonPress)
+        this->map->setFocus(Qt::MouseFocusReason);
+#endif
     // The bgfx HUD sits on top of the map: it sees every pointer event first
     // (desktop: forwarded from the native window through MapWidget; WASM:
     // MapWidget receives them directly), and what it consumes never reaches

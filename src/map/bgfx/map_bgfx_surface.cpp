@@ -9,6 +9,7 @@
 #include "map/core/map_scale_distance.h"
 #include "map/render/map_render_diagnostics.h"
 #include "map/core/map_scale_renderer.h"
+#include "config/shortcut_registry.h"
 #include "config/unit_aware_view.h"
 #include "config/unit_profile_manager.h"
 #include "map/bgfx/map_bgfx_2d_symbology.h"
@@ -282,6 +283,24 @@ MapBgfxSurface::MapBgfxSurface(MapModel *model, QWidget *parent)
     // Native HUD (slice 6a): app font, the QWidget HUD's images, a scale bar in
     // the user's distance unit from the continuous camera.
     this->hud.setFont(font());
+    // The navigation keys in the joystick's / zoom buttons' tooltips follow
+    // the shortcut settings.
+    const std::function<void()> update_navigation_keys = [this]()
+    {
+        const GuiShortcutRegistry &registry = guiShortcutRegistry();
+        MapBgfxHud::NavigationKeys keys;
+        keys.pan_up = registry.shortcut(GuiShortcutId::MapPanUp);
+        keys.pan_down = registry.shortcut(GuiShortcutId::MapPanDown);
+        keys.pan_left = registry.shortcut(GuiShortcutId::MapPanLeft);
+        keys.pan_right = registry.shortcut(GuiShortcutId::MapPanRight);
+        keys.zoom_in = registry.shortcut(GuiShortcutId::MapZoomIn);
+        keys.zoom_out = registry.shortcut(GuiShortcutId::MapZoomOut);
+        this->hud.setNavigationKeys(keys);
+        requestRedraw();
+    };
+    update_navigation_keys();
+    connect(&guiShortcutRegistry(), &GuiShortcutRegistry::shortcutChanged, this,
+            [update_navigation_keys](GuiShortcutId) { update_navigation_keys(); });
     this->hud.setImages(QImage(QStringLiteral(":/icon/crosshair.png")),
                         QImage(QStringLiteral(":/icon/fullscreen.png")),
                         QImage(QStringLiteral(":/icon/fullscreen_undo.png")),
@@ -381,20 +400,29 @@ void MapBgfxSurface::setNavigationFrameHandler(NavigationFrameHandler advance)
     this->navigation_frame = std::move(advance);
 }
 
-void MapBgfxSurface::focusNavigationInput()
+void MapBgfxSurface::focusNavigationInput(Qt::FocusReason reason)
 {
+    // The map's window first (another window, e.g. a dialog or the
+    // fullscreen map, may be active), then the key receiver in it.
     if (this->keyboard_focus_widget)
     {
         // Editor: keys go to its canvas widget (ordinary QWidget focus).
-        this->keyboard_focus_widget->setFocus(Qt::OtherFocusReason);
+        this->keyboard_focus_widget->window()->activateWindow();
+        this->keyboard_focus_widget->setFocus(reason);
         return;
     }
 #ifndef Q_OS_WASM
-    // The embedded native window owns key focus on desktop. QWidget focus on
-    // the hidden MapWidget cannot be used as a substitute.
-    setFocus(Qt::ShortcutFocusReason);
+    // Monitor: QWidget focus on this surface delivers the keys (keyPressEvent)
+    // wherever an embedded window cannot be activated by itself (Wayland: a
+    // subsurface never gets keyboard focus of its own, so requestActivate()
+    // alone left the keys with whatever widget had them); where it can
+    // (X11, Windows, macOS) the native window then takes them.
+    window()->activateWindow();
+    setFocus(reason);
     if (this->native_window != nullptr)
         this->native_window->requestActivate();
+#else
+    Q_UNUSED(reason)
 #endif
 }
 
@@ -468,18 +496,10 @@ bool MapBgfxSurface::eventFilter(QObject *watched, QEvent *event)
              || event->type() == QEvent::MouseButtonDblClick)
             && this->navigation_mouse_press)
         {
-            // A click must also move keyboard focus to the map, otherwise
-            // zoom/pan keys keep going to the previous widget: the embedded
-            // window itself, or the configured focus widget (editor).
-            if (this->keyboard_focus_widget)
-            {
-                this->keyboard_focus_widget->setFocus(Qt::MouseFocusReason);
-                this->keyboard_focus_widget->window()->activateWindow();
-            }
-            else
-            {
-                this->native_window->requestActivate();
-            }
+            // A click (on the map or a HUD element) must also bring keyboard
+            // focus back to the map, otherwise zoom/pan keys keep going to
+            // the previous widget.
+            focusNavigationInput(Qt::MouseFocusReason);
             return this->navigation_mouse_press(static_cast<QMouseEvent *>(event));
         }
         if (event->type() == QEvent::MouseButtonRelease && this->navigation_mouse_release)
