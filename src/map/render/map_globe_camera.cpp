@@ -29,10 +29,21 @@ void globeNearFarPlanesM(
     double camera_collision_lift_m,
     double *near_plane_m, double *far_plane_m)
 {
+    // The eye's height above the sphere through sea level: the target lies
+    // target_height_m above it, the eye distance_m from the target at pitch
+    // above the target's horizon, so its distance from the centre is
+    // |target + distance * direction| (law of cosines). The flat
+    // approximation target_height + distance * sin(pitch) left out the
+    // curvature: zoomed out and tilted (5000 km at 10 deg: 868 instead of
+    // 2369 km) the far plane fell short of the horizon and cut off the far
+    // side of the globe.
     const double pitch_rad = qDegreesToRadians(pitch_deg);
+    const double radius_m = GeoWgs84Ellipsoid::EquatorialRadiusM;
+    const double target_radius_m = radius_m + target_height_m;
+    const double eye_radius_m = std::sqrt(target_radius_m * target_radius_m + distance_m * distance_m
+                                          + 2.0 * target_radius_m * distance_m * std::sin(pitch_rad));
     const double eye_altitude_m = qMax(
-        1.0, target_height_m + distance_m * std::sin(pitch_rad)
-            + qMax(0.0, camera_collision_lift_m));
+        1.0, eye_radius_m - radius_m + qMax(0.0, camera_collision_lift_m));
     const double horizon_distance_m = std::sqrt(
         eye_altitude_m
         * (2.0 * GeoWgs84Ellipsoid::EquatorialRadiusM + eye_altitude_m));
