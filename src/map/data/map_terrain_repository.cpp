@@ -102,6 +102,76 @@ void MapTerrainRepository::requestTile(const QString &dataset, int zoom, quint32
     this->interface_map->requestTerrainTile(endpoint, key);
 }
 
+const MapTerrainDatasetInfo *MapTerrainRepository::activeDataset() const
+{
+    return this->active_dataset.has_value() ? &this->active_dataset.value() : nullptr;
+}
+
+void MapTerrainRepository::requestDatasetCatalog()
+{
+    if (this->interface_map != nullptr)
+        this->interface_map->requestTerrainDatasets();
+}
+
+void MapTerrainRepository::datasetCatalogReceived(const QByteArray &data)
+{
+    QString error;
+    const std::optional<MapTerrainDatasetCatalog> catalog =
+        decodeMapTerrainDatasetCatalog(data, &error);
+    if (!catalog.has_value())
+    {
+        datasetCatalogFailed(error);
+        return;
+    }
+    if (!error.isEmpty())
+        qWarning().noquote() << error;
+
+    this->dataset_catalog_failure_count = 0;
+    const MapTerrainDatasetInfo *info = catalog->find(catalog->default_dataset);
+    if (info == nullptr)
+    {
+        // A configured default without a provider (e.g. only cached tiles of
+        // a dataset): its zoom range is unknown, so no relief.
+        qWarning().noquote()
+            << QStringLiteral("Terrain service describes no dataset %1 (its default); "
+                              "drawing the globe without relief")
+                   .arg(catalog->default_dataset);
+        if (this->active_dataset.has_value())
+        {
+            this->active_dataset.reset();
+            emit signalTerrainDatasetChanged();
+        }
+        return;
+    }
+
+    qInfo().noquote()
+        << QStringLiteral("Terrain dataset %1: %2 m nominal resolution, zoom %3 to %4")
+               .arg(info->dataset)
+               .arg(info->nominal_resolution_m)
+               .arg(info->minimum_zoom)
+               .arg(info->maximum_zoom);
+    this->active_dataset = *info;
+    emit signalTerrainDatasetChanged();
+}
+
+void MapTerrainRepository::datasetCatalogFailed(const QString &error)
+{
+    // Retried like a tile, with the same backoff: the map server may still be
+    // starting, or terrain may be disabled there for now.
+    this->dataset_catalog_failure_count = qMin(this->dataset_catalog_failure_count + 1, 6);
+    const qint64 retry_delay = qMin(
+        TerrainRetryInitialDelayMs * (qint64(1) << (this->dataset_catalog_failure_count - 1)),
+        TerrainRetryMaximumDelayMs);
+    qWarning() << "Terrain dataset catalog request failed:" << error;
+
+    const quint64 generation = this->terrain_generation;
+    QTimer::singleShot(int(retry_delay), this, [this, generation]
+    {
+        if (generation == this->terrain_generation && !this->active_dataset.has_value())
+            requestDatasetCatalog();
+    });
+}
+
 void MapTerrainRepository::requestUpstreamActivity()
 {
     if (this->interface_map != nullptr)
@@ -136,6 +206,12 @@ void MapTerrainRepository::initServerMapInterface()
     this->terrain_pending.clear();
     this->terrain_requests_pending.clear();
     this->terrain_failures.clear();
+    this->dataset_catalog_failure_count = 0;
+    if (this->active_dataset.has_value())
+    {
+        this->active_dataset.reset();
+        emit signalTerrainDatasetChanged();
+    }
 
     if (this->map_server_mode == MapServerMode::REST)
     {
@@ -159,6 +235,14 @@ void MapTerrainRepository::initServerMapInterface()
             this, &MapTerrainRepository::signalUpstreamActivityChanged);
     connect(this->interface_map, &InterfaceServerMap::signalUpstreamControlError,
             this, &MapTerrainRepository::signalUpstreamControlError);
+    connect(this->interface_map, &InterfaceServerMap::signalTerrainDatasetsReceived,
+            this, &MapTerrainRepository::datasetCatalogReceived);
+    connect(this->interface_map, &InterfaceServerMap::signalTerrainDatasetsFailed,
+            this, &MapTerrainRepository::datasetCatalogFailed);
+
+    // Which dataset to draw and how fine it goes: nothing is requested from
+    // the terrain service before this answer.
+    requestDatasetCatalog();
 }
 
 void MapTerrainRepository::terrainDataReceived(const QString &key, const QByteArray &data)

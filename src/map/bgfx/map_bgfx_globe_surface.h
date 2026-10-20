@@ -5,12 +5,15 @@
 #include "map/render/map_globe_camera.h"
 #include "map/render/map_globe_heatmap_scene.h"
 #include "map/render/map_globe_surface_preparation.h"
+#include "map/render/map_terrain_mesh_scheduler.h"
 
 #include <QColor>
 #include <QHash>
 #include <QSize>
 #include <QString>
 #include <QVector>
+
+#include <array>
 
 #include <bgfx/bgfx.h>
 
@@ -25,16 +28,19 @@ class MapTileRepository;
 // All CPU work is the backend-neutral MapGlobeSurfacePreparation the QRhi
 // globe uses as well: quadtree leaf selection with horizon and view-cone
 // culling, ellipsoid and cap geometry relative to the sticky render origin,
-// DEM requests, LOD and edge stitching, asynchronous terrain meshes (applied
+// DEM requests at the DEM zoom of each tile (MapGlobeTerrainLevels, every
+// mesh at its DEM's full resolution), asynchronous terrain meshes (applied
 // as vertex-range patches) and the wireframe edges. This class only keeps
 // that geometry on the GPU and draws it:
 //
-// - window and cap vertices/indices in dynamic buffers: uploaded completely
-//   when the window or the caps are rebuilt, terrain meshes as patches of
-//   the tile's vertex range;
+// - window and cap vertices in dynamic buffers: uploaded completely when
+//   the window or the caps are rebuilt, terrain meshes as patches of the
+//   tile's vertex range; window tiles share one static index buffer per
+//   cell count (tileIndexBuffer()), the caps have their own;
 // - imagery from the 2D imagery atlas (MapBgfx2dImageryGpu, shared: a tile
-//   is uploaded once for both views). Each tile is one indexed draw of its
-//   index range with its atlas rectangle as a uniform: its own cell, or the
+//   is uploaded once for both views). Each tile is one indexed draw (its
+//   cell count's topology from its first vertex) with its atlas rectangle
+//   as a uniform: its own cell, or the
 //   covering part of its nearest resident ancestor while its own imagery is
 //   missing (map_bgfx_globe_imagery.h; no CPU compositing), or a solid
 //   colour texel (nothing loaded yet, polar caps);
@@ -184,6 +190,8 @@ private:
     };
 
     void uploadWindowGeometry();
+    // The shared index buffer of cell count `cells`; invalid outside 1..64.
+    bgfx::IndexBufferHandle tileIndexBuffer(int cells);
     void uploadCapGeometry();
     void uploadWireframe();
     void requestImagery();
@@ -219,7 +227,10 @@ private:
     bgfx::TextureHandle cap_texture = BGFX_INVALID_HANDLE;
 
     bgfx::DynamicVertexBufferHandle window_vertices = BGFX_INVALID_HANDLE;
-    bgfx::DynamicIndexBufferHandle window_indices = BGFX_INVALID_HANDLE;
+    // One static index buffer per cell count, shared by every window tile
+    // with that count (mapGlobeTileIndices(), drawn with the tile's first
+    // vertex as base vertex); created on first use, kept until shutdown.
+    std::array<bgfx::IndexBufferHandle, MapGlobeTileMaximumCellCount + 1> tile_index_buffers;
     bgfx::DynamicVertexBufferHandle cap_vertices = BGFX_INVALID_HANDLE;
     bgfx::DynamicIndexBufferHandle cap_indices = BGFX_INVALID_HANDLE;
     bgfx::DynamicVertexBufferHandle wireframe_vertices = BGFX_INVALID_HANDLE;

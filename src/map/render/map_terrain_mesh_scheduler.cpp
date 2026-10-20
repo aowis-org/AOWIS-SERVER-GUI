@@ -5,13 +5,14 @@
 #include "map/render/map_globe_vertical_transform.h"
 
 #include <QMutexLocker>
-#include <QVector3D>
 #include <QtMath>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
 #include <utility>
+#include <vector>
 
 namespace
 {
@@ -113,177 +114,60 @@ float terrainElevationMetersAt(
     return bilinearTerrainSample(request.terrain_tile, terrain_u, terrain_v);
 }
 
-int normalizedTerrainStitchCellCount(int requested_cell_count, int cell_count)
+// Per-column / per-row parts of the WGS84 geodetic -> ECEF conversion of a
+// tile grid: the longitude depends on the column only, the latitude on the
+// row only, so the trigonometry (and the Web Mercator inverse, an atan of a
+// sinh) is evaluated (cells + 1) times per axis instead of once per vertex.
+// Per vertex only the height enters: X = (N + h) cos(lat) cos(lon),
+// Y = (N + h) cos(lat) sin(lon), Z = (N (1 - e^2) + h) sin(lat), the
+// closed form GeographicLib evaluates (sub-millimetre apart from its
+// exact-degree trigonometry). A 64-cell tile cost 0.62 ms with a
+// GeographicLib conversion and two Mercator inverses per vertex.
+struct GridColumn
 {
-    if (requested_cell_count <= 0
-        || requested_cell_count >= cell_count
-        || cell_count % requested_cell_count != 0)
-    {
-        return 0;
-    }
+    double cos_lon = 0.0;
+    double sin_lon = 0.0;
+};
 
-    return requested_cell_count;
+struct GridRow
+{
+    double cos_lat = 0.0;
+    double sin_lat = 0.0;
+    double prime_vertical_m = 0.0;
+};
+
+GridColumn gridColumn(double lon_deg)
+{
+    const double lon_rad = qDegreesToRadians(lon_deg);
+    return GridColumn{std::cos(lon_rad), std::sin(lon_rad)};
 }
 
-QVector3D globeTerrainPositionAt(
-    const MapTerrainMeshRequest &request,
-    double imagery_u, double imagery_v,
-    double terrain_u, double terrain_v)
+GridRow gridRow(double lat_deg)
 {
-    const MapGlobeVerticalTransform vertical_transform(
-        request.globe_vertical_exaggeration);
-    double elevation_m = vertical_transform.terrainHeightM(
-        double(terrainElevationMetersAt(request, terrain_u, terrain_v)));
-
-    // Web Mercator imagery/DEM coverage ends at +-85.051 degrees, while the
-    // Globe renderer closes the last few degrees with static polar fans. Keep
-    // the shared ring exactly on the ellipsoid to avoid a vertical crack.
-    const int imagery_tile_span = 1 << request.imagery_zoom;
-    if ((request.y == 0 && imagery_v <= 0.0)
-        || (request.y == imagery_tile_span - 1 && imagery_v >= 1.0))
-    {
-        elevation_m = 0.0;
-    }
-
-    const double lon_deg = GeoWebMercator::tileXToLon(
-        double(request.virtual_x) + imagery_u, request.imagery_zoom);
-    const double lat_deg = GeoWebMercator::tileYToLat(
-        double(request.y) + imagery_v, request.imagery_zoom);
-    const GeoWgs84Ellipsoid::EcefPositionD position =
-        GeoWgs84Ellipsoid::geodeticToEcefD(lon_deg, lat_deg, elevation_m);
-    return QVector3D(
-        float(position.x - request.globe_render_origin_x),
-        float(position.y - request.globe_render_origin_y),
-        float(position.z - request.globe_render_origin_z));
+    constexpr double Flattening = 1.0 / GeoWgs84Ellipsoid::FlatteningInverse;
+    constexpr double EccentricitySquared = Flattening * (2.0 - Flattening);
+    const double lat_rad = qDegreesToRadians(lat_deg);
+    const double sin_lat = std::sin(lat_rad);
+    return GridRow{std::cos(lat_rad), sin_lat,
+                   GeoWgs84Ellipsoid::EquatorialRadiusM
+                       / std::sqrt(1.0 - EccentricitySquared * sin_lat * sin_lat)};
 }
 
-QVector3D stitchedHorizontalGlobeTerrainEdgePosition(
-    const MapTerrainMeshRequest &request,
-    int vertex_column, int cell_count, int stitch_cell_count,
-    double imagery_v, double terrain_u_min, double terrain_u_span,
-    double terrain_v)
+MapTerrainMeshVertex gridVertex(const GridColumn &column, const GridRow &row, double height_m,
+                                const MapTerrainMeshRequest &request, float u, float v)
 {
-    const int normalized_stitch_cell_count =
-        normalizedTerrainStitchCellCount(stitch_cell_count, cell_count);
-    if (normalized_stitch_cell_count <= 0)
-    {
-        const double imagery_u = double(vertex_column) / double(cell_count);
-        const double terrain_u = terrain_u_min + imagery_u * terrain_u_span;
-        return globeTerrainPositionAt(
-            request, imagery_u, imagery_v, terrain_u, terrain_v);
-    }
-
-    const int fine_cells_per_stitch_cell =
-        cell_count / normalized_stitch_cell_count;
-    const int stitch_vertex_index = vertex_column / fine_cells_per_stitch_cell;
-    const int remainder = vertex_column % fine_cells_per_stitch_cell;
-    const double imagery_u0 =
-        double(stitch_vertex_index) / double(normalized_stitch_cell_count);
-    const double terrain_u0 = terrain_u_min + imagery_u0 * terrain_u_span;
-    if (remainder == 0)
-    {
-        return globeTerrainPositionAt(
-            request, imagery_u0, imagery_v, terrain_u0, terrain_v);
-    }
-
-    const double imagery_u1 =
-        double(stitch_vertex_index + 1) / double(normalized_stitch_cell_count);
-    const double terrain_u1 = terrain_u_min + imagery_u1 * terrain_u_span;
-    const QVector3D p0 = globeTerrainPositionAt(
-        request, imagery_u0, imagery_v, terrain_u0, terrain_v);
-    const QVector3D p1 = globeTerrainPositionAt(
-        request, imagery_u1, imagery_v, terrain_u1, terrain_v);
-    const float interpolation = float(remainder) / float(fine_cells_per_stitch_cell);
-
-    // The coarse neighbor's shared edge is one straight ECEF segment between
-    // its vertices. Interpolate the full ECEF position so the fine edge shares
-    // the exact same polyline rather than re-curving onto the ellipsoid.
-    return p0 + (p1 - p0) * interpolation;
+    constexpr double Flattening = 1.0 / GeoWgs84Ellipsoid::FlatteningInverse;
+    constexpr double EccentricitySquared = Flattening * (2.0 - Flattening);
+    const double horizontal_m = (row.prime_vertical_m + height_m) * row.cos_lat;
+    const double x = horizontal_m * column.cos_lon;
+    const double y = horizontal_m * column.sin_lon;
+    const double z = (row.prime_vertical_m * (1.0 - EccentricitySquared) + height_m) * row.sin_lat;
+    // Relative to the render origin in double, then narrowed.
+    return MapTerrainMeshVertex{float(x - request.globe_render_origin_x),
+                                float(y - request.globe_render_origin_y),
+                                float(z - request.globe_render_origin_z), u, v};
 }
 
-QVector3D stitchedVerticalGlobeTerrainEdgePosition(
-    const MapTerrainMeshRequest &request,
-    int vertex_row, int cell_count, int stitch_cell_count,
-    double imagery_u, double terrain_v_min, double terrain_v_span,
-    double terrain_u)
-{
-    const int normalized_stitch_cell_count =
-        normalizedTerrainStitchCellCount(stitch_cell_count, cell_count);
-    if (normalized_stitch_cell_count <= 0)
-    {
-        const double imagery_v = double(vertex_row) / double(cell_count);
-        const double terrain_v = terrain_v_min + imagery_v * terrain_v_span;
-        return globeTerrainPositionAt(
-            request, imagery_u, imagery_v, terrain_u, terrain_v);
-    }
-
-    const int fine_cells_per_stitch_cell =
-        cell_count / normalized_stitch_cell_count;
-    const int stitch_vertex_index = vertex_row / fine_cells_per_stitch_cell;
-    const int remainder = vertex_row % fine_cells_per_stitch_cell;
-    const double imagery_v0 =
-        double(stitch_vertex_index) / double(normalized_stitch_cell_count);
-    const double terrain_v0 = terrain_v_min + imagery_v0 * terrain_v_span;
-    if (remainder == 0)
-    {
-        return globeTerrainPositionAt(
-            request, imagery_u, imagery_v0, terrain_u, terrain_v0);
-    }
-
-    const double imagery_v1 =
-        double(stitch_vertex_index + 1) / double(normalized_stitch_cell_count);
-    const double terrain_v1 = terrain_v_min + imagery_v1 * terrain_v_span;
-    const QVector3D p0 = globeTerrainPositionAt(
-        request, imagery_u, imagery_v0, terrain_u, terrain_v0);
-    const QVector3D p1 = globeTerrainPositionAt(
-        request, imagery_u, imagery_v1, terrain_u, terrain_v1);
-    const float interpolation = float(remainder) / float(fine_cells_per_stitch_cell);
-    return p0 + (p1 - p0) * interpolation;
-}
-
-QVector3D globeTerrainMeshVertexPosition(
-    const MapTerrainMeshRequest &request,
-    int vertex_column, int vertex_row, int cell_count,
-    int stitch_top_cell_count, int stitch_right_cell_count,
-    int stitch_bottom_cell_count, int stitch_left_cell_count,
-    double terrain_u_min, double terrain_v_min,
-    double terrain_u_span, double terrain_v_span)
-{
-    const double imagery_u = double(vertex_column) / double(cell_count);
-    const double imagery_v = double(vertex_row) / double(cell_count);
-    const double terrain_u = terrain_u_min + imagery_u * terrain_u_span;
-    const double terrain_v = terrain_v_min + imagery_v * terrain_v_span;
-
-    if (vertex_row == 0 && stitch_top_cell_count > 0)
-    {
-        return stitchedHorizontalGlobeTerrainEdgePosition(
-            request, vertex_column, cell_count, stitch_top_cell_count,
-            0.0, terrain_u_min, terrain_u_span, terrain_v_min);
-    }
-    if (vertex_row == cell_count && stitch_bottom_cell_count > 0)
-    {
-        return stitchedHorizontalGlobeTerrainEdgePosition(
-            request, vertex_column, cell_count, stitch_bottom_cell_count,
-            1.0, terrain_u_min, terrain_u_span,
-            terrain_v_min + terrain_v_span);
-    }
-    if (vertex_column == 0 && stitch_left_cell_count > 0)
-    {
-        return stitchedVerticalGlobeTerrainEdgePosition(
-            request, vertex_row, cell_count, stitch_left_cell_count,
-            0.0, terrain_v_min, terrain_v_span, terrain_u_min);
-    }
-    if (vertex_column == cell_count && stitch_right_cell_count > 0)
-    {
-        return stitchedVerticalGlobeTerrainEdgePosition(
-            request, vertex_row, cell_count, stitch_right_cell_count,
-            1.0, terrain_v_min, terrain_v_span,
-            terrain_u_min + terrain_u_span);
-    }
-
-    return globeTerrainPositionAt(
-        request, imagery_u, imagery_v, terrain_u, terrain_v);
-}
 }
 
 double mapGlobeTileSkirtDepthM(int zoom, int tile_y, int cells, double vertical_exaggeration,
@@ -296,6 +180,81 @@ double mapGlobeTileSkirtDepthM(int zoom, int tile_y, int cells, double vertical_
     const double cell_length_m = tile_width_m / double(std::max(1, cells));
     return (elevation_range_m + std::max(MinimumSkirtDepthM, cell_length_m))
         * std::max(1.0, vertical_exaggeration);
+}
+
+const QVector<quint16> &mapGlobeTileIndices(int cells)
+{
+    static const QVector<quint16> empty;
+    if (cells < 1 || cells > MapGlobeTileMaximumCellCount)
+        return empty;
+
+    // Built under the lock, never changed afterwards: a returned reference
+    // stays valid (and its data at the same address) for the process.
+    static QMutex mutex;
+    static std::array<QVector<quint16>, MapGlobeTileMaximumCellCount + 1> topologies;
+    QMutexLocker locker(&mutex);
+    QVector<quint16> &indices = topologies[std::size_t(cells)];
+    if (!indices.isEmpty())
+        return indices;
+
+    const quint16 grid_width = quint16(cells + 1);
+    indices.resize(mapGlobeTileIndexCount(cells));
+    quint16 *target = indices.data();
+    for (int row = 0; row < cells; ++row)
+    {
+        for (int column = 0; column < cells; ++column)
+        {
+            const quint16 p00 = quint16(row * grid_width + column);
+            const quint16 p10 = quint16(p00 + 1);
+            const quint16 p01 = quint16(p00 + grid_width);
+            const quint16 p11 = quint16(p01 + 1);
+            *target++ = p00;
+            *target++ = p01;
+            *target++ = p10;
+            *target++ = p10;
+            *target++ = p01;
+            *target++ = p11;
+        }
+    }
+
+    // Skirt: one quad per edge segment between the grid edge vertices g0, g1
+    // and their lowered copies s0, s1 (mapGlobeAppendTileSkirt() order: top
+    // row, bottom row, left column, right column). The surface state culls
+    // no faces, so the winding does not matter.
+    const int skirt_first = mapGlobeTileGridVertexCount(cells);
+    for (int edge = 0; edge < 4; ++edge)
+    {
+        for (int index = 0; index < cells; ++index)
+        {
+            int g0 = 0;
+            int g1 = 0;
+            if (edge == 0)
+            {
+                g0 = index;
+                g1 = g0 + 1;
+            }
+            else if (edge == 1)
+            {
+                g0 = cells * grid_width + index;
+                g1 = g0 + 1;
+            }
+            else
+            {
+                const int column = edge == 2 ? 0 : cells;
+                g0 = index * grid_width + column;
+                g1 = g0 + grid_width;
+            }
+            const int s0 = skirt_first + edge * grid_width + index;
+            const int s1 = s0 + 1;
+            *target++ = quint16(g0);
+            *target++ = quint16(s0);
+            *target++ = quint16(g1);
+            *target++ = quint16(g1);
+            *target++ = quint16(s0);
+            *target++ = quint16(s1);
+        }
+    }
+    return indices;
 }
 
 MapTerrainMeshResult buildTerrainMeshResult(const MapTerrainMeshRequest &request)
@@ -346,37 +305,45 @@ MapTerrainMeshResult buildTerrainMeshResult(const MapTerrainMeshRequest &request
     const double terrain_u_span = 1.0 / subdivision_count;
     const double terrain_v_span = 1.0 / subdivision_count;
 
-    const int cell_divisor = 1 << qMin(zoom_delta, 6);
-    const int native_cell_count = qMax(1, MapTerrainTileCellCount / cell_divisor);
-    const int cell_count = qBound(
-        1, request.requested_cell_count, native_cell_count);
+    // One mesh cell per DEM cell: with 2^zoom_delta imagery tiles across the
+    // DEM tile, 64 / 2^zoom_delta cells each, so the vertex (row, column)
+    // lies exactly on DEM sample (local_tile_y * cells + row, local_tile_x *
+    // cells + column) and the bilinear lookup returns that sample unchanged:
+    // the surface is the provider's heightfield, never a thinned copy.
+    const int cell_count = mapGlobeTerrainCellCount(request.imagery_zoom, request.terrain_zoom);
     result.cell_count = cell_count;
-    result.stitch_top_cell_count = normalizedTerrainStitchCellCount(
-        request.stitch_top_cell_count, cell_count);
-    result.stitch_right_cell_count = normalizedTerrainStitchCellCount(
-        request.stitch_right_cell_count, cell_count);
-    result.stitch_bottom_cell_count = normalizedTerrainStitchCellCount(
-        request.stitch_bottom_cell_count, cell_count);
-    result.stitch_left_cell_count = normalizedTerrainStitchCellCount(
-        request.stitch_left_cell_count, cell_count);
 
-    result.vertices.reserve(mapGlobeTileVertexCount(cell_count));
-    for (int row = 0; row <= cell_count; ++row)
+    const MapGlobeVerticalTransform vertical_transform(request.globe_vertical_exaggeration);
+    const int width = cell_count + 1;
+    std::vector<GridColumn> columns(static_cast<std::size_t>(width));
+    for (int column = 0; column < width; ++column)
+    {
+        columns[std::size_t(column)] = gridColumn(GeoWebMercator::tileXToLon(
+            double(request.virtual_x) + double(column) / double(cell_count), request.imagery_zoom));
+    }
+    // Web Mercator imagery/DEM coverage ends at +-85.051 degrees, while the
+    // Globe renderer closes the last few degrees with static polar fans. Keep
+    // the shared ring exactly on the ellipsoid to avoid a vertical crack.
+    const int imagery_tile_span = 1 << request.imagery_zoom;
+    const bool polar_top = request.y == 0;
+    const bool polar_bottom = request.y == imagery_tile_span - 1;
+
+    result.vertices.resize(mapGlobeTileGridVertexCount(cell_count));
+    MapTerrainMeshVertex *target = result.vertices.data();
+    for (int row = 0; row < width; ++row)
     {
         const double v = double(row) / double(cell_count);
-        for (int column = 0; column <= cell_count; ++column)
+        const double terrain_v = terrain_v_min + v * terrain_v_span;
+        const GridRow grid_row = gridRow(GeoWebMercator::tileYToLat(double(request.y) + v, request.imagery_zoom));
+        const bool on_ellipsoid = (polar_top && row == 0) || (polar_bottom && row == cell_count);
+        for (int column = 0; column < width; ++column)
         {
             const double u = double(column) / double(cell_count);
-            const QVector3D position = globeTerrainMeshVertexPosition(
-                request, column, row, cell_count,
-                result.stitch_top_cell_count,
-                result.stitch_right_cell_count,
-                result.stitch_bottom_cell_count,
-                result.stitch_left_cell_count,
-                terrain_u_min, terrain_v_min,
-                terrain_u_span, terrain_v_span);
-            result.vertices.append(MapTerrainMeshVertex{
-                position.x(), position.y(), position.z(), float(u), float(v)});
+            const double terrain_u = terrain_u_min + u * terrain_u_span;
+            const double height_m = on_ellipsoid
+                ? 0.0
+                : vertical_transform.terrainHeightM(double(terrainElevationMetersAt(request, terrain_u, terrain_v)));
+            *target++ = gridVertex(columns[std::size_t(column)], grid_row, height_m, request, float(u), float(v));
         }
     }
     // A DEM tile whose samples are all missing has no finite range.

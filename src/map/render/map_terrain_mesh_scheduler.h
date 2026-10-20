@@ -2,6 +2,7 @@
 #define MAP_TERRAIN_MESH_SCHEDULER_H
 
 #include "map/data/map_terrain_tile.h"
+#include "map/render/map_globe_terrain_levels.h"
 
 #include <QMutex>
 #include <QString>
@@ -53,19 +54,6 @@ struct MapTerrainMeshRequest
     int imagery_zoom = 0;
     int terrain_zoom = 0;
 
-    // LOD-selected desired cell count. The actual resolved count, after
-    // clamping to DEM resolution and imagery/terrain zoom delta, is returned
-    // in MapTerrainMeshResult::cell_count.
-    int requested_cell_count = 1;
-
-    // Crack-free Globe terrain LOD stitching. Each value is the number of
-    // edge segments used by a coarser same-zoom neighboring tile on that side,
-    // or 0 when no stitching is needed.
-    int stitch_top_cell_count = 0;
-    int stitch_right_cell_count = 0;
-    int stitch_bottom_cell_count = 0;
-    int stitch_left_cell_count = 0;
-
     // Generate geodetic WGS84/ECEF positions relative to the same sticky ECEF
     // render origin used by the Globe camera/network. The subtraction happens
     // in double precision before narrowing into float vertices.
@@ -84,11 +72,9 @@ struct MapTerrainMeshResult
     bool terrain_available = false;
     // The request's stand_in_zoom.
     int stand_in_zoom = -1;
+    // mapGlobeTerrainCellCount(imagery_zoom, terrain_zoom): the grid always
+    // has exactly the DEM resolution, every vertex on a DEM sample.
     int cell_count = 0;
-    int stitch_top_cell_count = 0;
-    int stitch_right_cell_count = 0;
-    int stitch_bottom_cell_count = 0;
-    int stitch_left_cell_count = 0;
     QVector<MapTerrainMeshVertex> vertices;
 };
 
@@ -96,15 +82,30 @@ struct MapTerrainMeshResult
 // Every globe surface tile (terrain mesh, stand-in or flat) is its
 // row-major (cells + 1)^2 grid followed by its skirt: the edge vertices
 // again (top row, bottom row, left column, right column; cells + 1 each),
-// lowered along the vertical by mapGlobeTileSkirtDepthM(). Neighbouring
-// tiles can disagree about their shared edge (another quadtree level with
-// vertices the coarser edge does not have, another DEM tile, a stand-in
-// next to a final mesh); the skirt fills that crack and lies hidden below
+// lowered along the vertical by mapGlobeTileSkirtDepthM(). Neighbours drawn
+// from the same DEM zoom share their edge vertices exactly (both lie on the
+// same DEM samples, mapGlobeTerrainCellCount()); neighbours from different
+// DEM zooms, a stand-in next to a final mesh or a flat tile next to relief
+// disagree about it, and the skirt fills that crack and lies hidden below
 // the neighbour everywhere else. The grid alone is the surface for rays.
 inline int mapGlobeTileGridVertexCount(int cells) { return (cells + 1) * (cells + 1); }
 inline int mapGlobeTileVertexCount(int cells) { return mapGlobeTileGridVertexCount(cells) + 4 * (cells + 1); }
 inline int mapGlobeTileGridIndexCount(int cells) { return cells * cells * 6; }
 inline int mapGlobeTileIndexCount(int cells) { return mapGlobeTileGridIndexCount(cells) + 4 * cells * 6; }
+
+// Most cells per side of a globe surface tile (a whole DEM tile).
+inline constexpr int MapGlobeTileMaximumCellCount = MapTerrainTileCellCount;
+
+// The triangles of a tile with `cells` cells per side, as indices relative
+// to its first vertex: the grid's cells row by row (two triangles each, so a
+// grid row is one contiguous block of cells * 6 indices), then the skirt's
+// walls. The topology depends on the cell count only, so every tile with
+// that count shares it: the renderer draws a tile with this one index list
+// and the tile's first vertex as base vertex, and window rebuilds write no
+// indices at all. 16 bit: 64 cells have 4485 vertices. Built once per cell
+// count, kept for the process (the GPU references it without a copy);
+// empty for a count outside 1..MapGlobeTileMaximumCellCount. Thread-safe.
+const QVector<quint16> &mapGlobeTileIndices(int cells);
 
 // Skirt depth of a tile: the elevation range of its DEM plus one grid
 // cell's ground length (at least 20 m), times the vertical exaggeration.

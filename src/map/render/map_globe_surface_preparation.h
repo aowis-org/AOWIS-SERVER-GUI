@@ -4,10 +4,10 @@
 #include "geo/geo_wgs84_ellipsoid.h"
 #include "map/render/map_globe_surface_vertex.h"
 #include "map/render/map_globe_surface_scene.h"
+#include "map/render/map_globe_terrain_levels.h"
 
 #include <aowis/model/gis.h>
 
-#include <QElapsedTimer>
 #include <QHash>
 #include <QSet>
 #include <QSize>
@@ -45,6 +45,9 @@ struct MapGlobeSurfaceTile
 
     int first_vertex = 0;
     int vertex_count = 0;
+    // Caps: the range in capIndices(). Window tiles share their topology
+    // (mapGlobeTileIndices(grid_cell_count), relative to first_vertex):
+    // first_index is 0 and index_count that list's size.
     int first_index = 0;
     int index_count = 0;
     // Cells per side of the tile's grid; vertex_count and index_count
@@ -54,11 +57,8 @@ struct MapGlobeSurfaceTile
 
     int terrain_zoom = -1;
     QString terrain_key;
+    // mapGlobeTerrainCellCount(zoom, terrain_zoom): the DEM's resolution.
     int terrain_cell_count = 1;
-    int terrain_stitch_top_cell_count = 0;
-    int terrain_stitch_right_cell_count = 0;
-    int terrain_stitch_bottom_cell_count = 0;
-    int terrain_stitch_left_cell_count = 0;
     quint64 terrain_mesh_request_id = 0;
     bool terrain_mesh_applied = false;
     bool terrain_mesh_has_relief = false;
@@ -80,8 +80,9 @@ struct MapGlobeSurfaceVertexPatch
 };
 
 // Owns all backend-independent preparation of the retained Globe surface:
-// visible quadtree selection, ellipsoid/cap geometry, DEM LOD and stitching,
-// asynchronous terrain mesh generation/application, wireframe generation,
+// visible quadtree selection, ellipsoid/cap geometry, the DEM zoom of each
+// tile (MapGlobeTerrainLevels), asynchronous terrain mesh
+// generation/application, wireframe generation,
 // and exact retained-DEM picking. Concrete GPU backends consume the prepared
 // vertices/indices/tiles and attach their own resource state separately.
 class MapGlobeSurfacePreparation
@@ -107,6 +108,11 @@ public:
     bool prepareVisibleWindow(const QSize &viewport_size);
     bool applyReadyTerrainMeshes(
         QVector<MapGlobeSurfaceVertexPatch> *vertex_patches);
+    // The window vertex ranges written by window rebuilds since the last
+    // call (new tiles in the persistent pool); full_upload: upload
+    // windowVertices() whole instead (the pool was rebuilt or grew).
+    void takeWindowVertexUploads(
+        QVector<MapGlobeSurfaceVertexPatch> *patches, bool *full_upload);
     void requestMissingTerrainTiles();
     void scheduleReadyTerrainMeshes();
 
@@ -140,9 +146,10 @@ public:
         int *terrain_zoom,
         double *cell_size_m) const;
 
+    // The terrain levels the current window was built with.
+    const MapGlobeTerrainLevels &terrainLevels() const;
     const GeoWgs84Ellipsoid::EcefPositionD &renderOriginEcef() const;
     const QVector<MapGlobeSurfaceVertex> &windowVertices() const;
-    const QVector<quint32> &windowIndices() const;
     const QVector<MapGlobeSurfaceTile> &windowTiles() const;
     QVector<MapGlobeSurfaceTile> &windowTiles();
     const QSet<quint64> &windowPositionKeys() const;
@@ -159,16 +166,21 @@ private:
     MapGlobeSurfaceVertex makeTileVertex(
         double lon_deg, double lat_deg, float u, float v) const;
     void buildPolarCap(bool north);
-    void rebuildWindow(
-        const QVector<MapGlobeQuadtreeLeaf> &leaves,
-        const QSize &viewport_size);
-    QVector<MapGlobeQuadtreeLeaf> currentWindowLeaves() const;
-    int terrainCellCountForTile(
-        const MapGlobeSurfaceTile &tile,
-        const QSize &viewport_size,
-        const GeoWgs84Ellipsoid::OrbitCameraBasis *camera_basis_override = nullptr) const;
-    void updateTerrainStitchCellCounts(
-        QVector<MapGlobeSurfaceTile> *tiles) const;
+    void rebuildWindow(const QVector<MapGlobeQuadtreeLeaf> &leaves);
+    // A free range of vertex_count vertices in the pool (grows the pool when
+    // none fits); its first vertex.
+    int allocateWindowSlot(int vertex_count);
+    void releaseWindowSlot(int first_vertex, int vertex_count);
+    // Writes a new tile's grid and skirt into its pool range: its own DEM's
+    // mesh, else a stand-in from the nearest cached coarser DEM, else flat.
+    void buildWindowTileVertices(MapGlobeSurfaceTile *tile, int subdivisions);
+    // The finest cached, usable DEM tile above the tile's own DEM zoom and
+    // finer than coarsest_excluded_zoom; nullptr when there is none.
+    const MapTerrainTile *cachedAncestorTerrainTile(
+        const MapGlobeSurfaceTile &tile, int coarsest_excluded_zoom) const;
+    // Takes the current terrain levels (catalog and detail setting); true
+    // when they changed, which invalidates every tile's terrain.
+    bool refreshTerrainLevels();
     void updateTerrainRayBounds(MapGlobeSurfaceTile *tile);
     // Mesh request for a window tile built from terrain_tile (its own DEM or
     // a stand-in at its DEM address).
@@ -179,20 +191,23 @@ private:
     // mesh thread and applied like any mesh (applyReadyTerrainMeshes()), but
     // without finishing the tile: its own DEM's mesh replaces it.
     void scheduleAncestorTerrainStandIns();
-    bool currentTerrainLodMatches(const QSize &viewport_size) const;
-    void appendWireframeEdges(
-        const QVector<MapGlobeSurfaceVertex> &vertices,
-        const QVector<quint32> &indices, qsizetype index_begin, qsizetype index_end);
     void rebuildWireframeVertices();
-    bool viewSelectionMatches(const QSize &viewport_size) const;
-    void rememberViewSelection(const QSize &viewport_size);
 
     MapModel *map_model = nullptr;
     MapTerrainRepository *terrain_repository = nullptr;
+    MapGlobeTerrainLevels terrain_levels;
     GeoWgs84Ellipsoid::EcefPositionD render_origin_ecef;
 
+    // The window's vertex pool: every tile keeps its range (first_vertex)
+    // while it stays in the window; window_vertices is the whole pool
+    // (window_pool_end used, the rest spare capacity), ranges of dropped
+    // tiles wait in window_free_slots by size for a new tile of that size.
     QVector<MapGlobeSurfaceVertex> window_vertices;
-    QVector<quint32> window_indices;
+    QHash<int, QVector<int>> window_free_slots;
+    qsizetype window_pool_end = 0;
+    qsizetype window_free_vertex_count = 0;
+    QVector<MapGlobeSurfaceVertexPatch> window_vertex_patches;
+    bool window_full_upload = true;
     QVector<MapGlobeSurfaceTile> window_tiles;
     QSet<quint64> window_position_keys;
     QHash<quint64, qsizetype> window_tile_indices_by_position;
@@ -211,22 +226,14 @@ private:
     quint64 next_terrain_mesh_request_id = 1;
     bool reported_orthometric_datum_warning = false;
     bool reported_unusable_datum_warning = false;
-    QElapsedTimer terrain_lod_rebuild_clock;
-    bool terrain_lod_rebuild_pending = false;
-
-    bool prepared_view_state_valid = false;
-    QSize prepared_viewport_size;
-    double prepared_center_lon_deg = 0.0;
-    double prepared_center_lat_deg = 0.0;
-    double prepared_yaw_deg = 0.0;
-    double prepared_pitch_deg = 0.0;
-    double prepared_distance_m = 0.0;
 };
 
 int mapGlobeSurfaceTileRequestPriority(
     int tile_x, int tile_y, int zoom,
     double center_lon_deg, double center_lat_deg);
-QString mapGlobeTerrainDatasetId();
+// The terrain levels for the repository's active dataset (none until its
+// catalog arrived) and the user's terrain detail reduction.
+MapGlobeTerrainLevels mapGlobeTerrainLevels(const MapTerrainRepository *terrain_repository);
 bool mapGlobeTerrainDatumUsable(MapTerrainVerticalDatum datum);
 
 #endif // MAP_GLOBE_SURFACE_PREPARATION_H

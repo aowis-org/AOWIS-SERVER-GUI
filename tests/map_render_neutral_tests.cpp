@@ -1,7 +1,10 @@
 #include "geo/geo_web_mercator.h"
+#include "map/data/map_terrain_dataset.h"
 #include "map/render/map_globe_heatmap_scene.h"
 #include "map/render/map_globe_picking.h"
 #include "map/render/map_globe_reservoir_model.h"
+#include "map/render/map_globe_surface_scene.h"
+#include "map/render/map_globe_terrain_levels.h"
 #include "map/render/map_globe_tank_model.h"
 #include "map/render/map_globe_vertical_transform.h"
 #include "map/core/map_cached_terrain_altitude.h"
@@ -623,21 +626,20 @@ void testCachedTerrainAltitudeFollowsCoordinate()
         "nonfinite cached terrain height is not displayed");
 }
 
-void testTerrainMeshGenerationAndStitching()
+void testTerrainMeshGeneration()
 {
+    // Imagery four levels below the DEM: 64 >> 4 = 4 cells per imagery tile.
     MapTerrainMeshRequest request;
     request.request_id = 77;
     request.terrain_key = QStringLiteral("test-terrain");
-    request.virtual_x = 512;
-    request.tile_x = 512;
-    request.y = 512;
-    request.imagery_zoom = 10;
+    request.virtual_x = 512 * 16;
+    request.tile_x = 512 * 16;
+    request.y = 512 * 16;
+    request.imagery_zoom = 14;
     request.terrain_zoom = 10;
-    request.requested_cell_count = 4;
-    request.stitch_top_cell_count = 2;
 
-    const double center_lon = GeoWebMercator::tileXToLon(512.5, 10);
-    const double center_lat = GeoWebMercator::tileYToLat(512.5, 10);
+    const double center_lon = GeoWebMercator::tileXToLon(512.5 * 16.0, 14);
+    const double center_lat = GeoWebMercator::tileYToLat(512.5 * 16.0, 14);
     const GeoWgs84Ellipsoid::EcefPositionD render_origin =
         GeoWgs84Ellipsoid::geodeticToEcefD(center_lon, center_lat, 0.0);
     request.globe_render_origin_x = render_origin.x;
@@ -648,10 +650,8 @@ void testTerrainMeshGenerationAndStitching()
     expectTrue(result.request_id == request.request_id
         && result.terrain_key == request.terrain_key,
         "terrain mesh result preserves request identity");
-    expectTrue(result.cell_count == 4,
-        "terrain mesh respects requested cell count below native resolution");
-    expectTrue(result.stitch_top_cell_count == 2,
-        "terrain mesh retains valid coarser top-edge stitch count");
+    expectTrue(result.cell_count == 4 && mapGlobeTerrainCellCount(14, 10) == 4,
+        "terrain mesh covers exactly the DEM cells under the imagery tile");
     expectTrue(result.vertices.size() == 25 + 4 * 5 && mapGlobeTileVertexCount(4) == 25 + 4 * 5,
         "four-cell terrain mesh produces a five-by-five vertex grid and its skirt");
     if (result.vertices.size() != mapGlobeTileVertexCount(4))
@@ -676,11 +676,12 @@ void testTerrainMeshGenerationAndStitching()
         const double z = render_origin.z + double(vertex.z);
         return std::sqrt(x * x + y * y + z * z);
     };
-    const double skirt_depth_m = mapGlobeTileSkirtDepthM(10, 512, 4, 1.0, 0.0);
-    expectTrue(skirt_depth_m > 9000.0 && skirt_depth_m < 10000.0,
+    const double zoom_10_skirt_depth_m = mapGlobeTileSkirtDepthM(10, 512, 4, 1.0, 0.0);
+    expectTrue(zoom_10_skirt_depth_m > 9000.0 && zoom_10_skirt_depth_m < 10000.0,
         "skirt depth of an equatorial zoom-10 four-cell tile is one cell length");
-    expectNear(mapGlobeTileSkirtDepthM(10, 512, 4, 2.0, 1500.0), 2.0 * (skirt_depth_m + 1500.0), 1e-6,
+    expectNear(mapGlobeTileSkirtDepthM(10, 512, 4, 2.0, 1500.0), 2.0 * (zoom_10_skirt_depth_m + 1500.0), 1e-6,
         "skirt depth adds the DEM elevation range, all exaggerated");
+    const double skirt_depth_m = mapGlobeTileSkirtDepthM(14, 512 * 16, 4, 1.0, 0.0);
     const int skirt_grid_vertex[4][2] = {{25, 0}, {25 + 5 + 4, 24}, {25 + 10 + 2, 10}, {25 + 15 + 3, 19}};
     for (const int (&pair)[2] : skirt_grid_vertex)
     {
@@ -692,36 +693,254 @@ void testTerrainMeshGenerationAndStitching()
             "skirt vertex keeps its edge vertex's texture coordinates");
     }
 
-    if (result.vertices.size() >= 3)
-    {
-        const QVector3D top0(
-            result.vertices.at(0).x,
-            result.vertices.at(0).y,
-            result.vertices.at(0).z);
-        const QVector3D top1(
-            result.vertices.at(1).x,
-            result.vertices.at(1).y,
-            result.vertices.at(1).z);
-        const QVector3D top2(
-            result.vertices.at(2).x,
-            result.vertices.at(2).y,
-            result.vertices.at(2).z);
-        const QVector3D stitched_midpoint = (top0 + top2) * 0.5f;
-        expectNear((top1 - stitched_midpoint).length(), 0.0, 1e-3,
-            "fine top-edge vertex is linearly stitched to coarser neighbor edge");
-    }
-
-    request.stitch_top_cell_count = 3;
-    const MapTerrainMeshResult incompatible_stitch = buildTerrainMeshResult(request);
-    expectTrue(incompatible_stitch.stitch_top_cell_count == 0,
-        "terrain mesh rejects non-divisor stitch count");
-
     request.imagery_zoom = 8;
     request.terrain_zoom = 9;
     const MapTerrainMeshResult invalid_zoom_order = buildTerrainMeshResult(request);
     expectTrue(invalid_zoom_order.vertices.isEmpty()
         && invalid_zoom_order.cell_count == 0,
         "terrain mesh rejects imagery zoom below terrain zoom");
+}
+
+// The drawn terrain is the provider's heightfield: one mesh cell per DEM
+// cell, every vertex exactly on a DEM sample, at the imagery tile's own DEM
+// zoom and at every subdivision of it.
+void testTerrainMeshFollowsDemSamples()
+{
+    // A DEM whose every sample differs (no plane: a thinned or interpolated
+    // mesh would not reproduce it).
+    const std::function<double(int, int)> sample_height_m = [](int row, int column)
+    {
+        return 500.0 + 3.0 * double(row) + 7.0 * double(column) + 40.0 * double((row * 31 + column * 17) % 5);
+    };
+    MapTerrainTile terrain_tile;
+    terrain_tile.address.zoom = 12;
+    terrain_tile.address.x = 2150;
+    terrain_tile.address.y = 1400;
+    terrain_tile.dataset = QStringLiteral("test-dataset");
+    terrain_tile.vertical_datum = MapTerrainVerticalDatum::Wgs84Ellipsoid;
+    terrain_tile.elevations_m.resize(MapTerrainTileSampleCount);
+    double minimum_m = std::numeric_limits<double>::infinity();
+    double maximum_m = -std::numeric_limits<double>::infinity();
+    for (int row = 0; row < MapTerrainTileGridSize; ++row)
+    {
+        for (int column = 0; column < MapTerrainTileGridSize; ++column)
+        {
+            const double height_m = sample_height_m(row, column);
+            terrain_tile.elevations_m[row * MapTerrainTileGridSize + column] = float(height_m);
+            minimum_m = std::min(minimum_m, height_m);
+            maximum_m = std::max(maximum_m, height_m);
+        }
+    }
+    terrain_tile.minimum_elevation_m = minimum_m;
+    terrain_tile.maximum_elevation_m = maximum_m;
+
+    // zoom_delta 0: the whole DEM tile, 64 cells. zoom_delta 2: imagery tile
+    // (1, 3) of the 4 x 4 below it, 16 cells starting at DEM sample (48, 16).
+    const int zoom_deltas[2] = {0, 2};
+    for (const int zoom_delta : zoom_deltas)
+    {
+        const int local_x = zoom_delta == 0 ? 0 : 1;
+        const int local_y = zoom_delta == 0 ? 0 : 3;
+        MapTerrainMeshRequest request;
+        request.terrain_tile = terrain_tile;
+        request.terrain_available = true;
+        request.imagery_zoom = 12 + zoom_delta;
+        request.terrain_zoom = 12;
+        request.tile_x = int(terrain_tile.address.x << zoom_delta) + local_x;
+        request.virtual_x = request.tile_x;
+        request.y = int(terrain_tile.address.y << zoom_delta) + local_y;
+        const GeoWgs84Ellipsoid::EcefPositionD origin = GeoWgs84Ellipsoid::geodeticToEcefD(
+            GeoWebMercator::tileXToLon(double(request.tile_x) + 0.5, request.imagery_zoom),
+            GeoWebMercator::tileYToLat(double(request.y) + 0.5, request.imagery_zoom), 0.0);
+        request.globe_render_origin_x = origin.x;
+        request.globe_render_origin_y = origin.y;
+        request.globe_render_origin_z = origin.z;
+
+        const MapTerrainMeshResult result = buildTerrainMeshResult(request);
+        const int cells = MapTerrainTileCellCount >> zoom_delta;
+        expectTrue(result.cell_count == cells && result.vertices.size() == mapGlobeTileVertexCount(cells),
+            "terrain mesh has one cell per DEM cell");
+        if (result.vertices.size() != mapGlobeTileVertexCount(cells))
+            continue;
+
+        double largest_error_m = 0.0;
+        for (int row = 0; row <= cells; ++row)
+        {
+            for (int column = 0; column <= cells; ++column)
+            {
+                const MapTerrainMeshVertex &vertex = result.vertices.at(row * (cells + 1) + column);
+                GeoWgs84Ellipsoid::EcefPositionD position;
+                position.x = origin.x + double(vertex.x);
+                position.y = origin.y + double(vertex.y);
+                position.z = origin.z + double(vertex.z);
+                double longitude_deg = 0.0;
+                double latitude_deg = 0.0;
+                double height_m = 0.0;
+                GeoWgs84Ellipsoid::ecefToGeodetic(position, &longitude_deg, &latitude_deg, &height_m);
+                const double expected_m =
+                    sample_height_m(local_y * cells + row, local_x * cells + column);
+                largest_error_m = std::max(largest_error_m, std::abs(height_m - expected_m));
+            }
+        }
+        // Float vertices relative to the render origin: centimetres.
+        expectTrue(largest_error_m < 0.05,
+            "every terrain mesh vertex lies on its DEM sample");
+    }
+}
+
+// The tile topology every window tile with a cell count shares: relative to
+// the tile's first vertex, grid rows contiguous, then the skirt, the same
+// triangles the per-tile absolute index lists had.
+void testSharedTileTopology()
+{
+    const int cell_counts[] = {1, 2, 4, 8, 12, 16, 24, 32, 64};
+    for (const int cells : cell_counts)
+    {
+        const QVector<quint16> &indices = mapGlobeTileIndices(cells);
+        expectTrue(indices.size() == mapGlobeTileIndexCount(cells),
+            "shared topology has the tile's index count");
+        expectTrue(&mapGlobeTileIndices(cells) == &indices
+            && mapGlobeTileIndices(cells).constData() == indices.constData(),
+            "shared topology is built once and keeps its address");
+        int largest = 0;
+        for (const quint16 index : indices)
+            largest = std::max(largest, int(index));
+        expectTrue(largest == mapGlobeTileVertexCount(cells) - 1,
+            "shared topology addresses exactly the tile's grid and skirt vertices");
+
+        // Reference: the former per-tile generator at first vertex 0.
+        const int width = cells + 1;
+        bool same = true;
+        qsizetype at = 0;
+        for (int row = 0; row < cells && same; ++row)
+        {
+            for (int column = 0; column < cells && same; ++column)
+            {
+                const int p00 = row * width + column;
+                const int expected[6] = {p00, p00 + width, p00 + 1, p00 + 1, p00 + width, p00 + width + 1};
+                for (const int value : expected)
+                    same = same && int(indices.at(at++)) == value;
+            }
+        }
+        const int skirt_first = mapGlobeTileGridVertexCount(cells);
+        for (int edge = 0; edge < 4 && same; ++edge)
+        {
+            for (int index = 0; index < cells && same; ++index)
+            {
+                const int g0 = edge == 0 ? index
+                    : edge == 1 ? cells * width + index
+                    : index * width + (edge == 2 ? 0 : cells);
+                const int g1 = edge < 2 ? g0 + 1 : g0 + width;
+                const int s0 = skirt_first + edge * width + index;
+                const int expected[6] = {g0, s0, g1, g1, s0, s0 + 1};
+                for (const int value : expected)
+                    same = same && int(indices.at(at++)) == value;
+            }
+        }
+        expectTrue(same, "shared topology equals the former per-tile triangles");
+    }
+    expectTrue(mapGlobeTileIndices(0).isEmpty() && mapGlobeTileIndices(65).isEmpty(),
+        "no topology outside 1..64 cells");
+}
+
+// Foreshortening weight of the quadtree's refinement: head-on 1, the square
+// root of the facing cosine at an angle, the floor at a grazing angle, and 1
+// for a node close to the eye whatever its angle.
+void testQuadtreeForeshortening()
+{
+    const QVector3D center(float(GeoWgs84Ellipsoid::EquatorialRadiusM), 0.0f, 0.0f);
+    const double radius_m = 1000.0;
+    const QVector3D up(1.0f, 0.0f, 0.0f);
+    const QVector3D along(0.0f, 1.0f, 0.0f);
+    expectNear(mapGlobeQuadtreeNodeForeshortening(center, radius_m, center + up * 50000.0f), 1.0, 1e-6,
+        "a node seen head-on keeps its projected size");
+    const QVector3D oblique = center + (up + along).normalized() * 50000.0f;
+    expectNear(mapGlobeQuadtreeNodeForeshortening(center, radius_m, oblique), std::sqrt(std::sqrt(0.5)), 1e-4,
+        "a node seen at 45 degrees is weighted by the square root of its facing cosine");
+    const QVector3D grazing = center + along * 50000.0f + up * 50.0f;
+    expectNear(mapGlobeQuadtreeNodeForeshortening(center, radius_m, grazing), MapGlobeQuadtreeMinimumForeshortening,
+        1e-3, "a node seen at a grazing angle is weighted by the floor");
+    expectNear(mapGlobeQuadtreeNodeForeshortening(center, radius_m, center + along * 1500.0f), 1.0, 1e-6,
+        "a node within two radii of the eye keeps its projected size");
+    expectNear(mapGlobeQuadtreeNodeForeshortening(center, radius_m, center + along * 3000.0f),
+        0.5 * (1.0 + MapGlobeQuadtreeMinimumForeshortening), 1e-3,
+        "between two and four radii the weight blends to the centre's angle");
+    expectNear(mapGlobeQuadtreeNodeForeshortening(QVector3D(0.0f, 0.0f, 0.0f), 6.0e6, up * 2.0e7f), 1.0, 1e-6,
+        "a node centred on the Earth's centre (the root levels) is not weighted");
+}
+
+// The terrain service's catalog (AOWIS-SERVER-MAP
+// encodeTerrainDatasetCatalogJson()) as the repository reads it.
+void testTerrainDatasetCatalog()
+{
+    const QByteArray json = QByteArrayLiteral(
+        "{\"default_dataset\":\"copernicus-glo30\",\"datasets\":["
+        "{\"dataset\":\"copernicus-glo30\",\"provider\":\"copernicus\","
+        "\"nominal_resolution_m\":30,\"vertical_datum\":\"egm2008\",\"surface_model\":\"dsm\","
+        "\"minimum_zoom\":8,\"maximum_zoom\":14,\"tile_grid_size\":65},"
+        "{\"dataset\":\"other-grid\",\"provider\":\"x\",\"nominal_resolution_m\":1,"
+        "\"vertical_datum\":\"egm2008\",\"surface_model\":\"dtm\",\"minimum_zoom\":10,"
+        "\"maximum_zoom\":19,\"tile_grid_size\":257},"
+        "{\"dataset\":\"bad-range\",\"provider\":\"x\",\"nominal_resolution_m\":1,"
+        "\"vertical_datum\":\"egm2008\",\"surface_model\":\"dtm\",\"minimum_zoom\":15,"
+        "\"maximum_zoom\":12,\"tile_grid_size\":65}]}");
+    QString error;
+    const std::optional<MapTerrainDatasetCatalog> catalog = decodeMapTerrainDatasetCatalog(json, &error);
+    expectTrue(catalog.has_value(), "terrain dataset catalog decodes");
+    if (!catalog.has_value())
+        return;
+    expectTrue(catalog->default_dataset == QStringLiteral("copernicus-glo30")
+        && catalog->datasets.size() == 1,
+        "catalog keeps the valid dataset and drops other grids and invalid ranges");
+    const MapTerrainDatasetInfo *info = catalog->find(QStringLiteral("copernicus-glo30"));
+    expectTrue(info != nullptr && info->minimum_zoom == 8 && info->maximum_zoom == 14
+        && info->vertical_datum == MapTerrainVerticalDatum::Egm2008
+        && std::abs(info->nominal_resolution_m - 30.0) < 1e-9 && info->surface_model == QStringLiteral("dsm"),
+        "catalog entry carries the provider's range, datum and resolution");
+    expectTrue(catalog->find(QStringLiteral("other-grid")) == nullptr,
+        "a dataset with another tile grid is not offered to the renderer");
+
+    expectTrue(!decodeMapTerrainDatasetCatalog(QByteArrayLiteral("[]")).has_value()
+        && !decodeMapTerrainDatasetCatalog(
+               QByteArrayLiteral("{\"default_dataset\":\"\",\"datasets\":[]}")).has_value(),
+        "malformed catalogs are rejected");
+}
+
+// The DEM zoom per imagery zoom: the dataset's range from its catalog, the
+// detail reduction below the imagery, never finer than the native detail.
+void testTerrainLevels()
+{
+    MapGlobeTerrainLevels levels;
+    expectTrue(!levels.enabled() && levels.terrainZoomForImageryZoom(14) == -1,
+        "no terrain dataset: no relief");
+
+    levels.dataset = QStringLiteral("copernicus-glo30");
+    levels.minimum_zoom = 8;
+    levels.maximum_zoom = 14;
+    levels.detail_reduction = 0;
+    expectTrue(levels.enabled(), "a dataset with a zoom range draws relief");
+    expectTrue(!levels.reliefAtImageryZoom(7) && levels.terrainZoomForImageryZoom(7) == -1,
+        "no relief below the minimum zoom");
+    expectTrue(levels.terrainZoomForImageryZoom(8) == 8 && levels.terrainZoomForImageryZoom(12) == 12
+        && levels.terrainZoomForImageryZoom(14) == 14,
+        "full detail draws the imagery's own DEM zoom");
+    expectTrue(levels.terrainZoomForImageryZoom(17) == 14 && levels.terrainZoomForImageryZoom(19) == 14,
+        "past the native detail the maximum-zoom DEM tile is subdivided");
+    expectTrue(mapGlobeTerrainCellCount(12, 12) == 64 && mapGlobeTerrainCellCount(17, 14) == 8
+        && mapGlobeTerrainCellCount(19, 14) == 2 && mapGlobeTerrainCellCount(21, 14) == 1,
+        "cell count is the DEM's resolution under the imagery tile");
+
+    levels.detail_reduction = 2;
+    expectTrue(levels.terrainZoomForImageryZoom(12) == 10 && levels.terrainZoomForImageryZoom(9) == 8
+        && levels.terrainZoomForImageryZoom(16) == 14 && levels.terrainZoomForImageryZoom(18) == 14,
+        "a detail reduction draws coarser DEM levels, clamped to the dataset's range");
+    expectTrue(mapGlobeTerrainCellCount(12, levels.terrainZoomForImageryZoom(12)) == 16,
+        "two levels of reduction draw a quarter of the cells per side");
+
+    MapGlobeTerrainLevels other = levels;
+    expectTrue(other == levels, "identical terrain levels compare equal");
+    other.maximum_zoom = 16;
+    expectTrue(other != levels, "another dataset range is a change");
 }
 
 // Stand-in DEM while a tile's own DEM is loading
@@ -785,15 +1004,14 @@ void testTerrainStandInFromAncestor()
     MapTerrainMeshRequest request;
     request.terrain_tile = stand_in;
     request.terrain_available = true;
-    request.virtual_x = int(address.x) * 2;
-    request.tile_x = int(address.x) * 2;
-    request.y = int(address.y) * 2;
-    request.imagery_zoom = 13;
+    request.virtual_x = int(address.x) * 4;
+    request.tile_x = int(address.x) * 4;
+    request.y = int(address.y) * 4;
+    request.imagery_zoom = 14;
     request.terrain_zoom = 12;
-    request.requested_cell_count = 16;
     const GeoWgs84Ellipsoid::EcefPositionD origin = GeoWgs84Ellipsoid::geodeticToEcefD(
-        GeoWebMercator::tileXToLon(double(request.tile_x), 13),
-        GeoWebMercator::tileYToLat(double(request.y), 13), 0.0);
+        GeoWebMercator::tileXToLon(double(request.tile_x), 14),
+        GeoWebMercator::tileYToLat(double(request.y), 14), 0.0);
     request.globe_render_origin_x = origin.x;
     request.globe_render_origin_y = origin.y;
     request.globe_render_origin_z = origin.z;
@@ -802,7 +1020,8 @@ void testTerrainStandInFromAncestor()
         "stand-in mesh has the final mesh's grid and skirt");
     if (result.vertices.size() != mapGlobeTileVertexCount(16))
         return;
-    // The imagery tile is the top-left quarter of the terrain tile.
+    // The imagery tile is the top-left sixteenth of the terrain tile, whose
+    // 16 x 16 cells match the stand-in's DEM resolution there.
     const std::function<double(const MapTerrainMeshVertex &)> height_m =
         [&origin](const MapTerrainMeshVertex &vertex)
     {
@@ -818,7 +1037,7 @@ void testTerrainStandInFromAncestor()
     };
     expectNear(height_m(result.vertices.constFirst()), plane(0.75, 0.25), 0.05,
         "stand-in mesh corner lies on the ancestor relief");
-    expectNear(height_m(result.vertices.at(17 * 17 - 1)), plane(0.875, 0.375), 0.05,
+    expectNear(height_m(result.vertices.at(17 * 17 - 1)), plane(0.8125, 0.3125), 0.05,
         "stand-in mesh opposite corner lies on the ancestor relief");
 
     // The preparation hands the mesh thread the ancestor itself; the
@@ -851,7 +1070,12 @@ int main()
     test_harness.runCase("canonical screen ray", testCanonicalScreenRay);
     test_harness.runCase("heatmap scene", testHeatmapScene);
     test_harness.runCase("globe model geometry", testGlobeModelGeometry);
-    test_harness.runCase("terrain mesh generation and stitching", testTerrainMeshGenerationAndStitching);
+    test_harness.runCase("terrain mesh generation", testTerrainMeshGeneration);
+    test_harness.runCase("terrain mesh follows DEM samples", testTerrainMeshFollowsDemSamples);
+    test_harness.runCase("shared tile topology", testSharedTileTopology);
+    test_harness.runCase("quadtree foreshortening", testQuadtreeForeshortening);
+    test_harness.runCase("terrain dataset catalog", testTerrainDatasetCatalog);
+    test_harness.runCase("terrain levels", testTerrainLevels);
     test_harness.runCase("terrain stand-in from ancestor", testTerrainStandInFromAncestor);
     return test_harness.finish();
 }

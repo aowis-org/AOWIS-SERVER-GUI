@@ -422,13 +422,43 @@ Slice 1, the terrain surface (`map_bgfx_globe_surface.*`):
 * CPU work is the backend-neutral `MapGlobeSurfacePreparation` the QRhi globe
   uses: quadtree leaves with horizon and view-cone culling, ellipsoid and polar
   cap geometry relative to `MapGlobeCamera`'s sticky render origin, DEM
-  requests, LOD and stitching, asynchronous terrain meshes, wireframe edges.
+  requests, asynchronous terrain meshes, wireframe edges.
+* Leaf refinement weighs a node's projected bounding-sphere size by its
+  foreshortening (`mapGlobeQuadtreeNodeForeshortening()`): the square root of
+  the cosine between the node's normal and the direction to the eye, at least
+  0.125 (three levels), not applied within two radii of the eye and blended in
+  by four. A sphere looks the same from every side, so before this a node
+  near the horizon was refined as if seen head-on: cells several pixels wide
+  and a fraction of a pixel tall (moiré in the wireframe, most of a tilted
+  view's triangles). Coarser leaves draw coarser DEM tiles, so imagery and
+  terrain follow together. CPU harness (1516x958, Alps; triangles at
+  reduction 0 / 1): 2 km at 20 deg 1.05 M -> 0.64 M / 0.32 M -> 0.20 M,
+  10 km at 10 deg 1.30 M -> 0.72 M / 0.37 M -> 0.24 M, 201 km at 34 deg
+  0.71 M -> 0.44 M / 0.36 M -> 0.18 M; leaves -15..40 %; top-down views
+  unchanged.
+* Terrain level of detail is the DEM pyramid, never thinning inside a DEM
+  tile (`map_globe_terrain_levels.h`). The terrain service's dataset catalog
+  (`GET /terrain/v1/datasets`, `MapTerrainRepository::activeDataset()`) gives
+  the dataset and its zoom range; nothing is requested before it arrives, and
+  no provider or zoom is hardcoded. A leaf at imagery zoom z draws the DEM tile
+  of zoom `clamp(z - reduction, max(8, minimum_zoom), maximum_zoom)` at its full
+  resolution, `mapGlobeTerrainCellCount()` = 64 >> (z - DEM zoom) cells, so
+  every vertex lies on a DEM sample. `reduction` is the "terrain detail
+  reduction" setting (0..3, default 1): 0 draws every sample at the imagery's
+  level of detail (about 4 px per cell), each step halves it. Past the
+  dataset's `maximum_zoom` (its native detail) the DEM tile is subdivided, so
+  the drawn terrain never claims finer detail than the source has. Mesh
+  density depends on nothing camera-related, so a camera move rebuilds only
+  when the leaves change; a catalog or setting change rebuilds the window
+  (`MapGlobeSurfacePreparation::refreshTerrainLevels()`). Neighbours from the
+  same DEM zoom share their edge vertices exactly; the edge stitching of the
+  former in-tile LOD is gone.
 * Every surface tile (terrain mesh, stand-in, flat) is its (cells + 1)^2 grid
   followed by a skirt: the four edges again, lowered by the tile's DEM
   elevation range plus one cell length (at least 20 m), times the vertical
   exaggeration (`mapGlobeAppendTileSkirt()` / `mapGlobeTileSkirtDepthM()` in
   `map_terrain_mesh_scheduler.h`). Neighbours disagree about a shared edge
-  where their quadtree levels, DEM zooms or stand-in state differ; the skirt
+  where their DEM zooms or stand-in state differ; the skirt
   hanging from the higher edge closes that crack and lies hidden below the
   neighbour elsewhere. It keeps the edge's texture coordinates, draws in the
   tile's one indexed draw, and is left out of ray picking, draping heights,
@@ -448,9 +478,38 @@ Slice 1, the terrain surface (`map_bgfx_globe_surface.*`):
   altitude, black above the atmosphere except for the thin bright band along
   the limb; the surface covers everything below the horizon. Drawn with the
   map tiles (not in the wireframe-only view); optional like the heatmap.
-* GPU: window and cap vertices/indices in dynamic buffers (full upload on a
-  window/cap rebuild, terrain meshes as vertex-range patches), one indexed draw
-  per tile, depth test and write LessEqual. The camera's canonical OpenGL clip
+* Window vertices are a persistent pool (`MapGlobeSurfacePreparation`):
+  a tile keeps its vertex range while it stays in the window, a dropped
+  tile's range is reused by the next new tile of that size, the pool grows
+  by half when full. A leaf change writes and uploads only the new tiles
+  (`takeWindowVertexUploads()`); the whole pool goes up only after it was
+  rebuilt (render-origin rebase, terrain levels change, free ranges
+  outweighing used ones) or grown, since bgfx drops a dynamic buffer's
+  content when it grows. Kept tiles are neither copied nor rescanned for
+  their ray bounds. Before, every leaf change, i.e. nearly every frame of a
+  camera move, copied and re-uploaded the whole window (4-5 MB per frame).
+* A new tile gets its relief in the same frame: its own DEM's mesh when
+  cached, else a stand-in resampled from the nearest cached coarser DEM
+  (replaced on the mesh thread when its own DEM arrives); flat only before
+  any DEM covering it is cached. New tiles waited for the mesh thread before
+  and were drawn on the ellipsoid meanwhile, flickering between the relief
+  around them during camera moves. Affordable because the mesh builder
+  evaluates the Web Mercator inverse and the trigonometry per row and
+  column (closed-form WGS84 per vertex): 64 cells 0.62 -> 0.09 ms.
+  Frame harness (synthetic alps, 1920x1080, DEM 3 frames late, 8 per frame;
+  zoom 60 -> 3 km, pan, orbit, zoom out; per phase): preparation CPU
+  6-12 ms -> ~1 ms per frame, uploads 1.2-2.0 GB -> 17-44 MB, frames with
+  flat relief tiles 150-180 -> 0 (only while the first coarse DEM loads).
+* GPU: window and cap vertices in dynamic buffers (window: the pool, patched
+  per new tile and finished mesh; caps: full upload on a rebuild), one
+  indexed draw per tile, depth test and write LessEqual. Window tiles have no index buffer
+  of their own: the topology depends on the cell count only, so one static
+  16-bit index buffer per cell count (`mapGlobeTileIndices()`, created on
+  first use) serves every tile, drawn with the tile's first vertex as start
+  vertex (bgfx applies it as base vertex on GL/WebGL, D3D11, Vulkan and
+  Metal). A window rebuild writes and uploads no indices (at 64 cells that
+  was more than half of a tile's upload); picking and the wireframe read the
+  same shared lists. The caps keep their own small index buffer. The camera's canonical OpenGL clip
   space gets the [0, 1] depth correction where bgfx reports no homogeneous
   depth (Direct3D, Vulkan, Metal). `QMatrix4x4::constData()` is column-major,
   as bgfx's `mul(matrix, vector)` expects.

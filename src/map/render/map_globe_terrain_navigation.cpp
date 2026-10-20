@@ -1,6 +1,5 @@
 #include "map/render/map_globe_terrain_navigation.h"
 
-#include "config/gui_configuration.h"
 #include "geo/geo_web_mercator.h"
 #include "geo/geo_wgs84_ellipsoid.h"
 #include "map/core/map_model.h"
@@ -21,8 +20,6 @@
 // renderer only forwarded to). Constants and comments are kept as they were.
 namespace
 {
-constexpr int CameraTerrainMinimumZoom = 8;
-constexpr int CameraTerrainMaximumZoom = 14;
 // One symmetric, frame-rate-independent low-pass replaces the previous
 // velocity-carrying spring. It can never overshoot or rebound when the terrain
 // target reverses at a ridge/valley. The terrain-follow path uses this same
@@ -230,15 +227,19 @@ bool MapGlobeTerrainNavigation::terrainElevationAtCoordinate(const CoordinateWGS
             coordinate, &visible_terrain_zoom, &visible_cell_size_m);
     }
 
-    const QString dataset = mapGlobeTerrainDatasetId();
+    // The dataset's own zoom range (its catalog), nothing hardcoded.
+    const MapGlobeTerrainLevels levels = mapGlobeTerrainLevels(this->terrain_repository);
+    if (!levels.enabled())
+        return false;
+    const QString &dataset = levels.dataset;
     for (int pass = 0; pass < 2; ++pass)
     {
-        const int first_zoom = pass == 0 && visible_terrain_zoom >= CameraTerrainMinimumZoom
+        const int first_zoom = pass == 0 && visible_terrain_zoom >= levels.minimum_zoom
             ? visible_terrain_zoom
-            : CameraTerrainMaximumZoom;
-        const int last_zoom = pass == 0 && visible_terrain_zoom >= CameraTerrainMinimumZoom
+            : levels.maximum_zoom;
+        const int last_zoom = pass == 0 && visible_terrain_zoom >= levels.minimum_zoom
             ? visible_terrain_zoom
-            : CameraTerrainMinimumZoom;
+            : levels.minimum_zoom;
 
         for (int terrain_zoom = first_zoom; terrain_zoom >= last_zoom; --terrain_zoom)
         {
@@ -291,7 +292,7 @@ bool MapGlobeTerrainNavigation::terrainElevationAtCoordinate(const CoordinateWGS
             return true;
         }
 
-        if (visible_terrain_zoom < CameraTerrainMinimumZoom)
+        if (visible_terrain_zoom < levels.minimum_zoom)
             break;
     }
 
@@ -369,23 +370,24 @@ bool MapGlobeTerrainNavigation::cameraTerrainElevationAtCoordinate(const Coordin
     // the flat view and can be completely unrelated to Globe distance.
     const int imagery_zoom = qBound(0, qRound(this->map_model->viewGlobeZoomLevel(this->viewport_size)),
                                     MapModel::MaxZoom);
-    if (imagery_zoom < CameraTerrainMinimumZoom)
+    const MapGlobeTerrainLevels levels = mapGlobeTerrainLevels(this->terrain_repository);
+    if (!levels.reliefAtImageryZoom(imagery_zoom))
     {
-        // Globe relief is deliberately disabled below this LOD, where the
-        // rendered surface is the zero-height ellipsoid.
+        // Globe relief is deliberately disabled below this LOD (and before
+        // the terrain dataset is known), where the rendered surface is the
+        // zero-height ellipsoid.
         *elevation_m = 0.0;
         return true;
     }
 
-    const int configured_maximum_zoom = qMax(CameraTerrainMinimumZoom,
-                                             guiConfiguration().map_performance.terrain_max_detail_zoom);
-    const int target_terrain_zoom = qBound(CameraTerrainMinimumZoom, imagery_zoom, configured_maximum_zoom);
-    const QString dataset = mapGlobeTerrainDatasetId();
+    // The DEM zoom the surface draws under the camera (the same levels).
+    const int target_terrain_zoom = levels.terrainZoomForImageryZoom(imagery_zoom);
+    const QString &dataset = levels.dataset;
 
     // Request only the exact current LOD. While it is loading, a cached
     // coarser tile gives the filter a stable provisional surface instead of
     // snapping the rig to zero and back as tile boundaries are crossed.
-    for (int terrain_zoom = target_terrain_zoom; terrain_zoom >= CameraTerrainMinimumZoom; --terrain_zoom)
+    for (int terrain_zoom = target_terrain_zoom; terrain_zoom >= levels.minimum_zoom; --terrain_zoom)
     {
         const double terrain_tile_x = GeoWebMercator::lonToTileX(coordinate.longitude_deg, terrain_zoom);
         const double terrain_tile_y = GeoWebMercator::latToTileY(coordinate.latitude_deg, terrain_zoom);

@@ -60,23 +60,15 @@ struct GuiMapNavigationConfiguration
 
 struct GuiMapPerformanceConfiguration
 {
-    // Target on-screen size, in pixels, of one terrain relief mesh cell.
-    // Smaller values keep a denser (higher quality) mesh out to a greater
-    // distance; larger values let quality fall off sooner
-    // (MapGlobeSurfaceScene's terrain LOD).
-    double terrain_lod_target_cell_size_px = 32.0;
-    // Highest zoom level at which the terrain DEM is still fetched/used at
-    // increasing resolution; beyond this the same elevation data is reused
-    // and just re-subdivided rather than re-fetched at a finer level
-    // (lower bound MapGlobeSurfaceScene::TerrainReliefMinimumZoom).
-    int terrain_max_detail_zoom = 14;
-    // Lowest zoom level at which the focus/crosshair tile's terrain mesh is
-    // still forced to maximum detail regardless of camera distance, instead
-    // of following the normal distance-based falloff. Only the one tile at
-    // the focus is affected. Default of 19 (MapModel::MaxZoom) matches the
-    // falloff's un-forced behavior; lower this to keep full detail at the
-    // focus across a wider zoom range.
-    int terrain_full_detail_zoom = 19;
+    // DEM levels the globe terrain stays below the imagery
+    // (MapGlobeTerrainLevels). 0 draws every elevation sample the terrain
+    // source provides at the imagery's level of detail: one mesh cell per DEM
+    // cell, about 4 px on screen. Each further level halves the terrain
+    // resolution (about 8, 16, 32 px per cell) with a quarter of the
+    // triangles. Close to the ground, past the source's native detail, every
+    // setting shows the full source resolution. Range 0 to 3
+    // (MapGlobeTerrainMaximumDetailReduction).
+    int terrain_detail_reduction = 1;
 };
 
 struct GuiConfiguration

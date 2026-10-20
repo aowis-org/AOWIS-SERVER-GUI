@@ -1,6 +1,5 @@
 #include "map/render/map_globe_surface_scene.h"
 
-#include "config/gui_configuration.h"
 #include "geo/geo_web_mercator.h"
 #include "map/core/map_model.h"
 #include "map/data/map_terrain_repository.h"
@@ -30,26 +29,9 @@ constexpr int GlobeQuadtreeMaxVisitedNodes = 20000;
 constexpr double GlobeQuadtreeViewConeMarginRad = 0.1;
 constexpr double GlobeQuadtreeHorizonOcclusionMarginFactor = 3.0;
 constexpr int GlobeQuadtreeViewConeCullMinZoom = 2;
-constexpr int GlobeTerrainMinimumLodCellCount = 1;
 // Relief assumed where no DEM covering a node is cached yet: from the
 // ellipsoid to above the highest summit (raw DEM metres).
 constexpr double UnknownTerrainMaximumElevationM = 9000.0;
-
-int terrainZoomForImageryZoom(int imagery_zoom)
-{
-    const int configured_max_detail_zoom = qMax(
-        MapGlobeSurfaceScene::TerrainReliefMinimumZoom,
-        guiConfiguration().map_performance.terrain_max_detail_zoom);
-    return qBound(
-        MapGlobeSurfaceScene::TerrainReliefMinimumZoom,
-        imagery_zoom,
-        configured_max_detail_zoom);
-}
-
-QString terrainDatasetId()
-{
-    return QStringLiteral("copernicus-glo30");
-}
 
 bool terrainDatumUsable(MapTerrainVerticalDatum datum)
 {
@@ -131,9 +113,16 @@ void quadtreeNodeBoundingSphere(
 class TerrainTileLookup
 {
 public:
-    explicit TerrainTileLookup(const MapTerrainRepository *terrain_repository)
-        : terrain_repository(terrain_repository)
+    TerrainTileLookup(const MapTerrainRepository *terrain_repository,
+                      const MapGlobeTerrainLevels &terrain_levels)
+        : terrain_repository(terrain_repository),
+          terrain_levels(terrain_levels)
     {
+    }
+
+    const MapGlobeTerrainLevels &levels() const
+    {
+        return this->terrain_levels;
     }
 
     const MapTerrainTile *tile(int zoom, quint32 x, quint32 y)
@@ -141,12 +130,16 @@ public:
         const quint64 key = MapGlobeSurfaceScene::positionKey(zoom, int(x), int(y));
         QHash<quint64, const MapTerrainTile *>::const_iterator found = this->tiles.constFind(key);
         if (found == this->tiles.cend())
-            found = this->tiles.insert(key, this->terrain_repository->tile(terrainDatasetId(), zoom, x, y));
+        {
+            found = this->tiles.insert(
+                key, this->terrain_repository->tile(this->terrain_levels.dataset, zoom, x, y));
+        }
         return found.value();
     }
 
 private:
     const MapTerrainRepository *terrain_repository = nullptr;
+    const MapGlobeTerrainLevels &terrain_levels;
     QHash<quint64, const MapTerrainTile *> tiles;
 };
 
@@ -161,9 +154,9 @@ bool cachedTerrainElevationRange(
     double *minimum_elevation_m,
     double *maximum_elevation_m)
 {
-    const int terrain_zoom = terrainZoomForImageryZoom(zoom);
+    const int terrain_zoom = terrain_tiles->levels().terrainZoomForImageryZoom(zoom);
     for (int candidate_zoom = terrain_zoom;
-         candidate_zoom >= MapGlobeSurfaceScene::TerrainReliefMinimumZoom;
+         candidate_zoom >= terrain_tiles->levels().minimum_zoom;
          --candidate_zoom)
     {
         const int shift = zoom - candidate_zoom;
@@ -191,7 +184,8 @@ bool cachedTerrainElevationRange(
 // never refined into leaves, so its DEM was never requested either: a
 // permanent hole next to the camera. Hence the nearest cached ancestor's
 // range, and without any cached DEM the whole possible range.
-// terrain_tiles: nullptr without a terrain repository (no relief drawn).
+// terrain_tiles: nullptr without a terrain repository or terrain dataset (no
+// relief drawn).
 void quadtreeNodeVisibilityBoundingSphere(
     int zoom,
     int tile_x,
@@ -206,7 +200,7 @@ void quadtreeNodeVisibilityBoundingSphere(
     double maximum_elevation_m = 0.0;
 
     if (terrain_tiles != nullptr
-        && zoom >= MapGlobeSurfaceScene::TerrainReliefMinimumZoom)
+        && terrain_tiles->levels().reliefAtImageryZoom(zoom))
     {
         double dem_minimum_m = 0.0;
         double dem_maximum_m = UnknownTerrainMaximumElevationM;
@@ -360,7 +354,8 @@ void collectQuadtreeLeaves(
         lod_node_radius_m,
         lod_camera_basis,
         viewport_height_px,
-        tan_half_fov);
+        tan_half_fov)
+        * mapGlobeQuadtreeNodeForeshortening(lod_node_center, lod_node_radius_m, lod_camera_basis.eye);
     const bool was_subdivided = previously_subdivided_nodes.contains(
         MapGlobeSurfaceScene::positionKey(zoom, tile_x, tile_y));
     const double subdivide_threshold_px = was_subdivided
@@ -448,7 +443,8 @@ void collectQuadtreeLeaves(
 QVector<MapGlobeQuadtreeLeaf> MapGlobeSurfaceScene::selectVisibleLeaves(
     const MapModel &map_model,
     const QSize &viewport_size,
-    const MapTerrainRepository *terrain_repository)
+    const MapTerrainRepository *terrain_repository,
+    const MapGlobeTerrainLevels &terrain_levels)
 {
     QVector<MapGlobeQuadtreeLeaf> leaves;
     if (!viewport_size.isValid())
@@ -492,8 +488,10 @@ QVector<MapGlobeQuadtreeLeaf> MapGlobeSurfaceScene::selectVisibleLeaves(
 
     QSet<quint64> currently_subdivided_nodes;
     int visit_budget = GlobeQuadtreeMaxVisitedNodes;
-    TerrainTileLookup terrain_tile_lookup(terrain_repository);
-    TerrainTileLookup *terrain_tiles = terrain_repository != nullptr ? &terrain_tile_lookup : nullptr;
+    TerrainTileLookup terrain_tile_lookup(terrain_repository, terrain_levels);
+    TerrainTileLookup *terrain_tiles = terrain_repository != nullptr && terrain_levels.enabled()
+        ? &terrain_tile_lookup
+        : nullptr;
     QVector3D root_center;
     double root_radius_m = 0.0;
     quadtreeNodeVisibilityBoundingSphere(
@@ -551,208 +549,6 @@ QVector<MapGlobeQuadtreeLeaf> MapGlobeSurfaceScene::selectVisibleLeaves(
 void MapGlobeSurfaceScene::clearVisibilityHistory()
 {
     this->previously_subdivided_quadtree_nodes.clear();
-}
-
-int MapGlobeSurfaceScene::terrainCellCountForTile(
-    const MapModel &map_model,
-    const MapGlobeTerrainLodTile &tile,
-    const QSize &viewport_size,
-    const GeoWgs84Ellipsoid::OrbitCameraBasis *camera_basis_override) const
-{
-    if (tile.terrain_zoom < TerrainReliefMinimumZoom
-        || tile.zoom < tile.terrain_zoom
-        || !viewport_size.isValid())
-    {
-        return 1;
-    }
-
-    const int zoom_delta = tile.zoom - tile.terrain_zoom;
-    const int cell_divisor = 1 << qMin(zoom_delta, 6);
-    const int native_cell_count = qMax(1, MapTerrainTileCellCount / cell_divisor);
-    const int maximum_cell_count = native_cell_count;
-    const int minimum_cell_count = qMin(
-        maximum_cell_count, GlobeTerrainMinimumLodCellCount);
-    if (maximum_cell_count <= minimum_cell_count)
-        return maximum_cell_count;
-
-    const double tile_center_lon_deg = GeoWebMercator::tileXToLon(
-        double(tile.virtual_x) + 0.5, tile.zoom);
-    const double tile_center_lat_deg = GeoWebMercator::tileYToLat(
-        double(tile.tile_y) + 0.5, tile.zoom);
-    const QVector3D tile_center = GeoWgs84Ellipsoid::geodeticToEcef(
-        tile_center_lon_deg, tile_center_lat_deg, 0.0);
-
-    const double tile_lat_top_deg = GeoWebMercator::tileYToLat(
-        double(tile.tile_y), tile.zoom);
-    const double tile_lat_bottom_deg = GeoWebMercator::tileYToLat(
-        double(tile.tile_y) + 1.0, tile.zoom);
-    const double tile_width_m =
-        (2.0 * M_PI * GeoWgs84Ellipsoid::EquatorialRadiusM
-         * qMax(0.0, std::cos(qDegreesToRadians(tile_center_lat_deg))))
-        / double(1 << tile.zoom);
-    const double tile_height_m = GeoWgs84Ellipsoid::EquatorialRadiusM
-        * std::abs(qDegreesToRadians(tile_lat_top_deg - tile_lat_bottom_deg));
-    const double tile_reference_size_m = qMax(tile_width_m, tile_height_m);
-
-    GeoWgs84Ellipsoid::OrbitCameraBasis local_camera_basis;
-    const GeoWgs84Ellipsoid::OrbitCameraBasis *camera_basis =
-        camera_basis_override;
-    if (camera_basis == nullptr)
-    {
-        local_camera_basis = GeoWgs84Ellipsoid::orbitCameraBasis(
-            map_model.centerLon(),
-            map_model.centerLat(),
-            map_model.viewGlobeYawDeg(),
-            qBound(
-                MapModel::MinViewGlobePitchDeg,
-                map_model.viewGlobePitchDeg(),
-                MapModel::MaxViewGlobePitchDeg),
-            qMax(
-                MapModel::MinViewGlobeDistanceM,
-                map_model.viewGlobeDistanceM()));
-        camera_basis = &local_camera_basis;
-    }
-
-    const double ground_distance_from_focus_m =
-        double((tile_center - camera_basis->target).length());
-    if (tile.zoom >= guiConfiguration().map_performance.terrain_full_detail_zoom
-        && ground_distance_from_focus_m < tile_reference_size_m * 0.75)
-    {
-        return maximum_cell_count;
-    }
-
-    const double native_camera_distance_m =
-        MapModel::viewGlobeDistanceMForZoomLevel(
-            double(tile.zoom),
-            map_model.centerLat(),
-            qMax(1, viewport_size.height()));
-    const double camera_to_tile_distance_m =
-        double((tile_center - camera_basis->eye).length());
-    const double camera_to_focus_distance_m =
-        double((camera_basis->target - camera_basis->eye).length());
-    const double focus_falloff_distance_m = std::hypot(
-        camera_to_focus_distance_m, ground_distance_from_focus_m);
-    const double lod_distance_m = qMax(
-        camera_to_tile_distance_m, focus_falloff_distance_m);
-    const double projected_tile_scale = qBound(
-        0.0,
-        native_camera_distance_m / qMax(1e-9, lod_distance_m),
-        4.0);
-    const double target_cell_size_px = qMax(
-        1.0,
-        guiConfiguration().map_performance.terrain_lod_target_cell_size_px);
-    const double desired_cell_count =
-        (double(MapModel::TileSize) / target_cell_size_px)
-        * projected_tile_scale;
-
-    int cell_count = minimum_cell_count;
-    while (cell_count < maximum_cell_count)
-    {
-        const int next_cell_count = qMin(maximum_cell_count, cell_count * 2);
-        const double threshold = std::sqrt(
-            double(cell_count) * double(next_cell_count));
-        if (desired_cell_count < threshold)
-            break;
-        cell_count = next_cell_count;
-    }
-
-    return cell_count;
-}
-
-bool MapGlobeSurfaceScene::terrainLodMatches(
-    const MapModel &map_model,
-    const QVector<MapGlobeTerrainLodTile> &tiles,
-    const QSize &viewport_size) const
-{
-    const GeoWgs84Ellipsoid::OrbitCameraBasis camera_basis =
-        GeoWgs84Ellipsoid::orbitCameraBasis(
-            map_model.centerLon(),
-            map_model.centerLat(),
-            map_model.viewGlobeYawDeg(),
-            qBound(
-                MapModel::MinViewGlobePitchDeg,
-                map_model.viewGlobePitchDeg(),
-                MapModel::MaxViewGlobePitchDeg),
-            qMax(
-                MapModel::MinViewGlobeDistanceM,
-                map_model.viewGlobeDistanceM()));
-
-    for (const MapGlobeTerrainLodTile &tile : tiles)
-    {
-        if (!tile.terrain_available)
-            continue;
-        if (tile.terrain_cell_count
-            != terrainCellCountForTile(
-                map_model, tile, viewport_size, &camera_basis))
-        {
-            return false;
-        }
-    }
-    return true;
-}
-
-void MapGlobeSurfaceScene::updateTerrainStitchCellCounts(
-    QVector<MapGlobeTerrainLodTile> *tiles)
-{
-    if (tiles == nullptr)
-        return;
-
-    QHash<quint64, qsizetype> tiles_by_position;
-    tiles_by_position.reserve(tiles->size());
-    for (qsizetype index = 0; index < tiles->size(); ++index)
-    {
-        MapGlobeTerrainLodTile &tile = (*tiles)[index];
-        tile.terrain_stitch_top_cell_count = 0;
-        tile.terrain_stitch_right_cell_count = 0;
-        tile.terrain_stitch_bottom_cell_count = 0;
-        tile.terrain_stitch_left_cell_count = 0;
-
-        if (!tile.terrain_available || tile.terrain_cell_count <= 0)
-            continue;
-        tiles_by_position.insert(
-            positionKey(tile.zoom, tile.tile_x, tile.tile_y), index);
-    }
-
-    for (qsizetype index = 0; index < tiles->size(); ++index)
-    {
-        MapGlobeTerrainLodTile &tile = (*tiles)[index];
-        if (!tile.terrain_available || tile.terrain_cell_count <= 1)
-            continue;
-
-        const int left_x = GeoWebMercator::wrapTileX(
-            tile.tile_x - 1, tile.zoom);
-        const int right_x = GeoWebMercator::wrapTileX(
-            tile.tile_x + 1, tile.zoom);
-
-        const quint64 neighbor_keys[4] = {
-            positionKey(tile.zoom, tile.tile_x, tile.tile_y - 1),
-            positionKey(tile.zoom, right_x, tile.tile_y),
-            positionKey(tile.zoom, tile.tile_x, tile.tile_y + 1),
-            positionKey(tile.zoom, left_x, tile.tile_y),
-        };
-        int *stitch_targets[4] = {
-            &tile.terrain_stitch_top_cell_count,
-            &tile.terrain_stitch_right_cell_count,
-            &tile.terrain_stitch_bottom_cell_count,
-            &tile.terrain_stitch_left_cell_count,
-        };
-
-        for (int side = 0; side < 4; ++side)
-        {
-            const QHash<quint64, qsizetype>::const_iterator iterator =
-                tiles_by_position.constFind(neighbor_keys[side]);
-            if (iterator == tiles_by_position.cend())
-                continue;
-
-            const MapGlobeTerrainLodTile &neighbor = tiles->at(iterator.value());
-            if (neighbor.terrain_cell_count > 0
-                && neighbor.terrain_cell_count < tile.terrain_cell_count
-                && tile.terrain_cell_count % neighbor.terrain_cell_count == 0)
-            {
-                *stitch_targets[side] = neighbor.terrain_cell_count;
-            }
-        }
-    }
 }
 
 quint64 MapGlobeSurfaceScene::positionKey(int zoom, int tile_x, int tile_y)

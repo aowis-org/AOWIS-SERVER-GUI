@@ -22,8 +22,6 @@ namespace
 constexpr int GlobeImageryMaxZoom = MapModel::MaxZoom;
 constexpr int GlobeTerrainReliefMinimumZoom =
     MapGlobeSurfaceScene::TerrainReliefMinimumZoom;
-constexpr int GlobeAsyncTerrainMeshMinimumCellCount = 16;
-constexpr qint64 GlobeMinimumTerrainLodRebuildIntervalMs = 120;
 constexpr int GlobePolarCapSegments = 48;
 
 int subdivisionsForZoom(int zoom)
@@ -39,95 +37,36 @@ int subdivisionsForZoom(int zoom)
     return 2;
 }
 
-// Indices of one tile laid out as mapGlobeTileVertexCount(cell_count)
-// vertices from first_vertex: the grid's cells first (row by row, so a
-// grid row's triangles are one contiguous block, which
-// visibleTerrainRayIntersection() relies on), then the skirt's walls.
-void appendIndexedTileIndices(
-    QVector<quint32> *indices, qsizetype first_vertex, int cell_count)
+// The wireframe's line list for triangles given as indices relative to
+// base_vertex: each triangle's three edges.
+template <typename Index>
+void appendWireframeEdges(
+    QVector<MapGlobeSurfaceWireframeVertex> *wireframe,
+    const QVector<MapGlobeSurfaceVertex> &vertices, qsizetype base_vertex,
+    const Index *indices, qsizetype index_count)
 {
-    if (indices == nullptr || first_vertex < 0 || cell_count <= 0)
-        return;
-
-    const qsizetype last_vertex = first_vertex
-        + mapGlobeTileVertexCount(cell_count) - 1;
-    // Compare as quint64: qsizetype is 32-bit on wasm32, where
-    // qsizetype(UINT32_MAX) is -1 and every grid would be skipped.
-    if (quint64(last_vertex) > quint64(std::numeric_limits<quint32>::max()))
-        return;
-
-    const quint32 first = quint32(first_vertex);
-    const quint32 grid_width = quint32(cell_count + 1);
-    // Written in place after one resize (window rebuilds append hundreds of
-    // thousands of indices while the camera moves).
-    const qsizetype begin = indices->size();
-    indices->resize(begin + mapGlobeTileIndexCount(cell_count));
-    quint32 *target = indices->data() + begin;
-    for (int row = 0; row < cell_count; ++row)
+    for (qsizetype index = 0; index + 2 < index_count; index += 3)
     {
-        for (int column = 0; column < cell_count; ++column)
-        {
-            const quint32 p00 = first
-                + quint32(row) * grid_width + quint32(column);
-            const quint32 p10 = p00 + 1;
-            const quint32 p01 = p00 + grid_width;
-            const quint32 p11 = p01 + 1;
-            *target++ = p00;
-            *target++ = p01;
-            *target++ = p10;
-            *target++ = p10;
-            *target++ = p01;
-            *target++ = p11;
-        }
-    }
+        const qsizetype a_index = base_vertex + qsizetype(indices[index]);
+        const qsizetype b_index = base_vertex + qsizetype(indices[index + 1]);
+        const qsizetype c_index = base_vertex + qsizetype(indices[index + 2]);
+        if (a_index >= vertices.size() || b_index >= vertices.size() || c_index >= vertices.size())
+            continue;
 
-    // Skirt: one quad per edge segment between the grid edge vertices g0,
-    // g1 and their lowered copies s0, s1 (mapGlobeAppendTileSkirt() order:
-    // top row, bottom row, left column, right column). The surface state
-    // culls no faces, so the winding does not matter.
-    const quint32 skirt_first = first + quint32(mapGlobeTileGridVertexCount(cell_count));
-    const quint32 cells = quint32(cell_count);
-    for (quint32 edge = 0; edge < 4; ++edge)
-    {
-        for (quint32 index = 0; index < cells; ++index)
-        {
-            quint32 g0 = 0;
-            quint32 g1 = 0;
-            if (edge == 0)
-            {
-                g0 = first + index;
-                g1 = g0 + 1;
-            }
-            else if (edge == 1)
-            {
-                g0 = first + cells * grid_width + index;
-                g1 = g0 + 1;
-            }
-            else
-            {
-                const quint32 column = edge == 2 ? 0 : cells;
-                g0 = first + index * grid_width + column;
-                g1 = g0 + grid_width;
-            }
-            const quint32 s0 = skirt_first + edge * grid_width + index;
-            const quint32 s1 = s0 + 1;
-            *target++ = g0;
-            *target++ = s0;
-            *target++ = g1;
-            *target++ = g1;
-            *target++ = s0;
-            *target++ = s1;
-        }
-    }
-}
+        const MapGlobeSurfaceVertex &a = vertices.at(a_index);
+        const MapGlobeSurfaceVertex &b = vertices.at(b_index);
+        const MapGlobeSurfaceVertex &c = vertices.at(c_index);
+        const MapGlobeSurfaceWireframeVertex wa = {a.x, a.y, a.z};
+        const MapGlobeSurfaceWireframeVertex wb = {b.x, b.y, b.z};
+        const MapGlobeSurfaceWireframeVertex wc = {c.x, c.y, c.z};
 
-int terrainZoomForImageryZoom(int imagery_zoom)
-{
-    const int configured_max_detail_zoom = qMax(
-        GlobeTerrainReliefMinimumZoom,
-        guiConfiguration().map_performance.terrain_max_detail_zoom);
-    return qBound(
-        GlobeTerrainReliefMinimumZoom, imagery_zoom, configured_max_detail_zoom);
+        wireframe->append(wa);
+        wireframe->append(wb);
+        wireframe->append(wb);
+        wireframe->append(wc);
+        wireframe->append(wc);
+        wireframe->append(wa);
+    }
 }
 
 bool terrainDatumIsOrthometric(MapTerrainVerticalDatum datum)
@@ -204,9 +143,25 @@ int mapGlobeSurfaceTileRequestPriority(
     return int(std::lround((1.0 - cosine_angle) * 1000000.0));
 }
 
-QString mapGlobeTerrainDatasetId()
+MapGlobeTerrainLevels mapGlobeTerrainLevels(const MapTerrainRepository *terrain_repository)
 {
-    return QStringLiteral("copernicus-glo30");
+    MapGlobeTerrainLevels levels;
+    levels.detail_reduction = qBound(
+        0, guiConfiguration().map_performance.terrain_detail_reduction,
+        MapGlobeTerrainMaximumDetailReduction);
+
+    const MapTerrainDatasetInfo *dataset =
+        terrain_repository != nullptr ? terrain_repository->activeDataset() : nullptr;
+    if (dataset == nullptr)
+        return levels;
+
+    // The provider's own range: nothing below what it generates, nothing
+    // finer than its native detail (imagery past that subdivides the
+    // maximum_zoom DEM tile).
+    levels.dataset = dataset->dataset;
+    levels.minimum_zoom = qMax(GlobeTerrainReliefMinimumZoom, dataset->minimum_zoom);
+    levels.maximum_zoom = qMin(dataset->maximum_zoom, GlobeImageryMaxZoom);
+    return levels;
 }
 
 bool mapGlobeTerrainDatumUsable(MapTerrainVerticalDatum datum)
@@ -262,9 +217,6 @@ bool MapGlobeSurfacePreparation::setTerrainRepository(
     this->terrain_repository = terrain_repository;
     this->reported_orthometric_datum_warning = false;
     this->reported_unusable_datum_warning = false;
-    this->terrain_lod_rebuild_pending = false;
-    this->terrain_lod_rebuild_clock.invalidate();
-    this->prepared_view_state_valid = false;
     this->window_dirty = true;
     return true;
 }
@@ -283,22 +235,38 @@ bool MapGlobeSurfacePreparation::requestTerrainForCurrentView(
         return false;
     }
 
+    this->refreshTerrainLevels();
     const QVector<MapGlobeQuadtreeLeaf> desired_leaves =
         this->surface_scene.selectVisibleLeaves(
-            *this->map_model, viewport_size, this->terrain_repository);
-    this->rebuildWindow(desired_leaves, viewport_size);
+            *this->map_model, viewport_size, this->terrain_repository, this->terrain_levels);
+    this->rebuildWindow(desired_leaves);
     this->requestMissingTerrainTiles();
-    this->rememberViewSelection(viewport_size);
     return true;
 }
 
 void MapGlobeSurfacePreparation::invalidateTerrainView()
 {
     this->window_dirty = true;
-    this->terrain_lod_rebuild_pending = false;
-    this->terrain_lod_rebuild_clock.invalidate();
-    this->prepared_view_state_valid = false;
     this->surface_scene.clearVisibilityHistory();
+}
+
+bool MapGlobeSurfacePreparation::refreshTerrainLevels()
+{
+    const MapGlobeTerrainLevels levels = mapGlobeTerrainLevels(this->terrain_repository);
+    if (levels == this->terrain_levels)
+        return false;
+
+    // Another dataset, range or detail reduction: other DEM tiles and other
+    // grids for every tile, so no geometry survives (the in-flight meshes
+    // are dropped by their request ids).
+    this->terrain_levels = levels;
+    this->window_dirty = true;
+    return true;
+}
+
+const MapGlobeTerrainLevels &MapGlobeSurfacePreparation::terrainLevels() const
+{
+    return this->terrain_levels;
 }
 
 bool MapGlobeSurfacePreparation::setRenderOriginEcef(
@@ -316,7 +284,6 @@ bool MapGlobeSurfacePreparation::setRenderOriginEcef(
         tile.terrain_mesh_request_id = 0;
 
     this->window_dirty = true;
-    this->prepared_view_state_valid = false;
     this->caps_built = false;
     this->cap_vertices.clear();
     this->cap_indices.clear();
@@ -445,88 +412,6 @@ bool MapGlobeSurfacePreparation::ensureCapsBuilt()
     return true;
 }
 
-int MapGlobeSurfacePreparation::terrainCellCountForTile(
-    const MapGlobeSurfaceTile &tile,
-    const QSize &viewport_size,
-    const GeoWgs84Ellipsoid::OrbitCameraBasis *camera_basis_override) const
-{
-    if (this->map_model == nullptr)
-        return 1;
-
-    MapGlobeTerrainLodTile surface_tile;
-    surface_tile.virtual_x = tile.virtual_x;
-    surface_tile.tile_x = tile.tile_x;
-    surface_tile.tile_y = tile.tile_y;
-    surface_tile.zoom = tile.zoom;
-    surface_tile.terrain_zoom = tile.terrain_zoom;
-    surface_tile.terrain_available = !tile.terrain_key.isEmpty();
-    surface_tile.terrain_cell_count = tile.terrain_cell_count;
-    return this->surface_scene.terrainCellCountForTile(
-        *this->map_model, surface_tile, viewport_size, camera_basis_override);
-}
-
-void MapGlobeSurfacePreparation::updateTerrainStitchCellCounts(
-    QVector<MapGlobeSurfaceTile> *tiles) const
-{
-    if (tiles == nullptr)
-        return;
-
-    QVector<MapGlobeTerrainLodTile> surface_tiles;
-    surface_tiles.reserve(tiles->size());
-    for (const MapGlobeSurfaceTile &tile : *tiles)
-    {
-        MapGlobeTerrainLodTile surface_tile;
-        surface_tile.virtual_x = tile.virtual_x;
-        surface_tile.tile_x = tile.tile_x;
-        surface_tile.tile_y = tile.tile_y;
-        surface_tile.zoom = tile.zoom;
-        surface_tile.terrain_zoom = tile.terrain_zoom;
-        surface_tile.terrain_available = !tile.terrain_key.isEmpty();
-        surface_tile.terrain_cell_count = tile.terrain_cell_count;
-        surface_tiles.append(surface_tile);
-    }
-
-    MapGlobeSurfaceScene::updateTerrainStitchCellCounts(&surface_tiles);
-    for (qsizetype index = 0; index < tiles->size(); ++index)
-    {
-        MapGlobeSurfaceTile &tile = (*tiles)[index];
-        const MapGlobeTerrainLodTile &surface_tile = surface_tiles.at(index);
-        tile.terrain_stitch_top_cell_count =
-            surface_tile.terrain_stitch_top_cell_count;
-        tile.terrain_stitch_right_cell_count =
-            surface_tile.terrain_stitch_right_cell_count;
-        tile.terrain_stitch_bottom_cell_count =
-            surface_tile.terrain_stitch_bottom_cell_count;
-        tile.terrain_stitch_left_cell_count =
-            surface_tile.terrain_stitch_left_cell_count;
-    }
-}
-
-bool MapGlobeSurfacePreparation::currentTerrainLodMatches(
-    const QSize &viewport_size) const
-{
-    if (this->map_model == nullptr)
-        return true;
-
-    QVector<MapGlobeTerrainLodTile> surface_tiles;
-    surface_tiles.reserve(this->window_tiles.size());
-    for (const MapGlobeSurfaceTile &tile : this->window_tiles)
-    {
-        MapGlobeTerrainLodTile surface_tile;
-        surface_tile.virtual_x = tile.virtual_x;
-        surface_tile.tile_x = tile.tile_x;
-        surface_tile.tile_y = tile.tile_y;
-        surface_tile.zoom = tile.zoom;
-        surface_tile.terrain_zoom = tile.terrain_zoom;
-        surface_tile.terrain_available = !tile.terrain_key.isEmpty();
-        surface_tile.terrain_cell_count = tile.terrain_cell_count;
-        surface_tiles.append(surface_tile);
-    }
-
-    return this->surface_scene.terrainLodMatches(
-        *this->map_model, surface_tiles, viewport_size);
-}
-
 void MapGlobeSurfacePreparation::updateTerrainRayBounds(
     MapGlobeSurfaceTile *tile)
 {
@@ -607,26 +492,127 @@ void MapGlobeSurfacePreparation::updateTerrainRayBounds(
     }
 }
 
-void MapGlobeSurfacePreparation::rebuildWindow(
-    const QVector<MapGlobeQuadtreeLeaf> &leaves,
-    const QSize &viewport_size)
+int MapGlobeSurfacePreparation::allocateWindowSlot(int vertex_count)
 {
-    const bool geometry_reuse_allowed = !this->window_dirty;
-    QVector<MapGlobeSurfaceVertex> previous_vertices =
-        std::move(this->window_vertices);
-    QVector<MapGlobeSurfaceTile> previous_tiles =
-        std::move(this->window_tiles);
+    // An exact-size free slot first (tiles of one cell count share a size).
+    const QHash<int, QVector<int>>::iterator free_slots = this->window_free_slots.find(vertex_count);
+    if (free_slots != this->window_free_slots.end() && !free_slots->isEmpty())
+    {
+        const int first_vertex = free_slots->takeLast();
+        this->window_free_vertex_count -= vertex_count;
+        return first_vertex;
+    }
+
+    const qsizetype first_vertex = this->window_pool_end;
+    this->window_pool_end += vertex_count;
+    if (this->window_pool_end > this->window_vertices.size())
+    {
+        // bgfx drops a dynamic buffer's content when it grows, so a grown
+        // pool is uploaded whole; growing by half keeps that rare.
+        this->window_vertices.resize(qMax(this->window_pool_end, this->window_vertices.size() * 3 / 2));
+        this->window_full_upload = true;
+    }
+    return int(first_vertex);
+}
+
+void MapGlobeSurfacePreparation::releaseWindowSlot(int first_vertex, int vertex_count)
+{
+    if (first_vertex < 0 || vertex_count <= 0)
+        return;
+    this->window_free_slots[vertex_count].append(first_vertex);
+    this->window_free_vertex_count += vertex_count;
+}
+
+void MapGlobeSurfacePreparation::buildWindowTileVertices(MapGlobeSurfaceTile *tile, int subdivisions)
+{
+    const int vertex_count = mapGlobeTileVertexCount(subdivisions);
+    MapGlobeSurfaceVertex *target = this->window_vertices.data() + tile->first_vertex;
+
+    // The relief right away, built here (a 64-cell mesh takes ~0.1 ms): from
+    // the tile's own DEM when it is cached, else resampled from the nearest
+    // cached coarser DEM (a stand-in, replaced when the own DEM arrives).
+    // Drawn flat for a frame or two until the mesh thread delivered, new
+    // tiles on the ellipsoid flickered between the relief around them
+    // whenever the camera moved.
+    const MapTerrainTile *terrain_tile = nullptr;
+    bool stand_in = false;
+    if (!tile->terrain_key.isEmpty() && this->terrain_repository != nullptr)
+    {
+        terrain_tile = this->terrain_repository->tile(tile->terrain_key);
+        if (terrain_tile == nullptr || terrain_tile->elevations_m.size() != MapTerrainTileSampleCount
+            || !mapGlobeTerrainDatumUsable(terrain_tile->vertical_datum))
+        {
+            terrain_tile = this->cachedAncestorTerrainTile(*tile, -1);
+            stand_in = terrain_tile != nullptr;
+        }
+    }
+
+    if (terrain_tile != nullptr)
+    {
+        if (terrainDatumIsOrthometric(terrain_tile->vertical_datum)
+            && !this->reported_orthometric_datum_warning)
+        {
+            qWarning().noquote()
+                << QStringLiteral(
+                       "Globe terrain tiles use an orthometric EGM vertical datum; "
+                       "using it directly as local ellipsoid-normal displacement until "
+                       "the terrain service exposes WGS84-ellipsoid tile heights.");
+            this->reported_orthometric_datum_warning = true;
+        }
+
+        MapTerrainMeshRequest request = terrainMeshRequest(*tile, *terrain_tile);
+        if (stand_in)
+            request.stand_in_zoom = terrain_tile->address.zoom;
+        const MapTerrainMeshResult result = buildTerrainMeshResult(request);
+        if (result.vertices.size() == vertex_count)
+        {
+            for (const MapTerrainMeshVertex &vertex : result.vertices)
+                *target++ = MapGlobeSurfaceVertex{vertex.x, vertex.y, vertex.z, vertex.u, vertex.v};
+            // A stand-in is not the tile's own mesh: that one is still
+            // scheduled once its DEM arrives (scheduleReadyTerrainMeshes()).
+            tile->terrain_mesh_applied = !stand_in;
+            tile->terrain_mesh_has_relief = true;
+            tile->terrain_stand_in_zoom = stand_in ? terrain_tile->address.zoom : -1;
+            return;
+        }
+    }
+
+    // No DEM at all yet (or no relief at this zoom): the ellipsoid.
+    QVector<MapGlobeSurfaceVertex> flat;
+    flat.reserve(vertex_count);
+    for (int row = 0; row <= subdivisions; ++row)
+    {
+        const double v = double(row) / double(subdivisions);
+        const double latitude_deg = GeoWebMercator::tileYToLat(double(tile->tile_y) + v, tile->zoom);
+        for (int column = 0; column <= subdivisions; ++column)
+        {
+            const double u = double(column) / double(subdivisions);
+            const double longitude_deg = GeoWebMercator::tileXToLon(double(tile->virtual_x) + u, tile->zoom);
+            flat.append(this->makeTileVertex(longitude_deg, latitude_deg, float(u), float(v)));
+        }
+    }
+    mapGlobeAppendTileSkirt(
+        &flat, 0, subdivisions,
+        mapGlobeTileSkirtDepthM(tile->zoom, tile->tile_y, subdivisions,
+                                this->map_model != nullptr ? this->map_model->view3dVerticalExaggeration() : 1.0,
+                                0.0),
+        this->render_origin_ecef.x, this->render_origin_ecef.y, this->render_origin_ecef.z);
+    std::copy(flat.constBegin(), flat.constEnd(), target);
+}
+
+void MapGlobeSurfacePreparation::rebuildWindow(
+    const QVector<MapGlobeQuadtreeLeaf> &leaves)
+{
+    QVector<MapGlobeSurfaceTile> previous_tiles = std::move(this->window_tiles);
     QHash<quint64, qsizetype> previous_tiles_by_position;
-    if (geometry_reuse_allowed)
+    if (!this->window_dirty)
     {
         previous_tiles_by_position.reserve(previous_tiles.size());
         for (qsizetype index = 0; index < previous_tiles.size(); ++index)
         {
             const MapGlobeSurfaceTile &tile = previous_tiles.at(index);
             previous_tiles_by_position.insert(
-                MapGlobeSurfaceScene::positionKey(
-                    tile.zoom, tile.tile_x, tile.tile_y),
-                index);
+                MapGlobeSurfaceScene::positionKey(tile.zoom, tile.tile_x, tile.tile_y), index);
         }
     }
 
@@ -634,24 +620,6 @@ void MapGlobeSurfacePreparation::rebuildWindow(
     next_tiles.reserve(leaves.size());
     QSet<quint64> seen_positions;
     seen_positions.reserve(leaves.size());
-
-    GeoWgs84Ellipsoid::OrbitCameraBasis terrain_camera_basis;
-    const GeoWgs84Ellipsoid::OrbitCameraBasis *terrain_camera_basis_ptr = nullptr;
-    if (this->map_model != nullptr && this->terrain_repository != nullptr
-        && viewport_size.isValid())
-    {
-        terrain_camera_basis = GeoWgs84Ellipsoid::orbitCameraBasis(
-            this->map_model->centerLon(), this->map_model->centerLat(),
-            this->map_model->viewGlobeYawDeg(),
-            qBound(
-                MapModel::MinViewGlobePitchDeg,
-                this->map_model->viewGlobePitchDeg(),
-                MapModel::MaxViewGlobePitchDeg),
-            qMax(
-                MapModel::MinViewGlobeDistanceM,
-                this->map_model->viewGlobeDistanceM()));
-        terrain_camera_basis_ptr = &terrain_camera_basis;
-    }
 
     for (const MapGlobeQuadtreeLeaf &leaf : leaves)
     {
@@ -663,9 +631,9 @@ void MapGlobeSurfacePreparation::rebuildWindow(
 
         const bool terrain_enabled =
             this->terrain_repository != nullptr
-            && leaf.zoom >= GlobeTerrainReliefMinimumZoom;
+            && this->terrain_levels.reliefAtImageryZoom(leaf.zoom);
         const int terrain_zoom = terrain_enabled
-            ? terrainZoomForImageryZoom(leaf.zoom)
+            ? this->terrain_levels.terrainZoomForImageryZoom(leaf.zoom)
             : -1;
 
         MapGlobeSurfaceTile tile;
@@ -688,248 +656,148 @@ void MapGlobeSurfacePreparation::rebuildWindow(
             terrain_address.y = quint32(leaf.tile_y) >> zoom_delta;
             tile.terrain_zoom = terrain_zoom;
             tile.terrain_key = mapTerrainTileKey(
-                mapGlobeTerrainDatasetId(), terrain_address);
-            tile.terrain_cell_count = this->terrainCellCountForTile(
-                tile, viewport_size, terrain_camera_basis_ptr);
+                this->terrain_levels.dataset, terrain_address);
+            // The DEM's full resolution: the level of detail is the DEM zoom.
+            tile.terrain_cell_count = mapGlobeTerrainCellCount(leaf.zoom, terrain_zoom);
         }
 
-        next_tiles.append(tile);
-    }
-
-    this->window_position_keys = std::move(seen_positions);
-    this->updateTerrainStitchCellCounts(&next_tiles);
-
-    qsizetype estimated_vertex_count = 0;
-    qsizetype estimated_index_count = 0;
-    for (const MapGlobeSurfaceTile &tile : next_tiles)
-    {
-        const int subdivisions = !tile.terrain_key.isEmpty()
+        const int subdivisions = terrain_enabled
             ? qMax(1, tile.terrain_cell_count)
             : subdivisionsForZoom(tile.zoom);
-        estimated_vertex_count += mapGlobeTileVertexCount(subdivisions);
-        estimated_index_count += mapGlobeTileIndexCount(subdivisions);
+        tile.grid_cell_count = subdivisions;
+        tile.vertex_count = mapGlobeTileVertexCount(subdivisions);
+        // The shared topology for its cell count (mapGlobeTileIndices()).
+        tile.first_index = 0;
+        tile.index_count = mapGlobeTileIndexCount(subdivisions);
+        tile.first_vertex = -1;
+        next_tiles.append(tile);
+    }
+    this->window_position_keys = std::move(seen_positions);
+
+    // Which tiles stay: same position and the same geometry inputs. A kept
+    // tile keeps everything, its vertex range and mesh state included.
+    QVector<qsizetype> kept_from(next_tiles.size(), -1);
+    QVector<bool> previous_kept(previous_tiles.size(), false);
+    qsizetype total_vertex_count = 0;
+    for (qsizetype index = 0; index < next_tiles.size(); ++index)
+    {
+        const MapGlobeSurfaceTile &tile = next_tiles.at(index);
+        total_vertex_count += tile.vertex_count;
+        const QHash<quint64, qsizetype>::const_iterator previous_iterator =
+            previous_tiles_by_position.constFind(
+                MapGlobeSurfaceScene::positionKey(tile.zoom, tile.tile_x, tile.tile_y));
+        if (previous_iterator == previous_tiles_by_position.cend())
+            continue;
+        const MapGlobeSurfaceTile &previous_tile = previous_tiles.at(previous_iterator.value());
+        if (previous_tile.zoom == tile.zoom
+            && previous_tile.imagery_key == tile.imagery_key
+            && previous_tile.terrain_key == tile.terrain_key
+            && previous_tile.terrain_cell_count == tile.terrain_cell_count
+            && previous_tile.grid_cell_count == tile.grid_cell_count
+            && previous_tile.vertex_count == tile.vertex_count
+            && previous_tile.first_vertex >= 0
+            && previous_tile.first_vertex + previous_tile.vertex_count <= this->window_vertices.size())
+        {
+            kept_from[index] = previous_iterator.value();
+            previous_kept[previous_iterator.value()] = true;
+        }
     }
 
-    this->window_vertices.clear();
-    this->window_vertices.reserve(estimated_vertex_count);
-    this->window_indices.clear();
-    this->window_indices.reserve(estimated_index_count);
+    // The vertex pool: a kept tile stays where it is, a dropped tile's range
+    // becomes free, a new tile takes a free range of its size or the end. A
+    // camera move then writes and uploads only the new tiles (it re-uploaded
+    // the whole window, several MB, on nearly every frame). Rebuilt from
+    // scratch, kept tiles copied together, when the window is dirty or when
+    // free ranges outweigh the used ones (another cell count mix).
+    const bool compact = this->window_dirty
+        || this->window_free_vertex_count > qMax<qsizetype>(this->window_pool_end / 2, 262144);
+    if (compact)
+    {
+        QVector<MapGlobeSurfaceVertex> previous_vertices = std::move(this->window_vertices);
+        this->window_vertices = QVector<MapGlobeSurfaceVertex>();
+        this->window_vertices.resize(total_vertex_count + total_vertex_count / 4);
+        this->window_pool_end = 0;
+        this->window_free_slots.clear();
+        this->window_free_vertex_count = 0;
+        this->window_full_upload = true;
+        for (qsizetype index = 0; index < next_tiles.size(); ++index)
+        {
+            if (kept_from.at(index) < 0)
+                continue;
+            const MapGlobeSurfaceTile &previous_tile = previous_tiles.at(kept_from.at(index));
+            MapGlobeSurfaceTile &tile = next_tiles[index];
+            tile = previous_tile;
+            tile.first_vertex = allocateWindowSlot(tile.vertex_count);
+            const MapGlobeSurfaceVertex *source = previous_vertices.constData() + previous_tile.first_vertex;
+            std::copy(source, source + tile.vertex_count, this->window_vertices.data() + tile.first_vertex);
+            // Ray bounds are positions relative to the render origin, not to
+            // the pool: unchanged.
+        }
+    }
+    else
+    {
+        for (qsizetype index = 0; index < previous_tiles.size(); ++index)
+        {
+            if (!previous_kept.at(index))
+                releaseWindowSlot(previous_tiles.at(index).first_vertex, previous_tiles.at(index).vertex_count);
+        }
+        for (qsizetype index = 0; index < next_tiles.size(); ++index)
+        {
+            if (kept_from.at(index) >= 0)
+                next_tiles[index] = previous_tiles.at(kept_from.at(index));
+        }
+    }
+
+    // New tiles: a range each, the mesh built right away.
+    for (qsizetype index = 0; index < next_tiles.size(); ++index)
+    {
+        if (kept_from.at(index) >= 0)
+            continue;
+        MapGlobeSurfaceTile &tile = next_tiles[index];
+        tile.first_vertex = allocateWindowSlot(tile.vertex_count);
+        this->buildWindowTileVertices(&tile, tile.grid_cell_count);
+        this->updateTerrainRayBounds(&tile);
+        if (!this->window_full_upload)
+        {
+            this->window_vertex_patches.append(
+                MapGlobeSurfaceVertexPatch{qsizetype(tile.first_vertex), qsizetype(tile.vertex_count)});
+        }
+    }
+
     this->window_tiles.clear();
     this->window_tiles.reserve(next_tiles.size());
     this->window_tile_indices_by_position.clear();
     this->window_tile_indices_by_position.reserve(next_tiles.size());
-
     for (MapGlobeSurfaceTile &tile : next_tiles)
     {
-        const bool terrain_enabled = !tile.terrain_key.isEmpty();
         tile.surface_tile_index = this->window_tiles.size();
-        tile.first_vertex = this->window_vertices.size();
-        tile.first_index = this->window_indices.size();
-        const int subdivisions = terrain_enabled
-            ? qMax(1, tile.terrain_cell_count)
-            : subdivisionsForZoom(tile.zoom);
-        // Grid plus skirt, for flat tiles and terrain meshes alike, so an
-        // asynchronous mesh replaces the flat stand-in vertex for vertex.
-        const int expected_vertex_count = mapGlobeTileVertexCount(subdivisions);
-        const int expected_index_count = mapGlobeTileIndexCount(subdivisions);
-
-        bool reused = false;
-        const QHash<quint64, qsizetype>::const_iterator previous_iterator =
-            previous_tiles_by_position.constFind(
-                MapGlobeSurfaceScene::positionKey(
-                    tile.zoom, tile.tile_x, tile.tile_y));
-        if (geometry_reuse_allowed
-            && previous_iterator != previous_tiles_by_position.cend())
-        {
-            const MapGlobeSurfaceTile &previous_tile =
-                previous_tiles.at(previous_iterator.value());
-            const bool same_geometry =
-                previous_tile.zoom == tile.zoom
-                && previous_tile.imagery_key == tile.imagery_key
-                && previous_tile.terrain_key == tile.terrain_key
-                && previous_tile.terrain_cell_count == tile.terrain_cell_count
-                && previous_tile.terrain_stitch_top_cell_count
-                    == tile.terrain_stitch_top_cell_count
-                && previous_tile.terrain_stitch_right_cell_count
-                    == tile.terrain_stitch_right_cell_count
-                && previous_tile.terrain_stitch_bottom_cell_count
-                    == tile.terrain_stitch_bottom_cell_count
-                && previous_tile.terrain_stitch_left_cell_count
-                    == tile.terrain_stitch_left_cell_count
-                && previous_tile.vertex_count == expected_vertex_count
-                && previous_tile.index_count == expected_index_count
-                && previous_tile.first_vertex >= 0
-                && previous_tile.first_vertex + previous_tile.vertex_count
-                    <= previous_vertices.size();
-            if (same_geometry)
-            {
-                const MapGlobeSurfaceVertex *source =
-                    previous_vertices.constData() + previous_tile.first_vertex;
-                // One block, not vertex by vertex (window rebuilds while
-                // moving copy tens of thousands of reused vertices).
-                const qsizetype first = this->window_vertices.size();
-                this->window_vertices.resize(first + previous_tile.vertex_count);
-                std::copy(source, source + previous_tile.vertex_count,
-                          this->window_vertices.data() + first);
-                tile.vertex_count = previous_tile.vertex_count;
-                tile.terrain_mesh_request_id =
-                    previous_tile.terrain_mesh_request_id;
-                tile.terrain_mesh_applied =
-                    previous_tile.terrain_mesh_applied;
-                tile.terrain_mesh_has_relief =
-                    previous_tile.terrain_mesh_has_relief;
-                tile.terrain_stand_in_zoom =
-                    previous_tile.terrain_stand_in_zoom;
-                reused = true;
-            }
-        }
-
-        if (!reused)
-        {
-            bool terrain_built = false;
-            if (terrain_enabled
-                && this->terrain_repository != nullptr
-                && !tile.terrain_key.isEmpty()
-                && tile.terrain_cell_count
-                    < GlobeAsyncTerrainMeshMinimumCellCount)
-            {
-                const MapTerrainTile *terrain_tile =
-                    this->terrain_repository->tile(tile.terrain_key);
-                if (terrain_tile != nullptr
-                    && terrain_tile->elevations_m.size()
-                        == MapTerrainTileSampleCount
-                    && mapGlobeTerrainDatumUsable(
-                        terrain_tile->vertical_datum))
-                {
-                    if (terrainDatumIsOrthometric(
-                            terrain_tile->vertical_datum)
-                        && !this->reported_orthometric_datum_warning)
-                    {
-                        qWarning().noquote()
-                            << QStringLiteral(
-                                   "Globe terrain tiles use an orthometric EGM vertical datum; "
-                                   "using it directly as local ellipsoid-normal displacement until "
-                                   "the terrain service exposes WGS84-ellipsoid tile heights.");
-                        this->reported_orthometric_datum_warning = true;
-                    }
-
-                    const MapTerrainMeshRequest request =
-                        terrainMeshRequest(tile, *terrain_tile);
-                    const MapTerrainMeshResult result =
-                        buildTerrainMeshResult(request);
-                    if (result.vertices.size() == expected_vertex_count)
-                    {
-                        for (const MapTerrainMeshVertex &vertex : result.vertices)
-                        {
-                            this->window_vertices.append(
-                                MapGlobeSurfaceVertex{
-                                    vertex.x, vertex.y, vertex.z,
-                                    vertex.u, vertex.v});
-                        }
-                        tile.vertex_count = expected_vertex_count;
-                        tile.terrain_mesh_applied = true;
-                        tile.terrain_mesh_has_relief = true;
-                        terrain_built = true;
-                    }
-                }
-            }
-
-            if (!terrain_built)
-            {
-                for (int row = 0; row <= subdivisions; ++row)
-                {
-                    const double v =
-                        double(row) / double(subdivisions);
-                    const double latitude_deg = GeoWebMercator::tileYToLat(
-                        double(tile.tile_y) + v, tile.zoom);
-
-                    for (int column = 0; column <= subdivisions; ++column)
-                    {
-                        const double u =
-                            double(column) / double(subdivisions);
-                        const double longitude_deg =
-                            GeoWebMercator::tileXToLon(
-                                double(tile.virtual_x) + u, tile.zoom);
-                        this->window_vertices.append(this->makeTileVertex(
-                            longitude_deg, latitude_deg,
-                            float(u), float(v)));
-                    }
-                }
-                mapGlobeAppendTileSkirt(
-                    &this->window_vertices, tile.first_vertex, subdivisions,
-                    mapGlobeTileSkirtDepthM(tile.zoom, tile.tile_y, subdivisions,
-                                            this->map_model != nullptr
-                                                ? this->map_model->view3dVerticalExaggeration()
-                                                : 1.0,
-                                            0.0),
-                    this->render_origin_ecef.x, this->render_origin_ecef.y,
-                    this->render_origin_ecef.z);
-                tile.vertex_count = expected_vertex_count;
-            }
-        }
-
-        tile.grid_cell_count = subdivisions;
-        appendIndexedTileIndices(
-            &this->window_indices, tile.first_vertex, subdivisions);
-        tile.index_count = this->window_indices.size() - tile.first_index;
-        this->updateTerrainRayBounds(&tile);
-
         this->window_tiles.append(tile);
         this->window_tile_indices_by_position.insert(
-            MapGlobeSurfaceScene::positionKey(
-                tile.zoom, tile.tile_x, tile.tile_y),
+            MapGlobeSurfaceScene::positionKey(tile.zoom, tile.tile_x, tile.tile_y),
             this->window_tiles.size() - 1);
     }
+    if (this->window_full_upload)
+        this->window_vertex_patches.clear();
 
     this->window_dirty = false;
-    this->terrain_lod_rebuild_pending = false;
-    this->terrain_lod_rebuild_clock.restart();
 
     if (this->wireframe_visible)
         this->rebuildWireframeVertices();
 }
 
-QVector<MapGlobeQuadtreeLeaf>
-MapGlobeSurfacePreparation::currentWindowLeaves() const
+void MapGlobeSurfacePreparation::takeWindowVertexUploads(
+    QVector<MapGlobeSurfaceVertexPatch> *patches, bool *full_upload)
 {
-    QVector<MapGlobeQuadtreeLeaf> leaves;
-    leaves.reserve(this->window_tiles.size());
-    for (const MapGlobeSurfaceTile &tile : this->window_tiles)
+    if (full_upload != nullptr)
+        *full_upload = this->window_full_upload;
+    if (patches != nullptr)
     {
-        leaves.append(MapGlobeQuadtreeLeaf{
-            tile.zoom, tile.tile_x, tile.tile_y});
+        patches->clear();
+        if (!this->window_full_upload)
+            *patches = std::move(this->window_vertex_patches);
     }
-    return leaves;
-}
-
-bool MapGlobeSurfacePreparation::viewSelectionMatches(
-    const QSize &viewport_size) const
-{
-    if (!this->prepared_view_state_valid || this->map_model == nullptr)
-        return false;
-
-    return viewport_size == this->prepared_viewport_size
-        && this->map_model->centerLon() == this->prepared_center_lon_deg
-        && this->map_model->centerLat() == this->prepared_center_lat_deg
-        && this->map_model->viewGlobeYawDeg() == this->prepared_yaw_deg
-        && this->map_model->viewGlobePitchDeg() == this->prepared_pitch_deg
-        && this->map_model->viewGlobeDistanceM()
-            == this->prepared_distance_m;
-}
-
-void MapGlobeSurfacePreparation::rememberViewSelection(
-    const QSize &viewport_size)
-{
-    if (this->map_model == nullptr)
-        return;
-
-    this->prepared_viewport_size = viewport_size;
-    this->prepared_center_lon_deg = this->map_model->centerLon();
-    this->prepared_center_lat_deg = this->map_model->centerLat();
-    this->prepared_yaw_deg = this->map_model->viewGlobeYawDeg();
-    this->prepared_pitch_deg = this->map_model->viewGlobePitchDeg();
-    this->prepared_distance_m = this->map_model->viewGlobeDistanceM();
-    this->prepared_view_state_valid = true;
+    this->window_vertex_patches.clear();
+    this->window_full_upload = false;
 }
 
 bool MapGlobeSurfacePreparation::prepareVisibleWindow(
@@ -938,9 +806,13 @@ bool MapGlobeSurfacePreparation::prepareVisibleWindow(
     if (this->map_model == nullptr || !viewport_size.isValid())
         return false;
 
+    // A dataset catalog arriving or a changed detail setting rebuilds the
+    // whole window. The meshes depend on nothing else: no camera-dependent
+    // mesh density, so a camera move only rebuilds when the leaves change.
+    this->refreshTerrainLevels();
     const QVector<MapGlobeQuadtreeLeaf> desired_leaves =
         this->surface_scene.selectVisibleLeaves(
-            *this->map_model, viewport_size, this->terrain_repository);
+            *this->map_model, viewport_size, this->terrain_repository, this->terrain_levels);
 
     bool leaves_match_window = !this->window_dirty
         && desired_leaves.size() == this->window_tiles.size()
@@ -959,48 +831,11 @@ bool MapGlobeSurfacePreparation::prepareVisibleWindow(
         }
     }
 
-    bool geometry_rebuilt = false;
-    if (!leaves_match_window)
-    {
-        this->rebuildWindow(desired_leaves, viewport_size);
-        geometry_rebuilt = true;
-    }
-    else
-    {
-        const bool terrain_enabled = this->terrain_repository != nullptr;
-        const bool terrain_view_changed =
-            !this->viewSelectionMatches(viewport_size);
-        const bool terrain_lod_check_needed = terrain_enabled
-            && (terrain_view_changed || this->terrain_lod_rebuild_pending);
+    if (leaves_match_window)
+        return false;
 
-        if (!terrain_enabled)
-        {
-            this->terrain_lod_rebuild_pending = false;
-        }
-        else if (terrain_lod_check_needed
-                 && this->terrain_lod_rebuild_clock.isValid()
-                 && this->terrain_lod_rebuild_clock.elapsed()
-                    < GlobeMinimumTerrainLodRebuildIntervalMs)
-        {
-            this->terrain_lod_rebuild_pending = true;
-        }
-        else if (terrain_lod_check_needed)
-        {
-            if (!this->currentTerrainLodMatches(viewport_size))
-            {
-                this->rebuildWindow(
-                    this->currentWindowLeaves(), viewport_size);
-                geometry_rebuilt = true;
-            }
-            else
-            {
-                this->terrain_lod_rebuild_pending = false;
-            }
-        }
-    }
-
-    this->rememberViewSelection(viewport_size);
-    return geometry_rebuilt;
+    this->rebuildWindow(desired_leaves);
+    return true;
 }
 
 void MapGlobeSurfacePreparation::requestMissingTerrainTiles()
@@ -1015,11 +850,8 @@ void MapGlobeSurfacePreparation::requestMissingTerrainTiles()
     candidates.reserve(this->window_tiles.size());
     for (const MapGlobeSurfaceTile &tile : this->window_tiles)
     {
-        if (tile.terrain_zoom < GlobeTerrainReliefMinimumZoom
-            || tile.terrain_key.isEmpty())
-        {
+        if (tile.terrain_zoom < 0 || tile.terrain_key.isEmpty())
             continue;
-        }
         candidates.append(&tile);
     }
 
@@ -1050,7 +882,7 @@ void MapGlobeSurfacePreparation::requestMissingTerrainTiles()
         const quint32 terrain_x = quint32(tile->tile_x) >> zoom_delta;
         const quint32 terrain_y = quint32(tile->tile_y) >> zoom_delta;
         this->terrain_repository->requestTile(
-            mapGlobeTerrainDatasetId(),
+            this->terrain_levels.dataset,
             tile->terrain_zoom, terrain_x, terrain_y);
     }
 }
@@ -1141,17 +973,35 @@ MapTerrainMeshRequest MapGlobeSurfacePreparation::terrainMeshRequest(
     request.y = tile.tile_y;
     request.imagery_zoom = tile.zoom;
     request.terrain_zoom = tile.terrain_zoom;
-    request.requested_cell_count = tile.terrain_cell_count;
-    request.stitch_top_cell_count = tile.terrain_stitch_top_cell_count;
-    request.stitch_right_cell_count = tile.terrain_stitch_right_cell_count;
-    request.stitch_bottom_cell_count = tile.terrain_stitch_bottom_cell_count;
-    request.stitch_left_cell_count = tile.terrain_stitch_left_cell_count;
     if (this->map_model != nullptr)
         request.globe_vertical_exaggeration = this->map_model->view3dVerticalExaggeration();
     request.globe_render_origin_x = this->render_origin_ecef.x;
     request.globe_render_origin_y = this->render_origin_ecef.y;
     request.globe_render_origin_z = this->render_origin_ecef.z;
     return request;
+}
+
+const MapTerrainTile *MapGlobeSurfacePreparation::cachedAncestorTerrainTile(
+    const MapGlobeSurfaceTile &tile, int coarsest_excluded_zoom) const
+{
+    if (this->terrain_repository == nullptr || tile.terrain_zoom < 0 || tile.zoom < tile.terrain_zoom)
+        return nullptr;
+    const quint32 terrain_x = quint32(tile.tile_x) >> (tile.zoom - tile.terrain_zoom);
+    const quint32 terrain_y = quint32(tile.tile_y) >> (tile.zoom - tile.terrain_zoom);
+    for (int ancestor_zoom = tile.terrain_zoom - 1;
+         ancestor_zoom >= this->terrain_levels.minimum_zoom && ancestor_zoom > coarsest_excluded_zoom;
+         --ancestor_zoom)
+    {
+        const int shift = tile.terrain_zoom - ancestor_zoom;
+        const MapTerrainTile *candidate = this->terrain_repository->tile(
+            this->terrain_levels.dataset, ancestor_zoom, terrain_x >> shift, terrain_y >> shift);
+        if (candidate != nullptr && candidate->elevations_m.size() == MapTerrainTileSampleCount
+            && mapGlobeTerrainDatumUsable(candidate->vertical_datum))
+        {
+            return candidate;
+        }
+    }
+    return nullptr;
 }
 
 void MapGlobeSurfacePreparation::scheduleAncestorTerrainStandIns()
@@ -1184,7 +1034,7 @@ void MapGlobeSurfacePreparation::scheduleAncestorTerrainStandIns()
         address.y = quint32(tile->tile_y) >> (tile->zoom - tile->terrain_zoom);
         const MapTerrainTile *ancestor = nullptr;
         for (int ancestor_zoom = tile->terrain_zoom - 1;
-             ancestor_zoom >= GlobeTerrainReliefMinimumZoom
+             ancestor_zoom >= this->terrain_levels.minimum_zoom
              && ancestor_zoom > tile->terrain_stand_in_zoom;
              --ancestor_zoom)
         {
@@ -1197,7 +1047,7 @@ void MapGlobeSurfacePreparation::scheduleAncestorTerrainStandIns()
             if (found == ancestors.cend())
             {
                 found = ancestors.insert(key, this->terrain_repository->tile(
-                    mapGlobeTerrainDatasetId(), ancestor_zoom, ancestor_x, ancestor_y));
+                    this->terrain_levels.dataset, ancestor_zoom, ancestor_x, ancestor_y));
             }
             const MapTerrainTile *candidate = found.value();
             if (candidate != nullptr
@@ -1211,8 +1061,7 @@ void MapGlobeSurfacePreparation::scheduleAncestorTerrainStandIns()
         if (ancestor == nullptr)
             continue;
 
-        // Same grid, stitching and LOD as the final mesh: only the source
-        // heights are coarser. Resampled and built on the mesh thread.
+        // Same grid as the final mesh: only the source heights are coarser. Resampled and built on the mesh thread.
         MapTerrainMeshRequest request = terrainMeshRequest(*tile, *ancestor);
         request.stand_in_zoom = ancestor->address.zoom;
         request.request_id = this->next_terrain_mesh_request_id++;
@@ -1242,14 +1091,6 @@ bool MapGlobeSurfacePreparation::applyReadyTerrainMeshes(
             tile.terrain_mesh_request_id = 0;
             if (!result.terrain_available
                 || result.cell_count != tile.terrain_cell_count
-                || result.stitch_top_cell_count
-                    != tile.terrain_stitch_top_cell_count
-                || result.stitch_right_cell_count
-                    != tile.terrain_stitch_right_cell_count
-                || result.stitch_bottom_cell_count
-                    != tile.terrain_stitch_bottom_cell_count
-                || result.stitch_left_cell_count
-                    != tile.terrain_stitch_left_cell_count
                 || result.vertices.size() != tile.vertex_count)
             {
                 break;
@@ -1309,9 +1150,6 @@ bool MapGlobeSurfacePreparation::applyReadyTerrainMeshes(
 
 bool MapGlobeSurfacePreparation::hasPendingTerrainMeshes() const
 {
-    if (this->terrain_lod_rebuild_pending)
-        return true;
-
     for (const MapGlobeSurfaceTile &tile : this->window_tiles)
     {
         if (tile.terrain_mesh_request_id != 0)
@@ -1325,10 +1163,7 @@ void MapGlobeSurfacePreparation::terrainMeshProgress(
 {
     int completed_count = 0;
     int total_count = 0;
-    // Only meshes really being built count as activity: the LOD rebuild
-    // throttle (terrain_lod_rebuild_pending) is armed for 120 ms on every
-    // camera move and made the HUD panel blink (it still keeps frames
-    // coming, hasPendingTerrainMeshes()).
+    // Only meshes really being built count as activity.
     bool build_active = false;
 
     for (const MapGlobeSurfaceTile &tile : this->window_tiles)
@@ -1382,7 +1217,7 @@ bool MapGlobeSurfacePreparation::visibleTerrainRayIntersection(
     {
         if (!tile.terrain_mesh_has_relief
             || !tile.terrain_ray_bounds_valid
-            || tile.first_index < 0 || tile.index_count < 3)
+            || tile.index_count < 3)
         {
             continue;
         }
@@ -1399,31 +1234,30 @@ bool MapGlobeSurfacePreparation::visibleTerrainRayIntersection(
         }
 
         // The grid's triangles only: the skirt below its edges is no
-        // surface (appendIndexedTileIndices()).
+        // surface (mapGlobeTileIndices(): grid first, row by row).
         const int cell_count = tile.grid_cell_count;
-        if (cell_count < 1 || tile.index_count != mapGlobeTileIndexCount(cell_count))
+        const QVector<quint16> &tile_indices = mapGlobeTileIndices(cell_count);
+        if (cell_count < 1 || tile.index_count != mapGlobeTileIndexCount(cell_count)
+            || tile_indices.size() != tile.index_count
+            || tile.first_vertex < 0
+            || qsizetype(tile.first_vertex) + tile.vertex_count > this->window_vertices.size())
+        {
             continue;
-        const qsizetype index_begin = qsizetype(tile.first_index);
-        const qsizetype index_end = index_begin + mapGlobeTileGridIndexCount(cell_count);
-        if (index_begin < 0 || index_end > this->window_indices.size())
-            continue;
+        }
+        const qsizetype index_begin = 0;
+        const qsizetype index_end = mapGlobeTileGridIndexCount(cell_count);
+        const qsizetype base_vertex = qsizetype(tile.first_vertex);
 
         const std::function<void(qsizetype, qsizetype)> test_index_range =
-            [this, &relative_origin, &direction, &nearest_distance_m, &found]
+            [this, &tile_indices, base_vertex, &relative_origin, &direction, &nearest_distance_m, &found]
             (qsizetype range_begin, qsizetype range_end)
             {
                 for (qsizetype index = range_begin;
                      index + 2 < range_end; index += 3)
                 {
-                    const quint32 a_index = this->window_indices.at(index);
-                    const quint32 b_index = this->window_indices.at(index + 1);
-                    const quint32 c_index = this->window_indices.at(index + 2);
-                    if (qsizetype(a_index) >= this->window_vertices.size()
-                        || qsizetype(b_index) >= this->window_vertices.size()
-                        || qsizetype(c_index) >= this->window_vertices.size())
-                    {
-                        continue;
-                    }
+                    const qsizetype a_index = base_vertex + qsizetype(tile_indices.at(index));
+                    const qsizetype b_index = base_vertex + qsizetype(tile_indices.at(index + 1));
+                    const qsizetype c_index = base_vertex + qsizetype(tile_indices.at(index + 2));
 
                     const MapGlobeSurfaceVertex &a_vertex =
                         this->window_vertices.at(a_index);
@@ -1525,7 +1359,7 @@ MapGlobeSurfacePreparation::DrawnSurfaceHeight MapGlobeSurfacePreparation::drawn
         if (!tile.terrain_mesh_has_relief)
             return DrawnSurfaceHeight::Flat;
         // The mesh is a row-major (cells + 1)^2 grid, uniform in the tile's
-        // Mercator coordinates, followed by its skirt (appendIndexedTileIndices()).
+        // Mercator coordinates, followed by its skirt (mapGlobeTileIndices()).
         const int cell_count = tile.grid_cell_count;
         const int grid_width = cell_count + 1;
         if (cell_count < 1 || tile.vertex_count != mapGlobeTileVertexCount(cell_count)
@@ -1551,8 +1385,8 @@ MapGlobeSurfacePreparation::DrawnSurfaceHeight MapGlobeSurfacePreparation::drawn
                 this->window_vertices.at(tile.first_vertex + vertex_row * grid_width + vertex_column);
             return QVector3D(entry.x, entry.y, entry.z);
         };
-        // The cell first; at a cell or tile edge (stitching moves edge
-        // vertices along the edge) its neighbours.
+        // The cell first; at a cell or tile edge (where float rounding can
+        // let the ray slip between the triangles) its neighbours.
         double nearest_distance_m = std::numeric_limits<double>::infinity();
         for (int ring = 0; ring <= 1 && !std::isfinite(nearest_distance_m); ++ring)
         {
@@ -1665,54 +1499,26 @@ bool MapGlobeSurfacePreparation::visibleTerrainSamplingAtCoordinate(
     return true;
 }
 
-void MapGlobeSurfacePreparation::appendWireframeEdges(
-    const QVector<MapGlobeSurfaceVertex> &vertices,
-    const QVector<quint32> &indices, qsizetype index_begin, qsizetype index_end)
-{
-    for (qsizetype index = index_begin; index + 2 < index_end; index += 3)
-    {
-        const quint32 a_index = indices.at(index);
-        const quint32 b_index = indices.at(index + 1);
-        const quint32 c_index = indices.at(index + 2);
-        if (qsizetype(a_index) >= vertices.size()
-            || qsizetype(b_index) >= vertices.size()
-            || qsizetype(c_index) >= vertices.size())
-        {
-            continue;
-        }
-
-        const MapGlobeSurfaceVertex &a = vertices.at(a_index);
-        const MapGlobeSurfaceVertex &b = vertices.at(b_index);
-        const MapGlobeSurfaceVertex &c = vertices.at(c_index);
-        const MapGlobeSurfaceWireframeVertex wa = {a.x, a.y, a.z};
-        const MapGlobeSurfaceWireframeVertex wb = {b.x, b.y, b.z};
-        const MapGlobeSurfaceWireframeVertex wc = {c.x, c.y, c.z};
-
-        this->wireframe_vertices.append(wa);
-        this->wireframe_vertices.append(wb);
-        this->wireframe_vertices.append(wb);
-        this->wireframe_vertices.append(wc);
-        this->wireframe_vertices.append(wc);
-        this->wireframe_vertices.append(wa);
-    }
-}
-
 void MapGlobeSurfacePreparation::rebuildWireframeVertices()
 {
     this->wireframe_vertices.clear();
-    this->wireframe_vertices.reserve(
-        (this->window_indices.size() + this->cap_indices.size()) * 2);
+    qsizetype grid_index_count = this->cap_indices.size();
+    for (const MapGlobeSurfaceTile &tile : this->window_tiles)
+        grid_index_count += mapGlobeTileGridIndexCount(qMax(0, tile.grid_cell_count));
+    this->wireframe_vertices.reserve(grid_index_count * 2);
     // Each tile's grid; its skirt is a hidden crack filler, not mesh
     // structure worth showing.
     for (const MapGlobeSurfaceTile &tile : this->window_tiles)
     {
-        if (tile.grid_cell_count >= 1 && tile.index_count == mapGlobeTileIndexCount(tile.grid_cell_count))
+        const QVector<quint16> &tile_indices = mapGlobeTileIndices(tile.grid_cell_count);
+        if (tile.grid_cell_count >= 1 && tile.index_count == tile_indices.size())
         {
-            this->appendWireframeEdges(this->window_vertices, this->window_indices, tile.first_index,
-                                       tile.first_index + mapGlobeTileGridIndexCount(tile.grid_cell_count));
+            appendWireframeEdges(&this->wireframe_vertices, this->window_vertices, tile.first_vertex,
+                                 tile_indices.constData(), mapGlobeTileGridIndexCount(tile.grid_cell_count));
         }
     }
-    this->appendWireframeEdges(this->cap_vertices, this->cap_indices, 0, this->cap_indices.size());
+    appendWireframeEdges(&this->wireframe_vertices, this->cap_vertices, 0,
+                         this->cap_indices.constData(), this->cap_indices.size());
 }
 
 const GeoWgs84Ellipsoid::EcefPositionD &
@@ -1725,11 +1531,6 @@ const QVector<MapGlobeSurfaceVertex> &
 MapGlobeSurfacePreparation::windowVertices() const
 {
     return this->window_vertices;
-}
-
-const QVector<quint32> &MapGlobeSurfacePreparation::windowIndices() const
-{
-    return this->window_indices;
 }
 
 const QVector<MapGlobeSurfaceTile> &

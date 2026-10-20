@@ -102,7 +102,7 @@
 
 | Source | Quantity | Disposition |
 | --- | --- | --- |
-| `src/widgets/slider_number_control.{h,cpp}`; six controls in `src/settings/map_settings_widget.cpp` | Mouse zoom/pan/orbit multipliers, terrain LOD target in px, detail zoom levels | **I.** Independent precise value now exists; slider/spin box are lossy presentations. Covered by `tests/slider_number_control_test.cpp` (within editor-adapter test target). |
+| `src/widgets/slider_number_control.{h,cpp}`; four controls in `src/settings/map_settings_widget.cpp` | Mouse zoom/pan/orbit multipliers, terrain detail reduction | **I.** Independent precise value now exists; slider/spin box are lossy presentations. Covered by `tests/slider_number_control_test.cpp` (within editor-adapter test target). |
 | `src/app/footer_statusbar.cpp`, `src/tabs/tab_map_editor_container.cpp` | Map zoom (floating/integer index) | **I.** MapModel owns zoom. Display is not a length profile. |
 | `src/map/core/map_navigation_widget.cpp`, `src/tabs/tab_map_monitor_container.cpp` | Icon px sizes, alpha/opacity percentages, symbology controls | **I/M.** Treat `m` world-size alternatives as physical and `px`/opacity as UI settings. |
 | `src/map/bgfx/map_bgfx_globe_hud_controller.cpp` | Camera tilt degrees, vertical exaggeration multipliers, percentages | **I.** Not hydraulic pressure, flow or volume. Physical camera distance is separately unit-aware. |

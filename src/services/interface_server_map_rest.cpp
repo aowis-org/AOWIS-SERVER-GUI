@@ -98,6 +98,13 @@ void InterfaceServerMapREST::initRestConnection()
     connect(this->rest, &RESTClient::requestFinishedControl, this,
             [this](const QString &request_key, const QByteArray &data)
     {
+        if (request_key == QStringLiteral("terrain-datasets"))
+        {
+            this->terrain_datasets_pending = false;
+            emit signalTerrainDatasetsReceived(data);
+            return;
+        }
+
         if (request_key == QStringLiteral("map-upstream-activity"))
             this->map_upstream_activity_pending = false;
         else if (request_key == QStringLiteral("terrain-upstream-activity"))
@@ -134,6 +141,13 @@ void InterfaceServerMapREST::initRestConnection()
     connect(this->rest, &RESTClient::requestControlError, this,
             [this](const QString &request_key, const QString &error)
     {
+        if (request_key == QStringLiteral("terrain-datasets"))
+        {
+            this->terrain_datasets_pending = false;
+            emit signalTerrainDatasetsFailed(error);
+            return;
+        }
+
         if (request_key == QStringLiteral("map-upstream-activity"))
             this->map_upstream_activity_pending = false;
         else if (request_key == QStringLiteral("terrain-upstream-activity"))
@@ -173,6 +187,15 @@ void InterfaceServerMapREST::requestTerrainTile(const QString &endpoint, const Q
 
     this->terrain_pending.insert(key);
     this->rest->getTerrainTile(endpoint, key);
+}
+
+void InterfaceServerMapREST::requestTerrainDatasets()
+{
+    if (this->terrain_datasets_pending)
+        return;
+    this->terrain_datasets_pending = true;
+    this->rest->getControl(QStringLiteral("/terrain/v1/datasets"),
+                           QStringLiteral("terrain-datasets"));
 }
 
 void InterfaceServerMapREST::requestTerrainElevation(const QString &endpoint)

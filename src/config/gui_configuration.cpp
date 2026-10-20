@@ -28,6 +28,15 @@ double validatedNavigationSensitivity(double value, double fallback)
     return value;
 }
 
+// Mirrors 0..MapGlobeTerrainMaximumDetailReduction (map_globe_terrain_levels.h);
+// hardcoded rather than including the map renderer here for two bounds.
+int validatedTerrainDetailReduction(int value, int fallback)
+{
+    if (value < 0 || value > 3)
+        return fallback;
+    return value;
+}
+
 bool isValidSymbologyPaletteValue(int value)
 {
     switch (static_cast<NetworkSymbologyPalette>(value))
@@ -232,25 +241,22 @@ EM_JS(int, aowisMapPerformanceIntPreference, (const char *key, int default_value
     }
 });
 
-EM_JS(int, aowisSaveMapPerformancePreference,
-      (double terrain_lod_target_cell_size_px,
-       int terrain_max_detail_zoom, int terrain_full_detail_zoom),
+EM_JS(int, aowisSaveMapPerformancePreference, (int terrain_detail_reduction),
 {
     try
     {
         if (!globalThis.localStorage)
             return 0;
         globalThis.localStorage.setItem(
-            "aowis.map_performance.terrain_lod_target_cell_size_px",
-            String(terrain_lod_target_cell_size_px));
-        globalThis.localStorage.setItem(
-            "aowis.map_performance.terrain_max_detail_zoom",
-            String(terrain_max_detail_zoom));
-        globalThis.localStorage.setItem(
-            "aowis.map_performance.terrain_full_detail_zoom",
-            String(terrain_full_detail_zoom));
-        // The QRhi renderer's texture-array batching switch is gone.
+            "aowis.map_performance.terrain_detail_reduction",
+            String(terrain_detail_reduction));
+        // The QRhi renderer's texture-array batching switch is gone, and the
+        // distance-based terrain LOD knobs with it (replaced by the detail
+        // reduction).
         globalThis.localStorage.removeItem("aowis.map_performance.array_batching_enabled");
+        globalThis.localStorage.removeItem("aowis.map_performance.terrain_lod_target_cell_size_px");
+        globalThis.localStorage.removeItem("aowis.map_performance.terrain_max_detail_zoom");
+        globalThis.localStorage.removeItem("aowis.map_performance.terrain_full_detail_zoom");
         return 1;
     }
     catch (error)
@@ -335,18 +341,11 @@ GuiConfiguration loadConfiguration()
             default_map_navigation.orbit_3d_sensitivity),
         default_map_navigation.orbit_3d_sensitivity);
     const GuiMapPerformanceConfiguration default_map_performance;
-    configuration.map_performance.terrain_lod_target_cell_size_px =
-        aowisMapPerformanceDoublePreference(
-            "aowis.map_performance.terrain_lod_target_cell_size_px",
-            default_map_performance.terrain_lod_target_cell_size_px);
-    configuration.map_performance.terrain_max_detail_zoom =
+    configuration.map_performance.terrain_detail_reduction = validatedTerrainDetailReduction(
         aowisMapPerformanceIntPreference(
-            "aowis.map_performance.terrain_max_detail_zoom",
-            default_map_performance.terrain_max_detail_zoom);
-    configuration.map_performance.terrain_full_detail_zoom =
-        aowisMapPerformanceIntPreference(
-            "aowis.map_performance.terrain_full_detail_zoom",
-            default_map_performance.terrain_full_detail_zoom);
+            "aowis.map_performance.terrain_detail_reduction",
+            default_map_performance.terrain_detail_reduction),
+        default_map_performance.terrain_detail_reduction);
     qInfo() << "Loaded GUI configuration from webroot/aowis-server-gui.ini: examples_builtin_enable ="
             << configuration.examples_builtin_enable;
     return configuration;
@@ -439,9 +438,7 @@ bool createDefaultConfiguration(const QString &path)
         "orbit_3d_sensitivity=0.8\n"
         "\n"
         "[map_performance]\n"
-        "terrain_lod_target_cell_size_px=32\n"
-        "terrain_max_detail_zoom=14\n"
-        "terrain_full_detail_zoom=19\n"
+        "terrain_detail_reduction=1\n"
         "\n"
         "[map_server]\n"
         "base_url=http://aowis-server-map.localhost:80\n"
@@ -531,12 +528,12 @@ GuiConfiguration loadConfiguration()
     ensureSettingDefault(settings, QStringLiteral("map_navigation/orbit_3d_sensitivity"),
                          QString::number(advertised_map_navigation.orbit_3d_sensitivity));
     const GuiMapPerformanceConfiguration advertised_map_performance;
-    ensureSettingDefault(settings, QStringLiteral("map_performance/terrain_lod_target_cell_size_px"),
-                         QString::number(advertised_map_performance.terrain_lod_target_cell_size_px));
-    ensureSettingDefault(settings, QStringLiteral("map_performance/terrain_max_detail_zoom"),
-                         QString::number(advertised_map_performance.terrain_max_detail_zoom));
-    ensureSettingDefault(settings, QStringLiteral("map_performance/terrain_full_detail_zoom"),
-                         QString::number(advertised_map_performance.terrain_full_detail_zoom));
+    ensureSettingDefault(settings, QStringLiteral("map_performance/terrain_detail_reduction"),
+                         QString::number(advertised_map_performance.terrain_detail_reduction));
+    // The distance-based terrain LOD knobs, replaced by the detail reduction.
+    settings.remove(QStringLiteral("map_performance/terrain_lod_target_cell_size_px"));
+    settings.remove(QStringLiteral("map_performance/terrain_max_detail_zoom"));
+    settings.remove(QStringLiteral("map_performance/terrain_full_detail_zoom"));
     settings.sync();
 
     GuiConfiguration configuration;
@@ -620,36 +617,12 @@ GuiConfiguration loadConfiguration()
             : default_map_navigation.orbit_3d_sensitivity;
 
     const GuiMapPerformanceConfiguration default_map_performance;
-    bool lod_target_valid = false;
-    const double loaded_lod_target = settings.value(
-        QStringLiteral("map_performance/terrain_lod_target_cell_size_px")).toDouble(&lod_target_valid);
-    configuration.map_performance.terrain_lod_target_cell_size_px =
-        (lod_target_valid && std::isfinite(loaded_lod_target) && loaded_lod_target > 0.0)
-            ? loaded_lod_target
-            : default_map_performance.terrain_lod_target_cell_size_px;
-
-    bool max_detail_zoom_valid = false;
-    const int loaded_max_detail_zoom = settings.value(
-        QStringLiteral("map_performance/terrain_max_detail_zoom")).toInt(&max_detail_zoom_valid);
-    // Mirrors MapModel::MinZoom/MaxZoom (1/19); hardcoded rather than
-    // including map/map_model.h here for two bounds.
-    configuration.map_performance.terrain_max_detail_zoom =
-        (max_detail_zoom_valid && loaded_max_detail_zoom >= 1 && loaded_max_detail_zoom <= 19)
-            ? loaded_max_detail_zoom
-            : default_map_performance.terrain_max_detail_zoom;
-
-    bool full_detail_zoom_valid = false;
-    const int loaded_full_detail_zoom = settings.value(
-        QStringLiteral("map_performance/terrain_full_detail_zoom")).toInt(&full_detail_zoom_valid);
-    // Lower-bounded at 8 (mirrors TerrainReliefMinimumZoom), not 1 like the
-    // setting above: a value below that would force maximum terrain mesh
-    // detail across the entire relief-enabled zoom range rather than just
-    // near the focus at high zoom, reintroducing the performance problem
-    // the distance-based falloff exists to prevent.
-    configuration.map_performance.terrain_full_detail_zoom =
-        (full_detail_zoom_valid && loaded_full_detail_zoom >= 8 && loaded_full_detail_zoom <= 19)
-            ? loaded_full_detail_zoom
-            : default_map_performance.terrain_full_detail_zoom;
+    bool detail_reduction_valid = false;
+    const int loaded_detail_reduction = settings.value(
+        QStringLiteral("map_performance/terrain_detail_reduction")).toInt(&detail_reduction_valid);
+    configuration.map_performance.terrain_detail_reduction = validatedTerrainDetailReduction(
+        detail_reduction_valid ? loaded_detail_reduction : default_map_performance.terrain_detail_reduction,
+        default_map_performance.terrain_detail_reduction);
 
     if (settings.status() != QSettings::NoError)
         qWarning() << "Failed to read GUI configuration:" << path;
@@ -807,17 +780,14 @@ bool saveGuiMapPerformanceConfiguration(const GuiMapPerformanceConfiguration &co
 {
 #ifdef __EMSCRIPTEN__
     const bool saved = aowisSaveMapPerformancePreference(
-        configuration.terrain_lod_target_cell_size_px,
-        configuration.terrain_max_detail_zoom,
-        configuration.terrain_full_detail_zoom) != 0;
+        configuration.terrain_detail_reduction) != 0;
 #else
     QSettings settings(guiConfigurationFilePath(), QSettings::IniFormat);
-    settings.setValue(QStringLiteral("map_performance/terrain_lod_target_cell_size_px"),
-                      configuration.terrain_lod_target_cell_size_px);
-    settings.setValue(QStringLiteral("map_performance/terrain_max_detail_zoom"),
-                      configuration.terrain_max_detail_zoom);
-    settings.setValue(QStringLiteral("map_performance/terrain_full_detail_zoom"),
-                      configuration.terrain_full_detail_zoom);
+    settings.setValue(QStringLiteral("map_performance/terrain_detail_reduction"),
+                      configuration.terrain_detail_reduction);
+    settings.remove(QStringLiteral("map_performance/terrain_lod_target_cell_size_px"));
+    settings.remove(QStringLiteral("map_performance/terrain_max_detail_zoom"));
+    settings.remove(QStringLiteral("map_performance/terrain_full_detail_zoom"));
     // The QRhi renderer's texture-array batching switch is gone.
     settings.remove(QStringLiteral("map_performance/array_batching_enabled"));
     settings.sync();

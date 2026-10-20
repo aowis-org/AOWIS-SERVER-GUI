@@ -261,6 +261,8 @@ qt_add_executable(aowis-server-gui
     src/map/core/map_widget.h
 
     # Map data
+    src/map/data/map_terrain_dataset.cpp
+    src/map/data/map_terrain_dataset.h
     src/map/data/map_terrain_repository.cpp
     src/map/data/map_terrain_repository.h
     src/map/data/map_terrain_tile.cpp
@@ -310,6 +312,7 @@ qt_add_executable(aowis-server-gui
     src/map/render/map_globe_surface_scene.cpp
     src/map/render/map_globe_surface_preparation.h
     src/map/render/map_globe_surface_preparation.cpp
+    src/map/render/map_globe_terrain_levels.h
     src/map/render/map_globe_terrain_navigation.h
     src/map/render/map_globe_terrain_navigation.cpp
     src/map/render/map_globe_surface_vertex.h
@@ -921,7 +924,11 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
         src/geo/geo_web_mercator.h
         src/geo/geo_wgs84_ellipsoid.cpp
         src/geo/geo_wgs84_ellipsoid.h
+        src/map/data/map_terrain_dataset.cpp
+        src/map/data/map_terrain_dataset.h
+        src/map/data/map_terrain_tile.cpp
         src/map/data/map_terrain_tile.h
+        src/map/render/map_globe_terrain_levels.h
         src/map/render/map_globe_heatmap_scene.cpp
         src/map/render/map_globe_heatmap_scene.h
         src/map/render/map_globe_picking.cpp

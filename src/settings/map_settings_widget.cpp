@@ -2,6 +2,7 @@
 
 #include "config/gui_configuration.h"
 #include "config/map_server_client_configuration.h"
+#include "map/render/map_globe_terrain_levels.h"
 #include "widgets/slider_number_control.h"
 
 #include <QColor>
@@ -25,10 +26,6 @@ constexpr double NavigationSensitivityMinimum = 0.1;
 constexpr double NavigationSensitivityMaximum = 1.5;
 constexpr double NavigationSensitivityStep = 0.05;
 
-// The bounds the globe terrain enforces on this value
-// (MapGlobeSurfaceScene::TerrainReliefMinimumZoom) and MapModel::MaxZoom.
-constexpr int TerrainMinDetailZoomBound = 8;
-constexpr int TerrainMaxDetailZoomBound = 19;
 
 QLabel *sectionTitle(const QString &text, QWidget *parent)
 {
@@ -176,50 +173,21 @@ void MapSettingsWidget::buildPerformanceSection(QWidget *parent_widget)
 
     const GuiMapPerformanceConfiguration &current = guiConfiguration().map_performance;
 
-    this->terrain_lod_target_control = new SliderNumberControl(group);
-    this->terrain_lod_target_control->setRange(8.0, 128.0);
-    this->terrain_lod_target_control->setSingleStep(1.0);
-    this->terrain_lod_target_control->setDecimals(0);
-    this->terrain_lod_target_control->setSliderStep(1.0);
-    this->terrain_lod_target_control->setSuffix(QStringLiteral(" px"));
-    this->terrain_lod_target_control->setValue(current.terrain_lod_target_cell_size_px);
-    form->addRow(QStringLiteral("Terrain detail target size"), this->terrain_lod_target_control);
+    this->terrain_detail_reduction_control = new SliderNumberControl(group);
+    this->terrain_detail_reduction_control->setRange(
+        0.0, double(MapGlobeTerrainMaximumDetailReduction));
+    this->terrain_detail_reduction_control->setSingleStep(1.0);
+    this->terrain_detail_reduction_control->setDecimals(0);
+    this->terrain_detail_reduction_control->setSliderStep(1.0);
+    this->terrain_detail_reduction_control->setValue(double(current.terrain_detail_reduction));
+    form->addRow(QStringLiteral("Terrain detail reduction"), this->terrain_detail_reduction_control);
     form->addRow(QString(), helpLabel(
-        QStringLiteral("Target on-screen size of one terrain mesh cell. Smaller keeps the terrain "
-                       "mesh denser (sharper) out to a greater distance, at a higher rendering cost."),
-        group));
-
-    this->terrain_max_detail_zoom_control = new SliderNumberControl(group);
-    this->terrain_max_detail_zoom_control->setRange(
-        double(TerrainMinDetailZoomBound), double(TerrainMaxDetailZoomBound));
-    this->terrain_max_detail_zoom_control->setSingleStep(1.0);
-    this->terrain_max_detail_zoom_control->setDecimals(0);
-    this->terrain_max_detail_zoom_control->setSliderStep(1.0);
-    this->terrain_max_detail_zoom_control->setValue(double(current.terrain_max_detail_zoom));
-    form->addRow(QStringLiteral("Max terrain detail down to zoom"), this->terrain_max_detail_zoom_control);
-    form->addRow(QString(), helpLabel(
-        QStringLiteral("Highest zoom level at which the terrain elevation data is still used at "
-                       "increasing resolution. Raise this to keep full terrain detail available "
-                       "when zoomed in further."),
-        group));
-
-    this->terrain_full_detail_zoom_control = new SliderNumberControl(group);
-    this->terrain_full_detail_zoom_control->setRange(
-        double(TerrainMinDetailZoomBound), double(TerrainMaxDetailZoomBound));
-    this->terrain_full_detail_zoom_control->setSingleStep(1.0);
-    this->terrain_full_detail_zoom_control->setDecimals(0);
-    this->terrain_full_detail_zoom_control->setSliderStep(1.0);
-    this->terrain_full_detail_zoom_control->setValue(double(current.terrain_full_detail_zoom));
-    form->addRow(QStringLiteral("Full detail at center down to zoom"),
-                 this->terrain_full_detail_zoom_control);
-    form->addRow(QString(), helpLabel(
-        QStringLiteral("At or above this zoom level, the terrain tile right at the crosshair is "
-                       "forced to maximum mesh detail regardless of camera distance -- instead of "
-                       "the usual falloff, which otherwise reduces it there by one LOD step per "
-                       "zoom level (e.g. zoom 19 -> 18 already looks less detailed by default). "
-                       "Lower this to keep the center fully detailed across a wider zoom range; "
-                       "everywhere else, and below this zoom level, still follows the normal "
-                       "falloff."),
+        QStringLiteral("0 draws every elevation sample the terrain source provides at the map's "
+                       "level of detail: one terrain cell per sample spacing, about 4 px on "
+                       "screen. Each step halves the terrain resolution (about 8, 16 and 32 px "
+                       "per cell) and needs a quarter of the triangles. Zoomed in past the "
+                       "source's own resolution, every setting shows the full source detail, "
+                       "never more."),
         group));
 
     group_layout->addLayout(form);
@@ -237,19 +205,13 @@ void MapSettingsWidget::buildPerformanceSection(QWidget *parent_widget)
     connect(this->performance_save_debounce, &QTimer::timeout,
             this, &MapSettingsWidget::savePerformanceSettingsNow);
 
-    connect(this->terrain_lod_target_control, &SliderNumberControl::valueChanged,
-            this, [this](double) { schedulePerformanceSave(); });
-    connect(this->terrain_max_detail_zoom_control, &SliderNumberControl::valueChanged,
-            this, [this](double) { schedulePerformanceSave(); });
-    connect(this->terrain_full_detail_zoom_control, &SliderNumberControl::valueChanged,
+    connect(this->terrain_detail_reduction_control, &SliderNumberControl::valueChanged,
             this, [this](double) { schedulePerformanceSave(); });
 
     connect(restore_defaults, &QPushButton::clicked, this, [this]
     {
         const GuiMapPerformanceConfiguration defaults;
-        this->terrain_lod_target_control->setValue(defaults.terrain_lod_target_cell_size_px);
-        this->terrain_max_detail_zoom_control->setValue(double(defaults.terrain_max_detail_zoom));
-        this->terrain_full_detail_zoom_control->setValue(double(defaults.terrain_full_detail_zoom));
+        this->terrain_detail_reduction_control->setValue(double(defaults.terrain_detail_reduction));
         savePerformanceSettingsNow();
     });
 
@@ -345,9 +307,8 @@ void MapSettingsWidget::schedulePerformanceSave()
 void MapSettingsWidget::savePerformanceSettingsNow()
 {
     GuiMapPerformanceConfiguration configuration;
-    configuration.terrain_lod_target_cell_size_px = this->terrain_lod_target_control->value();
-    configuration.terrain_max_detail_zoom = int(this->terrain_max_detail_zoom_control->value());
-    configuration.terrain_full_detail_zoom = int(this->terrain_full_detail_zoom_control->value());
+    configuration.terrain_detail_reduction =
+        qRound(this->terrain_detail_reduction_control->value());
 
     if (saveGuiMapPerformanceConfiguration(configuration))
         showPerformanceStatus(QStringLiteral("Saved."), false);

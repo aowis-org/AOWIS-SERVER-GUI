@@ -2,16 +2,14 @@
 
 ## SliderNumberControl
 
-The six callers are GUI settings in `map_settings_widget.cpp`:
+The four callers are GUI settings in `map_settings_widget.cpp`:
 
 | Control | Meaning | Slider edit quantum |
 | --- | --- | --- |
 | Mouse wheel zoom sensitivity | Navigation multiplier | 0.01 |
 | 3D pan sensitivity | Navigation multiplier | 0.01 |
 | 3D orbit sensitivity | Navigation multiplier | 0.01 |
-| Terrain LOD target | On-screen cell size in pixels | 1 |
-| Maximum terrain detail zoom | Integer zoom level | 1 |
-| Full-detail center zoom | Integer zoom level | 1 |
+| Terrain detail reduction | Integer DEM levels below the imagery (0..3) | 1 |
 
 These controls do not use physical unit profiles. Saving one group reads all its
 controls, so an untouched control must return its precise supplied value even when

@@ -607,6 +607,14 @@ void MapBgfxSurface::setTerrainRepository(MapTerrainRepository *terrain_reposito
     });
     connect(this->terrain_repository, &MapTerrainRepository::signalTerrainTileRetryReady, this,
             [this](const QString &) { requestRedraw(); });
+    // The terrain catalog arrived (or was reset): the next frame's
+    // preparation takes the dataset's zoom range and rebuilds the window.
+    connect(this->terrain_repository, &MapTerrainRepository::signalTerrainDatasetChanged, this,
+            [this]
+    {
+        syncGlobeCameraHeight(true);
+        requestRedraw();
+    });
     // Possibly already in Globe mode: the height under the camera now, with
     // priority for that exact DEM tile.
     syncGlobeCameraHeight(true);

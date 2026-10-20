@@ -104,6 +104,7 @@ MapBgfxGlobeSurface::MapBgfxGlobeSurface(MapModel *map_model)
       surface_preparation(map_model),
       heatmap_scene(MapModel::MaxZoom)
 {
+    this->tile_index_buffers.fill(BGFX_INVALID_HANDLE);
 }
 
 MapBgfxGlobeSurface::~MapBgfxGlobeSurface() = default;
@@ -187,7 +188,8 @@ bool MapBgfxGlobeSurface::ready() const
 void MapBgfxGlobeSurface::destroyBuffers()
 {
     destroyHandle(&this->window_vertices);
-    destroyHandle(&this->window_indices);
+    for (bgfx::IndexBufferHandle &handle : this->tile_index_buffers)
+        destroyHandle(&handle);
     destroyHandle(&this->cap_vertices);
     destroyHandle(&this->cap_indices);
     destroyHandle(&this->wireframe_vertices);
@@ -304,8 +306,8 @@ void MapBgfxGlobeSurface::requestTerrainForCurrentView(const QSize &logical_view
 {
     if (!this->surface_preparation.requestTerrainForCurrentView(logical_viewport))
         return;
-    // The window was rebuilt: new geometry and imagery requests.
-    this->window_upload_pending = true;
+    // The window was rebuilt: new imagery requests; its new vertex ranges go
+    // up with the next frame (takeWindowVertexUploads()).
     this->wireframe_upload_pending = true;
     this->window_tiles_requested = false;
 }
@@ -355,10 +357,27 @@ void MapBgfxGlobeSurface::terrainMeshProgress(int *completed, int *total, bool *
 
 void MapBgfxGlobeSurface::uploadWindowGeometry()
 {
+    // Vertices only: the tiles' topology is shared (tileIndexBuffer()).
     replaceVertices(&this->window_vertices, this->surface_layout,
                     this->surface_preparation.windowVertices());
-    replaceIndices(&this->window_indices, this->surface_preparation.windowIndices());
     this->window_upload_pending = false;
+}
+
+bgfx::IndexBufferHandle MapBgfxGlobeSurface::tileIndexBuffer(int cells)
+{
+    if (cells < 1 || cells > MapGlobeTileMaximumCellCount)
+        return BGFX_INVALID_HANDLE;
+    bgfx::IndexBufferHandle &handle = this->tile_index_buffers[std::size_t(cells)];
+    if (!bgfx::isValid(handle))
+    {
+        // The topology lives for the process: referenced, not copied.
+        const QVector<quint16> &indices = mapGlobeTileIndices(cells);
+        if (indices.isEmpty())
+            return BGFX_INVALID_HANDLE;
+        handle = bgfx::createIndexBuffer(bgfx::makeRef(
+            indices.constData(), uint32_t(indices.size() * qsizetype(sizeof(quint16)))));
+    }
+    return handle;
 }
 
 void MapBgfxGlobeSurface::uploadCapGeometry()
@@ -522,32 +541,43 @@ MapBgfxGlobeSurface::FrameResult MapBgfxGlobeSurface::render(
     }
     if (this->surface_preparation.prepareVisibleWindow(inputs.logical_viewport))
     {
-        this->window_upload_pending = true;
         this->wireframe_upload_pending = true;
         this->window_tiles_requested = false;
         ++this->surface_revision;
     }
+    // Window rebuilds write only their new tiles' ranges of the persistent
+    // vertex pool; the whole pool goes up only when it was rebuilt or grew.
     QVector<MapGlobeSurfaceVertexPatch> patches;
-    if (this->surface_preparation.applyReadyTerrainMeshes(&patches))
+    bool full_upload = false;
+    this->surface_preparation.takeWindowVertexUploads(&patches, &full_upload);
+    if (full_upload)
+        this->window_upload_pending = true;
+    // Finished terrain meshes replace their tile's vertex range in place.
+    QVector<MapGlobeSurfaceVertexPatch> mesh_patches;
+    if (this->surface_preparation.applyReadyTerrainMeshes(&mesh_patches))
     {
-        // Finished terrain meshes replace their tile's vertex range in place.
-        if (!this->window_upload_pending && bgfx::isValid(this->window_vertices))
-        {
-            const QVector<MapGlobeSurfaceVertex> &vertices = this->surface_preparation.windowVertices();
-            for (const MapGlobeSurfaceVertexPatch &patch : patches)
-            {
-                bgfx::update(this->window_vertices, uint32_t(patch.first_vertex),
-                             bgfx::copy(vertices.constData() + patch.first_vertex,
-                                        uint32_t(patch.vertex_count
-                                                 * qsizetype(sizeof(MapGlobeSurfaceVertex)))));
-            }
-        }
+        patches += mesh_patches;
         this->wireframe_upload_pending = true;
         ++this->surface_revision;
     }
     this->surface_preparation.requestMissingTerrainTiles();
     this->surface_preparation.scheduleReadyTerrainMeshes();
 
+    if (!this->window_upload_pending && bgfx::isValid(this->window_vertices))
+    {
+        const QVector<MapGlobeSurfaceVertex> &vertices = this->surface_preparation.windowVertices();
+        for (const MapGlobeSurfaceVertexPatch &patch : patches)
+        {
+            if (patch.first_vertex < 0 || patch.vertex_count <= 0
+                || patch.first_vertex + patch.vertex_count > vertices.size())
+            {
+                continue;
+            }
+            bgfx::update(this->window_vertices, uint32_t(patch.first_vertex),
+                         bgfx::copy(vertices.constData() + patch.first_vertex,
+                                    uint32_t(patch.vertex_count * qsizetype(sizeof(MapGlobeSurfaceVertex)))));
+        }
+    }
     if (this->window_upload_pending)
         uploadWindowGeometry();
     if (this->cap_upload_pending)
@@ -617,17 +647,22 @@ MapBgfxGlobeSurface::FrameResult MapBgfxGlobeSurface::render(
         }
         // Window tiles: one indexed draw each with its atlas rectangle.
         const QVector<MapGlobeSurfaceTile> &tiles = this->surface_preparation.windowTiles();
-        if (bgfx::isValid(this->window_vertices) && bgfx::isValid(this->window_indices))
+        if (bgfx::isValid(this->window_vertices))
         {
             for (qsizetype index = 0; index < tiles.size(); ++index)
             {
                 const MapGlobeSurfaceTile &tile = tiles.at(index);
                 if (tile.index_count <= 0 || tile.vertex_count <= 0)
                     continue;
+                const bgfx::IndexBufferHandle tile_indices = tileIndexBuffer(tile.grid_cell_count);
+                if (!bgfx::isValid(tile_indices))
+                    continue;
                 const TileImagery &state = this->window_imagery.at(index);
-                bgfx::setVertexBuffer(0, this->window_vertices);
-                bgfx::setIndexBuffer(this->window_indices, uint32_t(tile.first_index),
-                                     uint32_t(tile.index_count));
+                // The shared topology, offset to the tile's vertices: every
+                // backend applies the start vertex as base vertex.
+                bgfx::setVertexBuffer(0, this->window_vertices, uint32_t(tile.first_vertex),
+                                      uint32_t(tile.vertex_count));
+                bgfx::setIndexBuffer(tile_indices);
                 bgfx::setTexture(0, this->tile_sampler, state.texture, uint32_t(kTileSamplerFlags));
                 bgfx::setUniform(this->view_projection_uniform, matrix);
                 bgfx::setUniform(this->tile_uniform, state.uniform);

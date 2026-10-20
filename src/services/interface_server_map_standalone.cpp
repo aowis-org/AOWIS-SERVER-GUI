@@ -1,5 +1,7 @@
 #include "services/interface_server_map_standalone.h"
 
+#include <aowis/map/terrain_dataset.h>
+
 #include <QDebug>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -356,6 +358,31 @@ void InterfaceServerMapStandalone::requestTerrainTile(const QString &endpoint, c
             emit signalTerrainTileDataReceived(key, result.data);
         }, Qt::QueuedConnection);
     }));
+}
+
+void InterfaceServerMapStandalone::requestTerrainDatasets()
+{
+    if (!this->terrain_data_initialized || this->terrain_data == nullptr)
+    {
+        const QString error = this->terrain_initialization_error.isEmpty()
+            ? QStringLiteral("Standalone terrain data is not initialized")
+            : this->terrain_initialization_error;
+        QTimer::singleShot(0, this, [this, error]
+        {
+            emit signalTerrainDatasetsFailed(error);
+        });
+        return;
+    }
+
+    // The same document the map server's GET /terrain/v1/datasets serves;
+    // TerrainDefaultDataset plays the server's terrain/default_dataset.
+    // Delivered from the event loop like a network reply.
+    const QByteArray catalog = Aowis::Map::encodeTerrainDatasetCatalogJson(
+        this->terrain_data->datasets(), TerrainDefaultDataset);
+    QTimer::singleShot(0, this, [this, catalog]
+    {
+        emit signalTerrainDatasetsReceived(catalog);
+    });
 }
 
 void InterfaceServerMapStandalone::requestTerrainElevation(const QString &endpoint)

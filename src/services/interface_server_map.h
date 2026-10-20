@@ -28,6 +28,15 @@ public:
         emit signalTerrainTileFailed(
             key, QStringLiteral("Terrain transport is not available in this map-server mode"));
     }
+    // The terrain service's dataset catalog (GET /terrain/v1/datasets): which
+    // dataset to draw and its zoom range. Answered by
+    // signalTerrainDatasetsReceived() with the catalog JSON, or
+    // signalTerrainDatasetsFailed().
+    virtual void requestTerrainDatasets()
+    {
+        emit signalTerrainDatasetsFailed(
+            QStringLiteral("Terrain dataset catalog is not available in this map-server mode"));
+    }
     virtual void requestTerrainElevation(const QString &endpoint)
     {
         Q_UNUSED(endpoint)
@@ -46,6 +55,8 @@ signals:
     void signalTileFailed(const QString &key);
     void signalTerrainTileDataReceived(const QString &key, const QByteArray &data);
     void signalTerrainTileFailed(const QString &key, const QString &error);
+    void signalTerrainDatasetsReceived(const QByteArray &data);
+    void signalTerrainDatasetsFailed(const QString &error);
     void signalTerrainElevationDataReceived(const QByteArray &data);
     void signalTerrainElevationFailed(const QString &error);
     void signalTilesDeleted(quint64 request_id);
