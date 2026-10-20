@@ -2,6 +2,7 @@ $input a_position, a_texcoord0, a_texcoord1, a_color0, a_texcoord2, a_texcoord3
 $output v_color0, v_segment, v_segment_size
 
 #include <bgfx_shader.sh>
+#include "entity_style.sh"
 #include "globe_network.sh"
 
 // Globe pipe segment (MapNetworkLinkVertex, six vertices per segment): a
@@ -10,9 +11,20 @@ $output v_color0, v_segment, v_segment_size
 // (x: 0 start, 1 end; y: -1/+1 side); a_texcoord2: size adjustment (px; with
 // metre widths a negative value is an absolute half width, the highlight
 // outlines); a_texcoord3: the local tangent along which metre widths are
-// measured (WGS84 east/north plane).
+// measured (WGS84 east/north plane). a_color0: the vertex colour, or the
+// entity reference (entity_style.sh): pipes, pumps and valves take their
+// link colour, demand point attachments their demand point's colour.
 void main()
 {
+    vec4 color = a_color0;
+    if (entityReferenced())
+    {
+        bool link = a_color0.y > 0.5;
+        vec4 texel = entityTexel(a_color0.x, link);
+        color = vec4(link ? entityLinkColor(texel) : entityNodeColor(texel), 1.0);
+        if (entityHasFlag(texel, ENTITY_FLAG_HIDDEN))
+            color.a = 0.0;
+    }
     vec4 start_clip = mul(u_net_view_proj, vec4(a_position, 1.0));
     vec4 end_clip = mul(u_net_view_proj, vec4(a_texcoord0, 1.0));
     vec2 viewport = netViewport();
@@ -61,14 +73,15 @@ void main()
         half_width = max(half_width + a_texcoord2, 0.0);
 
     // One pixel of raster margin around the capsule for its antialiased edge.
-    float extent = half_width + 1.0;
+    // Nothing to draw: a zero-area quad.
+    float extent = (half_width + 1.0) * step(0.001, color.a);
     float endpoint_sign = a_texcoord1.x * 2.0 - 1.0;
     vec4 clip_position = mix(start_clip, end_clip, a_texcoord1.x);
     vec2 offset_pixels = tangent * endpoint_sign * extent + normal * a_texcoord1.y * extent;
     clip_position.xy += offset_pixels * 2.0 / viewport * clip_position.w;
 
     gl_Position = clip_position;
-    v_color0 = a_color0;
+    v_color0 = color;
     v_segment = netScreenLinear(vec2(mix(-extent, direction_length + extent, a_texcoord1.x),
                                      a_texcoord1.y * extent),
                                 clip_position.w);

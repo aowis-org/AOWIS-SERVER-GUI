@@ -56,26 +56,6 @@ bgfx::IndexBufferHandle createIndices(const QVector<quint32> &indices, quint64 *
                                    BGFX_BUFFER_INDEX32);
 }
 
-bgfx::DynamicVertexBufferHandle createAttributeStream(qsizetype vertex_count,
-                                                      const bgfx::VertexLayout &layout)
-{
-    // fitsUint32: on wasm32 a qsizetype(UINT32_MAX) cast is -1 and rejected
-    // every stream, leaving the browser map without per-vertex attributes.
-    if (vertex_count <= 0 || !MapBgfxBackend::fitsUint32(vertex_count))
-        return BGFX_INVALID_HANDLE;
-    return bgfx::createDynamicVertexBuffer(uint32_t(vertex_count), layout);
-}
-
-template <typename Attribute>
-void updateAttributeStream(bgfx::DynamicVertexBufferHandle handle,
-                           const QVector<Attribute> &attributes)
-{
-    if (!bgfx::isValid(handle) || attributes.isEmpty())
-        return;
-    bgfx::update(handle, 0, bgfx::copy(attributes.constData(),
-        uint32_t(attributes.size() * qsizetype(sizeof(Attribute)))));
-}
-
 template <typename Handle>
 void destroyHandle(Handle *handle)
 {
@@ -95,10 +75,12 @@ bool missing(const QVector<Data> &data, Handle handle)
 
 bool MapBgfx2dGpu::initialize(const QImage &icon_atlas)
 {
-    // Stream 0 layouts (geometry), matching the vertex structs in map_bgfx_2d_mesh.h.
+    // Layouts matching the vertex structs in map_bgfx_2d_mesh.h; the entity
+    // render id is an attribute of every primitive (entity_style.sh).
     this->point_layout.begin()
         .add(bgfx::Attrib::Position, 2, bgfx::AttribType::Float)
         .add(bgfx::Attrib::TexCoord0, 2, bgfx::AttribType::Float)
+        .add(bgfx::Attrib::TexCoord1, 2, bgfx::AttribType::Float)
         .end();
     this->line_layout.begin()
         .add(bgfx::Attrib::Position, 2, bgfx::AttribType::Float)
@@ -109,22 +91,23 @@ bool MapBgfx2dGpu::initialize(const QImage &icon_atlas)
         .add(bgfx::Attrib::Position, 2, bgfx::AttribType::Float)
         .add(bgfx::Attrib::TexCoord0, 2, bgfx::AttribType::Float)
         .add(bgfx::Attrib::TexCoord1, 2, bgfx::AttribType::Float)
+        .add(bgfx::Attrib::TexCoord2, 2, bgfx::AttribType::Float)
         .end();
     this->chevron_layout.begin()
         .add(bgfx::Attrib::Position, 2, bgfx::AttribType::Float)
         .add(bgfx::Attrib::TexCoord0, 2, bgfx::AttribType::Float)
         .add(bgfx::Attrib::TexCoord1, 2, bgfx::AttribType::Float)
         .add(bgfx::Attrib::TexCoord2, 2, bgfx::AttribType::Float)
-        .end();
-    // Stream 1 layouts (symbology).
-    this->color_layout.begin()
-        .add(bgfx::Attrib::Color0, 4, bgfx::AttribType::Uint8, true)
-        .end();
-    // Matches MapBgfx2dFlowAttribute: colour, (flow sign, reserved).
-    this->flow_attribute_layout.begin()
-        .add(bgfx::Attrib::Color0, 4, bgfx::AttribType::Uint8, true)
         .add(bgfx::Attrib::TexCoord3, 2, bgfx::AttribType::Float)
         .end();
+    if (this->point_layout.getStride() != sizeof(MapBgfx2dGpuVertex)
+        || this->line_layout.getStride() != sizeof(MapBgfx2dLineVertex)
+        || this->icon_layout.getStride() != sizeof(MapBgfx2dIconVertex)
+        || this->chevron_layout.getStride() != sizeof(MapBgfx2dChevronVertex))
+    {
+        qWarning() << "bgfx network: vertex layouts do not match the mesh's vertex structs";
+        return false;
+    }
 
     this->point_program = loadProgram("vs_network_2d", "fs_marker_2d");
     this->line_program = loadProgram("vs_line_2d", "fs_network_2d");
@@ -215,12 +198,6 @@ void MapBgfx2dGpu::releaseBuffers(QVector<ChunkBuffers> *chunk_buffers)
         destroyHandle(&buffers.icon_vertices);
         destroyHandle(&buffers.chevron_vertices);
         destroyHandle(&buffers.chevron_indices);
-        destroyHandle(&buffers.link_colors);
-        destroyHandle(&buffers.attachment_colors);
-        destroyHandle(&buffers.node_colors);
-        destroyHandle(&buffers.icon_colors);
-        destroyHandle(&buffers.chevron_attributes);
-        destroyHandle(&buffers.heatmap_colors);
     }
     chunk_buffers->clear();
 }
@@ -228,7 +205,6 @@ void MapBgfx2dGpu::releaseBuffers(QVector<ChunkBuffers> *chunk_buffers)
 void MapBgfx2dGpu::releaseChunks()
 {
     releaseBuffers(&this->chunk_buffers);
-    this->colors_stale = true;
 }
 
 bool MapBgfx2dGpu::uploadMesh(const MapBgfx2dMesh &source, QVector<ChunkBuffers> *chunk_buffers,
@@ -253,19 +229,6 @@ bool MapBgfx2dGpu::uploadMesh(const MapBgfx2dMesh &source, QVector<ChunkBuffers>
             createVertices(chunk.chevron_vertices, this->chevron_layout, bytes);
         buffers.chevron_indices = createIndices(chunk.chevron_indices, bytes);
         buffers.chevron_index_count = uint32_t(chunk.chevron_indices.size());
-        // Attribute streams sized to the geometry; filled by updateMeshColors().
-        buffers.link_colors =
-            createAttributeStream(chunk.link_vertices.size(), this->color_layout);
-        buffers.attachment_colors =
-            createAttributeStream(chunk.attachment_vertices.size(), this->color_layout);
-        buffers.node_colors =
-            createAttributeStream(chunk.node_vertices.size(), this->color_layout);
-        buffers.icon_colors =
-            createAttributeStream(chunk.icon_vertices.size(), this->color_layout);
-        buffers.chevron_attributes =
-            createAttributeStream(chunk.chevron_vertices.size(), this->flow_attribute_layout);
-        buffers.heatmap_colors =
-            createAttributeStream(chunk.node_vertices.size(), this->color_layout);
         // Keep the buffers index aligned with source.chunks() even when empty.
         chunk_buffers->append(buffers);
 
@@ -276,37 +239,9 @@ bool MapBgfx2dGpu::uploadMesh(const MapBgfx2dMesh &source, QVector<ChunkBuffers>
             || missing(chunk.node_vertices, buffers.node_vertices)
             || missing(chunk.icon_vertices, buffers.icon_vertices)
             || missing(chunk.chevron_vertices, buffers.chevron_vertices)
-            || missing(chunk.chevron_indices, buffers.chevron_indices)
-            || missing(chunk.link_vertices, buffers.link_colors)
-            || missing(chunk.attachment_vertices, buffers.attachment_colors)
-            || missing(chunk.node_vertices, buffers.node_colors)
-            || missing(chunk.icon_vertices, buffers.icon_colors)
-            || missing(chunk.chevron_vertices, buffers.chevron_attributes)
-            || missing(chunk.node_vertices, buffers.heatmap_colors);
+            || missing(chunk.chevron_indices, buffers.chevron_indices);
         if (failed)
             return false;
-    }
-    return true;
-}
-
-bool MapBgfx2dGpu::updateMeshColors(const MapBgfx2dMesh &source,
-                                    const QVector<ChunkBuffers> &chunk_buffers,
-                                    const MapBgfx2dMesh::ColorLookup &lookup,
-                                    const MapBgfx2dMesh::FlowLookup &flow)
-{
-    const QVector<MapBgfx2dChunkColors> colors = source.buildColors(lookup, flow);
-    if (colors.size() != chunk_buffers.size())
-        return false;
-    for (qsizetype index = 0; index < colors.size(); ++index)
-    {
-        const ChunkBuffers &buffers = chunk_buffers[index];
-        const MapBgfx2dChunkColors &chunk_colors = colors[index];
-        updateAttributeStream(buffers.link_colors, chunk_colors.link);
-        updateAttributeStream(buffers.attachment_colors, chunk_colors.attachment);
-        updateAttributeStream(buffers.node_colors, chunk_colors.node);
-        updateAttributeStream(buffers.icon_colors, chunk_colors.icon);
-        updateAttributeStream(buffers.chevron_attributes, chunk_colors.chevron);
-        updateAttributeStream(buffers.heatmap_colors, chunk_colors.heatmap);
     }
     return true;
 }
@@ -321,7 +256,6 @@ bool MapBgfx2dGpu::synchronize(const MapBgfx2dScene &scene,
 
     quint64 bytes = 0;
     const bool uploaded = uploadMesh(this->mesh, &this->chunk_buffers, &bytes);
-    this->colors_stale = true;
     if (!uploaded)
         return false;
     ++this->upload_count;
@@ -329,18 +263,7 @@ bool MapBgfx2dGpu::synchronize(const MapBgfx2dScene &scene,
     return true;
 }
 
-bool MapBgfx2dGpu::updateColors(const MapBgfx2dMesh::ColorLookup &lookup,
-                                const MapBgfx2dMesh::FlowLookup &flow)
-{
-    if (!updateMeshColors(this->mesh, this->chunk_buffers, lookup, flow))
-        return false;
-    ++this->color_upload_count;
-    this->colors_stale = false;
-    return true;
-}
-
-bool MapBgfx2dGpu::setHighlightLayer(HighlightLayer *layer, const MapBgfx2dScene &scene,
-                                     const MapBgfx2dMesh::ColorLookup &colors)
+bool MapBgfx2dGpu::setHighlightLayer(HighlightLayer *layer, const MapBgfx2dScene &scene)
 {
     layer->mesh.setChevronsEnabled(false);
     layer->mesh.reset();
@@ -352,25 +275,19 @@ bool MapBgfx2dGpu::setHighlightLayer(HighlightLayer *layer, const MapBgfx2dScene
     if (!layer->mesh.prepare(scene, MapBgfx2dMesh::IconLookup()))
         return true;
     quint64 bytes = 0;
-    if (!uploadMesh(layer->mesh, &layer->buffers, &bytes)
-        || !updateMeshColors(layer->mesh, layer->buffers, colors, MapBgfx2dMesh::FlowLookup())) {
+    if (!uploadMesh(layer->mesh, &layer->buffers, &bytes)) {
         releaseBuffers(&layer->buffers);
         return false;
     }
     return true;
 }
 
-bool MapBgfx2dGpu::setHighlights(const MapBgfx2dScene &selected,
-                                 const MapBgfx2dMesh::ColorLookup &selected_colors,
-                                 bool selected_has_error,
-                                 const MapBgfx2dScene &diagnostic,
-                                 const MapBgfx2dMesh::ColorLookup &diagnostic_colors)
+bool MapBgfx2dGpu::setHighlights(const MapBgfx2dScene &selected, bool selected_has_error,
+                                 const MapBgfx2dScene &diagnostic)
 {
     this->selected_has_error = selected_has_error;
-    const bool selected_ok =
-        setHighlightLayer(&this->selected_highlight, selected, selected_colors);
-    const bool diagnostic_ok =
-        setHighlightLayer(&this->diagnostic_highlight, diagnostic, diagnostic_colors);
+    const bool selected_ok = setHighlightLayer(&this->selected_highlight, selected);
+    const bool diagnostic_ok = setHighlightLayer(&this->diagnostic_highlight, diagnostic);
     return selected_ok && diagnostic_ok;
 }
 
@@ -387,11 +304,11 @@ void MapBgfx2dGpu::setCameraUniforms(const MapBgfx2dMeshChunk &chunk,
 }
 
 MapBgfx2dGpu::FrameStats MapBgfx2dGpu::draw(const MapBgfx2d::Camera &camera,
-                                            const Style &style) const
+                                            const Style &style,
+                                            const MapBgfxEntityStyle &entity_style) const
 {
     FrameStats stats;
-    // Never draw geometry with an attribute stream of the wrong size.
-    if (!ready() || this->colors_stale)
+    if (!ready() || !entity_style.ready())
         return stats;
     const QVector<MapBgfx2dMeshChunk> &chunks = this->mesh.chunks();
     stats.chunks_total = int(chunks.size());
@@ -444,7 +361,7 @@ MapBgfx2dGpu::FrameStats MapBgfx2dGpu::draw(const MapBgfx2d::Camera &camera,
             set_vec4(this->heatmap_style_uniform, float(style.heatmap_opacity),
                      float(style.heatmap_solid_fraction), 0.0f, 0.0f);
             bgfx::setVertexBuffer(0, buffers.node_vertices, 0, buffers.node_vertex_count);
-            bgfx::setVertexBuffer(1, buffers.heatmap_colors, 0, buffers.node_vertex_count);
+            entity_style.bind(MapBgfxEntityStyle::Mode::Heatmap);
             bgfx::setState(kHeatmapState);
             bgfx::submit(kMapBgfxNetworkView, this->heatmap_program);
             ++stats.draw_calls;
@@ -458,7 +375,8 @@ MapBgfx2dGpu::FrameStats MapBgfx2dGpu::draw(const MapBgfx2d::Camera &camera,
         // Square caps of half the width close polyline joins.
         set_vec4(this->line_style_uniform, float(attachment_half), float(attachment_half), 0.0f, 0.0f);
         bgfx::setVertexBuffer(0, buffers.attachment_vertices);
-        bgfx::setVertexBuffer(1, buffers.attachment_colors);
+        // Attachments take their demand point's colour.
+        entity_style.bind(MapBgfxEntityStyle::Mode::Symbology, MapBgfxEntityStyle::Table::Nodes);
         bgfx::setIndexBuffer(buffers.attachment_indices, 0, buffers.attachment_index_count);
         bgfx::setState(kNetworkState);
         bgfx::submit(kMapBgfxNetworkView, this->line_program);
@@ -471,7 +389,7 @@ MapBgfx2dGpu::FrameStats MapBgfx2dGpu::draw(const MapBgfx2d::Camera &camera,
         setCameraUniforms(chunks[index], camera);
         set_vec4(this->line_style_uniform, float(link_half), float(link_half), 0.0f, 0.0f);
         bgfx::setVertexBuffer(0, buffers.link_vertices);
-        bgfx::setVertexBuffer(1, buffers.link_colors);
+        entity_style.bind(MapBgfxEntityStyle::Mode::Symbology, MapBgfxEntityStyle::Table::Links);
         bgfx::setIndexBuffer(buffers.link_indices, 0, buffers.link_index_count);
         bgfx::setState(kNetworkState);
         bgfx::submit(kMapBgfxNetworkView, this->line_program);
@@ -489,15 +407,17 @@ MapBgfx2dGpu::FrameStats MapBgfx2dGpu::draw(const MapBgfx2d::Camera &camera,
             set_vec4(this->flow_limits_uniform, float(MapBgfx2dFlow::MinimumLinkPixels),
                      0.0f, 0.0f, 0.0f);
             bgfx::setVertexBuffer(0, buffers.chevron_vertices);
-            bgfx::setVertexBuffer(1, buffers.chevron_attributes);
+            entity_style.bind(MapBgfxEntityStyle::Mode::Symbology, MapBgfxEntityStyle::Table::Links);
             bgfx::setIndexBuffer(buffers.chevron_indices, 0, buffers.chevron_index_count);
             bgfx::setState(kNetworkState);
             bgfx::submit(kMapBgfxNetworkView, this->flow_program);
             ++stats.draw_calls;
         }
     }
-    drawHighlightLines(this->selected_highlight, camera, selected_link_half, &stats);
-    drawHighlightLines(this->diagnostic_highlight, camera, diagnostic_link_half, &stats);
+    drawHighlightLines(this->selected_highlight, camera, selected_link_half,
+                       MapBgfxEntityStyle::Mode::Selection, entity_style, &stats);
+    drawHighlightLines(this->diagnostic_highlight, camera, diagnostic_link_half,
+                       MapBgfxEntityStyle::Mode::Diagnostic, entity_style, &stats);
     for (const int index : visible) {
         const ChunkBuffers &buffers = this->chunk_buffers[index];
         if (!bgfx::isValid(buffers.node_vertices) || buffers.node_vertex_count == 0)
@@ -505,13 +425,15 @@ MapBgfx2dGpu::FrameStats MapBgfx2dGpu::draw(const MapBgfx2d::Camera &camera,
         setCameraUniforms(chunks[index], camera);
         set_vec4(this->marker_style_uniform, float(style.node_half_px), 0.0f, 0.0f, 0.0f);
         bgfx::setVertexBuffer(0, buffers.node_vertices, 0, buffers.node_vertex_count);
-        bgfx::setVertexBuffer(1, buffers.node_colors, 0, buffers.node_vertex_count);
+        entity_style.bind(MapBgfxEntityStyle::Mode::Symbology);
         bgfx::setState(kNetworkState);
         bgfx::submit(kMapBgfxNetworkView, this->point_program);
         ++stats.draw_calls;
     }
-    drawHighlightNodes(this->selected_highlight, camera, selected_node_half, &stats);
-    drawHighlightNodes(this->diagnostic_highlight, camera, diagnostic_node_half, &stats);
+    drawHighlightNodes(this->selected_highlight, camera, selected_node_half,
+                       MapBgfxEntityStyle::Mode::Selection, entity_style, &stats);
+    drawHighlightNodes(this->diagnostic_highlight, camera, diagnostic_node_half,
+                       MapBgfxEntityStyle::Mode::Diagnostic, entity_style, &stats);
     for (const int index : visible) {
         const ChunkBuffers &buffers = this->chunk_buffers[index];
         if (!bgfx::isValid(buffers.icon_vertices) || buffers.icon_vertex_count == 0)
@@ -519,7 +441,7 @@ MapBgfx2dGpu::FrameStats MapBgfx2dGpu::draw(const MapBgfx2d::Camera &camera,
         setCameraUniforms(chunks[index], camera);
         set_vec4(this->icon_style_uniform, float(style.icon_size_px), 0.0f, 0.0f, 0.0f);
         bgfx::setVertexBuffer(0, buffers.icon_vertices, 0, buffers.icon_vertex_count);
-        bgfx::setVertexBuffer(1, buffers.icon_colors, 0, buffers.icon_vertex_count);
+        entity_style.bind(MapBgfxEntityStyle::Mode::Symbology);
         bgfx::setTexture(0, this->icon_atlas_sampler, this->icon_atlas_texture,
                          uint32_t(kAtlasSamplerFlags));
         bgfx::setState(kNetworkState);
@@ -530,7 +452,8 @@ MapBgfx2dGpu::FrameStats MapBgfx2dGpu::draw(const MapBgfx2d::Camera &camera,
 }
 
 void MapBgfx2dGpu::drawHighlightLines(const HighlightLayer &layer, const MapBgfx2d::Camera &camera,
-                                      double half_width_px, FrameStats *stats) const
+                                      double half_width_px, MapBgfxEntityStyle::Mode mode,
+                                      const MapBgfxEntityStyle &entity_style, FrameStats *stats) const
 {
     const QVector<MapBgfx2dMeshChunk> &chunks = layer.mesh.chunks();
     if (chunks.size() != layer.buffers.size())
@@ -545,7 +468,7 @@ void MapBgfx2dGpu::drawHighlightLines(const HighlightLayer &layer, const MapBgfx
         setCameraUniforms(chunks[index], camera);
         bgfx::setUniform(this->line_style_uniform, data);
         bgfx::setVertexBuffer(0, buffers.link_vertices);
-        bgfx::setVertexBuffer(1, buffers.link_colors);
+        entity_style.bind(mode, MapBgfxEntityStyle::Table::Links);
         bgfx::setIndexBuffer(buffers.link_indices, 0, buffers.link_index_count);
         bgfx::setState(kNetworkState);
         bgfx::submit(kMapBgfxNetworkView, this->line_program);
@@ -554,7 +477,8 @@ void MapBgfx2dGpu::drawHighlightLines(const HighlightLayer &layer, const MapBgfx
 }
 
 void MapBgfx2dGpu::drawHighlightNodes(const HighlightLayer &layer, const MapBgfx2d::Camera &camera,
-                                      double half_size_px, FrameStats *stats) const
+                                      double half_size_px, MapBgfxEntityStyle::Mode mode,
+                                      const MapBgfxEntityStyle &entity_style, FrameStats *stats) const
 {
     const QVector<MapBgfx2dMeshChunk> &chunks = layer.mesh.chunks();
     if (chunks.size() != layer.buffers.size())
@@ -568,7 +492,7 @@ void MapBgfx2dGpu::drawHighlightNodes(const HighlightLayer &layer, const MapBgfx
         setCameraUniforms(chunks[index], camera);
         bgfx::setUniform(this->marker_style_uniform, data);
         bgfx::setVertexBuffer(0, buffers.node_vertices, 0, buffers.node_vertex_count);
-        bgfx::setVertexBuffer(1, buffers.node_colors, 0, buffers.node_vertex_count);
+        entity_style.bind(mode);
         bgfx::setState(kNetworkState);
         bgfx::submit(kMapBgfxNetworkView, this->point_program);
         ++stats->draw_calls;

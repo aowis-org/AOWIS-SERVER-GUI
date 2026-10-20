@@ -85,9 +85,10 @@ public:
         // IDs by render id (NetworkRenderNode::id / NetworkRenderLink::id).
         const NetworkRenderSnapshot *snapshot = nullptr;
         MapLabelSettings settings;
-        // Canonical metric values by render id (MapNetworkRenderSymbology).
-        const QHash<quint32, double> *node_values = nullptr;
-        const QHash<quint32, double> *link_values = nullptr;
+        // Canonical metric values by render id, NaN: none
+        // (MapNetworkRenderSymbology).
+        const QVector<double> *node_values = nullptr;
+        const QVector<double> *link_values = nullptr;
         MapBgfxLabelValueFormat node_value_format;
         MapBgfxLabelValueFormat link_value_format;
         // Entity keys (MapBgfx2dScene::entityKey()) that are not drawn (the
@@ -167,7 +168,7 @@ private:
     // Per prepared scene and snapshot revision: IDs by entity key.
     void synchronizeIdentity(const MapBgfx2dScene &scene, const NetworkRenderSnapshot &snapshot);
     QString labelText(const QString &id, bool show_id, bool show_value,
-                      const QHash<quint32, double> *values,
+                      const QVector<double> *values,
                       const MapBgfxLabelValueFormat &format, quint32 render_id) const;
     QSizeF blockSize(const QString &text, MapBgfxHudTextCache *cache, const QFont &font);
 

@@ -483,10 +483,12 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
         });
         surface->setNetworkSnapshot(this->hydraulic_data->networkRenderSnapshot());
 
-        // Symbology: the resolved MapNetworkRenderSymbology. Every data change
-        // that can alter colours re-resolves it, coalesced to one resolve per
-        // event-loop burst by applyVisualControlSymbology(). On the GPU this
-        // only re-uploads the colour stream, never geometry.
+        // Symbology: the resolved MapNetworkRenderSymbology (per-entity values
+        // by render id). Every data change that can alter values re-resolves
+        // it, coalesced to one resolve per event-loop burst by
+        // applyVisualControlSymbology(). On the GPU this only re-uploads the
+        // entity data textures, never geometry; palettes and ranges are
+        // uniforms (MapBgfxEntityStyle).
         this->bgfx_surface = surface;
 
         // --- Native HUD (slices 6a, 6b; globe controls Phase 3 slice 5) -----
@@ -892,7 +894,7 @@ void MapMonitorContainer::setNodePalette(NetworkSymbologyPalette palette, bool f
         qWarning() << "Failed to save node symbology palette preference.";
 
     emit signalNodePaletteChanged(palette, flipped);
-    applySymbology();
+    applyPaletteSymbology();
 }
 
 void MapMonitorContainer::setLinkPalette(NetworkSymbologyPalette palette, bool flipped)
@@ -911,7 +913,7 @@ void MapMonitorContainer::setLinkPalette(NetworkSymbologyPalette palette, bool f
         qWarning() << "Failed to save link symbology palette preference.";
 
     emit signalLinkPaletteChanged(palette, flipped);
-    applySymbology();
+    applyPaletteSymbology();
 }
 
 void MapMonitorContainer::setHeatmapPalette(NetworkSymbologyPalette palette, bool flipped)
@@ -930,7 +932,7 @@ void MapMonitorContainer::setHeatmapPalette(NetworkSymbologyPalette palette, boo
         qWarning() << "Failed to save heatmap symbology palette preference.";
 
     emit signalHeatmapPaletteChanged(palette, flipped);
-    applySymbology();
+    applyPaletteSymbology();
 }
 
 void MapMonitorContainer::showMapLegendNode(VisualNode visual_node)
@@ -1373,7 +1375,7 @@ void MapMonitorContainer::applySymbology()
         this->hydraulic_data->symbologyRanges(this->symbology_settings);
     if (this->bgfx_surface != nullptr)
     {
-        this->bgfx_surface->setSymbology(resolveMapNetworkRenderSymbology(
+        this->bgfx_surface->setSymbology(this->symbology_resolver.resolve(
             *this->hydraulic_data, this->symbology_settings, ranges));
         pushBgfxLegend(ranges);
         this->resolved_symbology_settings = this->symbology_settings;
@@ -1404,6 +1406,23 @@ void MapMonitorContainer::refreshBgfxLegend()
     pushBgfxLegend(this->hydraulic_data->symbologyRanges(this->symbology_settings));
 }
 
+void MapMonitorContainer::applyPaletteSymbology()
+{
+    // Palettes are GPU state (MapBgfxEntityStyle's palette texture): a
+    // palette or flip change re-resolves nothing, only the legend's ramps
+    // are drawn again.
+    this->symbology_settings = this->symbology_settings.bounded();
+    if (this->bgfx_surface == nullptr)
+        return;
+    if (!this->symbology_resolved)
+    {
+        applySymbology();
+        return;
+    }
+    this->bgfx_surface->setVisualControlSettings(this->symbology_settings);
+    refreshBgfxLegend();
+}
+
 void MapMonitorContainer::applyVisualControlSymbology()
 {
     this->symbology_settings = this->symbology_settings.bounded();
@@ -1416,25 +1435,19 @@ void MapMonitorContainer::applyVisualControlSymbology()
         this->visual_control_symbology_apply_pending = false;
         this->symbology_settings = this->symbology_settings.bounded();
 
-        // Sizes, junction visibility, flow-arrow size and the heatmap's
-        // radius / opacity / solid centre are uniforms or a colour-stream
-        // flag on the surface (setVisualControlSettings()): no resolve of
-        // every entity's colour and no legend rebuild while a slider moves.
-        // Metrics, palettes and the flow-arrow toggle (flow directions are
-        // only resolved while it is on) need the full resolve.
+        // Sizes, junction visibility, flow-arrow size, palettes and the
+        // heatmap's radius / opacity / solid centre are GPU uniforms or the
+        // palette texture (setVisualControlSettings()): nothing is resolved
+        // per entity while a slider moves. Metrics and the flow-arrow toggle
+        // (flow directions are only resolved while it is on) need the
+        // resolve of the per-entity values.
         const NetworkSymbologySettings &resolved = this->resolved_symbology_settings;
         const NetworkSymbologySettings &current = this->symbology_settings;
         const bool resolve_inputs_unchanged = this->symbology_resolved
             && !this->symbology_resolve_requested
             && resolved.visual_node == current.visual_node
-            && resolved.node_palette == current.node_palette
-            && resolved.node_palette_flipped == current.node_palette_flipped
             && resolved.visual_link == current.visual_link
-            && resolved.link_palette == current.link_palette
-            && resolved.link_palette_flipped == current.link_palette_flipped
             && resolved.visual_heatmap == current.visual_heatmap
-            && resolved.heatmap_palette == current.heatmap_palette
-            && resolved.heatmap_palette_flipped == current.heatmap_palette_flipped
             && resolved.show_flow_direction == current.show_flow_direction;
         if (this->bgfx_surface != nullptr && resolve_inputs_unchanged)
         {

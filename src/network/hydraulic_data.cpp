@@ -37,15 +37,19 @@ void updateMinimumMaximum(double value, double &minimum, double &maximum, bool &
         maximum = value;
 }
 
-void updateSymbologyValuesMinimumMaximum(const QHash<QUuid, double> &values,
-                                         double &minimum, double &maximum, bool &initialized)
+// Folds visited symbology values (network_symbology_values.h visitors) into
+// minimum / maximum without collecting them: no hash table per time step.
+struct SymbologyMinimumMaximum
 {
-    for (QHash<QUuid, double>::const_iterator iterator = values.cbegin();
-         iterator != values.cend(); ++iterator)
+    double *minimum = nullptr;
+    double *maximum = nullptr;
+    bool initialized = false;
+
+    void operator()(const QUuid &, double value)
     {
-        updateMinimumMaximum(iterator.value(), minimum, maximum, initialized);
+        updateMinimumMaximum(value, *this->minimum, *this->maximum, this->initialized);
     }
-}
+};
 
 void updateWaterAgeNodeMinimumMaximum(const WaterQualitySimulationResult &result,
                                       double &minimum, double &maximum, bool &initialized)
@@ -762,11 +766,8 @@ NetworkSymbologyRanges HydraulicData::symbologyRanges(
     case VisualNode::Pressure:
         if (hydraulic_result != nullptr)
         {
-            bool initialized = false;
-            const QHash<QUuid, double> values =
-                hydraulicNodeSymbologyValues(*hydraulic_result, settings.visual_node);
-            updateSymbologyValuesMinimumMaximum(
-                values, ranges.node_minimum, ranges.node_maximum, initialized);
+            visitHydraulicNodeSymbologyValues(*hydraulic_result, settings.visual_node,
+                SymbologyMinimumMaximum{&ranges.node_minimum, &ranges.node_maximum});
         }
         break;
     case VisualNode::Chlorine:
@@ -825,11 +826,8 @@ NetworkSymbologyRanges HydraulicData::symbologyRanges(
     case VisualLink::Leakage:
         if (hydraulic_result != nullptr)
         {
-            bool initialized = false;
-            const QHash<QUuid, double> values =
-                hydraulicLinkSymbologyValues(*hydraulic_result, settings.visual_link);
-            updateSymbologyValuesMinimumMaximum(
-                values, ranges.link_minimum, ranges.link_maximum, initialized);
+            visitHydraulicLinkSymbologyValues(*hydraulic_result, settings.visual_link,
+                SymbologyMinimumMaximum{&ranges.link_minimum, &ranges.link_maximum});
         }
         break;
     case VisualLink::Chlorine:
@@ -873,11 +871,9 @@ NetworkSymbologyRanges HydraulicData::symbologyRanges(
     case VisualHeatmap::Pressure:
         if (hydraulic_result != nullptr)
         {
-            bool initialized = false;
-            const QHash<QUuid, double> values =
-                hydraulicHeatmapSymbologyValues(*hydraulic_result, settings.visual_heatmap);
-            updateSymbologyValuesMinimumMaximum(
-                values, ranges.heatmap_minimum, ranges.heatmap_maximum, initialized);
+            visitHydraulicNodeSymbologyValues(*hydraulic_result,
+                networkHeatmapNodeVisual(settings.visual_heatmap),
+                SymbologyMinimumMaximum{&ranges.heatmap_minimum, &ranges.heatmap_maximum});
         }
         break;
     case VisualHeatmap::Chlorine:

@@ -55,23 +55,56 @@ editor) was removed.
   boundaries. At most 17 per link (long links use a coarser base level);
   none on links shorter than 18 px. One quad per chevron; the fragment shader
   draws the two strokes as an antialiased distance field. The direction is the
-  sign in the attribute stream, so a timeline step never touches geometry.
-* **Symbology** (`map_bgfx_2d_symbology.h`): geometry (vertex stream 0) and
-  attributes (stream 1, per-chunk dynamic buffers: one ABGR colour per
-  vertex; for chevrons colour + flow sign) are separate. Attributes are rebuilt
-  from `MapNetworkRenderSymbology` only when the symbology changes (timeline
-  step, results, palette, edits) or after a geometry upload; sizes (link
-  width, node size, icon size, chevron size; px or metres) are per-frame
-  uniforms. Rules match QRhi: links from `link_colors`; nodes, demand points
-  and attachments from `node_colors`; missing entries are black; hidden
-  junctions get alpha 0; icons use `icon_default_fill_color` unless node/link
-  colourization is active (then the value colour, or the icon-unavailable
-  fill); chevrons are black or white by link luminance.
+  link's flow sign in its entity data (below), so a timeline step never
+  touches geometry.
+* **GPU colouring** (`map_bgfx_entity_style.h`, `shaders/entity_style.sh`):
+  the network's vertex buffers carry no colours, only the render id of their
+  entity (plus "link icon" on icons). Every vertex shader colours its
+  primitive from per-entity data, shared by the 2D map and the globe:
+  - two RGBA32F data textures, nodes and links, 2048 texels per row, texel =
+    render id: x the colouring metric's raw value, y the heatmap value (nodes)
+    or the flow direction -1/0/+1 (links), z flag bits (has value, has heat
+    value, hidden, selected, error, stale, junction / pump-or-valve, has
+    icon). Read with `texelFetch` in the vertex shaders;
+  - a 256 x 3 RGBA8 palette texture: the node, link and heatmap ramps in the
+    CPU's 256 buckets (`networkSymbologyRampColor()`), flip applied;
+  - uniforms: per metric (minimum, 1 / range, base fraction, state), the
+    junction / icon / flow toggles, the fixed colours (base colours, the
+    unavailable colour, icon fills, selection cyan, error red, stale grey)
+    and a per-draw mode (symbology, selection, diagnostic, heatmap; vertex
+    colours for the globe's outlines).
+  What a change costs: a time step uploads the changed data texture(s) (16
+  bytes per entity, one `updateTexture2D`), a palette change 3 KB, a range,
+  junction, icon or flow toggle nothing but uniforms; hiding, selection and
+  diagnostics are flag changes in the data textures. No vertex buffer is
+  ever rebuilt or re-uploaded for colours. The rules are the QRhi rules,
+  evaluated in the shader: visual None gives the base colour
+  (`MapNetworkRenderSymbology::*_base_color`; the editor's brown pumps and
+  valves), a missing value or a non-finite range the unavailable colour,
+  else the ramp bucket of `(value - minimum) / (maximum - minimum)` (0.5 for
+  an empty range); attachments take their demand point's colour; junctions
+  can be switched off and node dots give way to shown icons; icons use the
+  default fill unless colourised (then the value colour, or the
+  icon-unavailable fill); chevrons are black or white by link luminance.
+  Sizes (link width, node size, icon size, chevron size; px or metres) are
+  per-frame uniforms (`map_bgfx_2d_symbology.h`).
+* **Symbology values** (`MapNetworkSymbologyResolver`,
+  `map_network_render_symbology.h`): per time step the resolver writes the
+  raw values densely by render id (`QVector<double>`, NaN = no value) and the
+  flow directions (`QVector<qint8>`). The value sources are visitors
+  (`network_symbology_values.h`); uuids map to render ids through a cache of
+  the source's order (result lists keep their order across time steps), so
+  a step costs one uuid comparison per entity and never builds a hash table.
+  `HydraulicData::symbologyRanges()` folds the same visitors into minimum /
+  maximum. Measured on 360 k nodes / 720 k pipes: resolve 678 ms -> 50 ms
+  per step, the render side 308 ms -> 17 ms (colour streams vs data
+  textures), a palette or range change 0.07 ms instead of a full resolve.
 * **Heatmap** (slice 4c, `fs_heatmap_2d.sc`): one spot per node (incl. demand
   points, at the decluttered position) with a heatmap value. No extra
   geometry: the heatmap pass draws the node marker quads with
-  `vs_network_2d.sc`, the radius as size uniform and its own attribute stream
-  (palette colour from `heatmap_fractions`, alpha 0 without a value). Radius in
+  `vs_network_2d.sc` in the heatmap mode, the radius as size uniform (the
+  continuous heatmap ramp of the node's heatmap value; no spot without a
+  value or without a finite range). Radius in
   px or metres (metres converted from the continuous zoom, so it grows smoothly),
   opacity and solid centre are uniforms; same radial profile and premultiplied
   "over" compositing as QRhi. Culled with the radius as margin; skipped when no
@@ -259,7 +292,8 @@ menu's `MapNavigationWidget`, all off by default).
   full-network move included); rebuilt only when the camera, the viewport,
   the prepared scene, the atlas or the content (settings, symbology, value
   formats, hidden entities, renames) changed. Values: canonical metric values
-  by render id in `MapNetworkRenderSymbology::node_values / link_values`,
+  by render id in `MapNetworkRenderSymbology::node_values / link_values`
+  (dense, NaN = none),
   converted with `mapBgfxLabelValueFormat()` (the legend ramp's affine unit
   conversion). Symbol boxes: the GPU network's dots and icons (monitor), the
   editor's bottom-anchored / centred icon rects (`setLabelSymbolRects()`).
@@ -320,7 +354,7 @@ as in the monitor.
   RelWithDebInfo by default (`AOWIS_BUILD_TYPE`): without a build type
   CMake compiled without optimization.
 * Move preview: dragged entities are hidden in the GPU network
-  (`setHiddenEntityUuids()`: alpha 0 in the colour stream, no geometry
+  (`setHiddenEntityUuids()`: a flag in the entity data texture, no geometry
   upload) and drawn by the overlay; a full-network move shifts the network
   by the camera (`setNetworkScreenTranslation()`), the imagery stays.
 * The overlay is drawn between the network and the HUD with a second
@@ -493,7 +527,14 @@ Slice 3, the network on the globe (`map_bgfx_globe_network.*`):
   globe frame (`synchronize()`), so the 2D map never builds globe geometry.
   GPU streams are re-uploaded per category (links/nodes, highlights,
   chevrons, icons + models, X-Ray runs, junctions), as the QRhi backend's
-  invalidations.
+  invalidations, but never for colours: the base streams (links, nodes,
+  junctions, icons, chevrons, X-Ray runs) hold entity references in their
+  colour fields (`mapNetworkSetEntityReference()`: render id, node/link,
+  chevron orientation) and the shaders colour them from the shared entity
+  data (GPU colouring above). Only the selection / diagnostic outlines keep
+  vertex colours. Flow chevrons are built for every link in both
+  orientations; the link's current direction shows one set, so a time step
+  neither rebuilds nor uploads them.
 * Shaders: the QRhi globe network shaders in bgfx form (`vs_globe_link`,
   `vs_globe_flow`, `fs_globe_link(_xray)`, `vs/fs_globe_node`,
   `vs/fs_globe_junction(_xray)`, `vs/fs_globe_icon`, `vs/fs_globe_model`),
@@ -504,9 +545,9 @@ Slice 3, the network on the globe (`map_bgfx_globe_network.*`):
   `gl_FragCoord` reconstruction.
 * Junctions: sphere impostors writing the sphere's depth (`gl_FragDepth`,
   NDC to window depth per bgfx's homogeneous-depth cap). Expanded to six
-  vertices each with the colour resolved on the CPU (symbology, selection
-  cyan, error red / stale grey, hidden, show-junctions) instead of instancing
-  plus a style-table texture read in the vertex shader.
+  vertices each (no instancing); colour from the entity data in the vertex
+  shader: error red / stale grey, else selection cyan, else the symbology;
+  hidden junctions collapse. Selected icons take the selection colour.
 * Draw order and states of `MapRhiGlobeNetworkBackend::draw()`: Solid draws
   the network once without depth test first; X-Ray draws the buried runs
   (dashed) and junctions (dithered) through the terrain; Hide lets the

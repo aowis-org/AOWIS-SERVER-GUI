@@ -10,7 +10,8 @@
 // Chunked bgfx 2D network mesh: chunking, wrap, culling, the line quad
 // encoding checked against a CPU mirror of vs_line_2d.sc, node declutter,
 // demand-point de-duplication, icons, the zoom-independent flow chevrons
-// (checked against a CPU mirror of vs_flow_2d.sc) and the symbology rules.
+// (checked against a CPU mirror of vs_flow_2d.sc), the entity references the
+// GPU colours by and the symbol sizes.
 namespace
 {
 int fails = 0;
@@ -212,79 +213,35 @@ int main()
     // 5. Metres -> pixels: equator zoom 0 -> 156543.03 m per pixel; continuous in zoom.
     req(std::fabs(MapBgfx2dChunking::pixelsForMeters(156543.03392804097, 0.0, 0.0) - 1.0) < 1e-9, "metres per pixel at z0");
     req(std::fabs(MapBgfx2dChunking::pixelsForMeters(10.0, 0.0, 15.5) / MapBgfx2dChunking::pixelsForMeters(10.0, 0.0, 15.0) - std::sqrt(2.0)) < 1e-12, "metre width continuous in zoom");
-    // 6. Symbology -> colour stream (QRhi colour rules) and size uniforms.
+    // 6. Geometry references its entities (the GPU colours them, see
+    //    MapBgfxEntityStyle): every primitive carries its render id, and
+    //    symbology changes have no CPU stream to build.
     {
-        MapNetworkRenderSymbology symbology;
-        symbology.link_colors.insert(1, qRgb(0x12, 0x34, 0x56));
-        symbology.node_colors.insert(100001, qRgb(0x20, 0x40, 0x60));
-        symbology.show_junctions = false;
-        req(MapBgfx2dSymbology::color(symbology, MapBgfx2dPrimitive::Link, 1,
-                                      InfrastructureEntity::Pipe, false) == 0xff563412u,
-            "link colour from link_colors as ABGR");
-        req(MapBgfx2dSymbology::color(symbology, MapBgfx2dPrimitive::Link, 99,
-                                      InfrastructureEntity::Pipe, false) == 0xff000000u,
-            "missing link colour falls back to the default (black)");
-        req(MapBgfx2dSymbology::color(symbology, MapBgfx2dPrimitive::Attachment, 100001,
-                                      InfrastructureEntity::DemandPoint, false) == 0xff604020u,
-            "attachment takes its demand point colour");
-        req((MapBgfx2dSymbology::color(symbology, MapBgfx2dPrimitive::Node, 100001,
-                                       InfrastructureEntity::Junction, false) >> 24) == 0u,
-            "hidden junctions get alpha 0");
-        req((MapBgfx2dSymbology::color(symbology, MapBgfx2dPrimitive::Node, 100001,
-                                       InfrastructureEntity::Tank, false) >> 24) == 0xffu,
-            "show_junctions does not hide other nodes");
-        // Icon rules (QRhi appendIcon / applyNodeColor).
-        req((MapBgfx2dSymbology::color(symbology, MapBgfx2dPrimitive::Node, 100001,
-                                       InfrastructureEntity::Tank, true) >> 24) == 0u,
-            "node dot hidden where its icon is shown");
-        req(MapBgfx2dSymbology::color(symbology, MapBgfx2dPrimitive::NodeIcon, 100001,
-                                      InfrastructureEntity::Tank, true)
-                == mapBgfx2dAbgrFromArgb(symbology.icon_default_fill_color),
-            "icon uses the default fill without node colourization");
-        symbology.visual_node = VisualNode::Pressure;
-        req(MapBgfx2dSymbology::color(symbology, MapBgfx2dPrimitive::NodeIcon, 100001,
-                                      InfrastructureEntity::Tank, true) == 0xff604020u,
-            "icon takes the node colour while node colourization is active");
-        req(MapBgfx2dSymbology::color(symbology, MapBgfx2dPrimitive::NodeIcon, 4242,
-                                      InfrastructureEntity::Tank, true)
-                == mapBgfx2dAbgrFromArgb(networkSymbologyIconUnavailableFillColor()),
-            "icon without a value uses the icon-unavailable fill");
-        req(MapBgfx2dSymbology::color(symbology, MapBgfx2dPrimitive::LinkIcon, 1,
-                                      InfrastructureEntity::Pump, true)
-                == mapBgfx2dAbgrFromArgb(symbology.icon_default_fill_color),
-            "link icon ignores node colourization");
-        symbology.show_icons = false;
-        req((MapBgfx2dSymbology::color(symbology, MapBgfx2dPrimitive::NodeIcon, 100001,
-                                       InfrastructureEntity::Tank, true) >> 24) == 0u,
-            "show_icons off hides icons");
-        req((MapBgfx2dSymbology::color(symbology, MapBgfx2dPrimitive::Node, 100001,
-                                       InfrastructureEntity::Tank, true) >> 24) == 0xffu,
-            "show_icons off brings the node dot back");
-        symbology.show_icons = true;
-        symbology.visual_node = VisualNode::None;
-
-        // Colour stream sizes always match the geometry, and building it
-        // never rebuilds geometry.
-        const MapBgfx2dMesh::ColorLookup lookup =
-            [&symbology](MapBgfx2dPrimitive primitive, quint32 render_id,
-                         InfrastructureEntity entity_type)
+        bool link_entities = true;
+        bool node_entities = true;
+        quint32 maximum_link = 0;
+        for (const MapBgfx2dMeshChunk &chunk : mesh.chunks())
         {
-            return MapBgfx2dSymbology::color(symbology, primitive, render_id, entity_type, false);
-        };
-        const MapBgfx2dMesh::FlowLookup flow_lookup = [&symbology](quint32 render_id)
-        {
-            return MapBgfx2dSymbology::flow(symbology, render_id);
-        };
-        const QVector<MapBgfx2dChunkColors> colors = mesh.buildColors(lookup, flow_lookup);
-        bool aligned = colors.size() == mesh.chunks().size();
-        for (qsizetype index = 0; aligned && index < colors.size(); ++index)
-        {
-            aligned = colors[index].link.size() == mesh.chunks()[index].link_vertices.size()
-                && colors[index].node.size() == mesh.chunks()[index].node_vertices.size()
-                && colors[index].chevron.size() == mesh.chunks()[index].chevron_vertices.size();
+            for (qsizetype index = 0; index + 3 < chunk.link_vertices.size(); index += 4)
+            {
+                const float entity = chunk.link_vertices[index].entity;
+                link_entities = link_entities && entity >= 1.0f
+                    && chunk.link_vertices[index + 1].entity == entity
+                    && chunk.link_vertices[index + 2].entity == entity
+                    && chunk.link_vertices[index + 3].entity == entity;
+                maximum_link = std::max(maximum_link, quint32(entity));
+            }
+            for (qsizetype index = 0; index + 5 < chunk.node_vertices.size(); index += 6)
+            {
+                const float entity = chunk.node_vertices[index].entity;
+                for (int corner = 1; corner < 6; ++corner)
+                    node_entities = node_entities && chunk.node_vertices[index + corner].entity == entity;
+                node_entities = node_entities && entity >= 1.0f;
+            }
         }
-        req(aligned, "colour stream not aligned with geometry");
-        req(mesh.preparationCount() == 1, "colour build rebuilt geometry");
+        req(link_entities, "every link quad carries its link render id");
+        req(maximum_link == 2000, "link render ids reach the last link");
+        req(node_entities, "every node quad carries its node render id");
 
         MapNetworkRenderSymbology pixels;
         pixels.link_thickness_unit = NetworkSymbologySizeUnit::Pixels;
@@ -374,15 +331,16 @@ int main()
         bool sprite_ok = true;
         for (const MapBgfx2dMeshChunk &chunk : icon_mesh.chunks())
         {
-            for (qsizetype k = 0; k < chunk.icon_render_ids.size(); ++k)
+            for (qsizetype k = 0; k < chunk.icon_vertices.size() / 6; ++k)
             {
                 const MapBgfx2d::WorldPoint at = worldOf(chunk, chunk.icon_vertices, k * 6);
-                if (chunk.icon_on_link[k])
-                    pump_icon_ok = chunk.icon_render_ids[k] == pump
+                const MapBgfx2dIconVertex &icon = chunk.icon_vertices[k * 6];
+                if (icon.on_link > 0.5f)
+                    pump_icon_ok = quint32(icon.entity) == pump
                         && std::fabs(at.x - 0.5 * (pump_start.x + pump_end.x)) < 1e-10
                         && std::fabs(at.y - pump_start.y) < 1e-10;
                 else
-                    tank_icon_ok = chunk.icon_render_ids[k] == tank
+                    tank_icon_ok = quint32(icon.entity) == tank
                         && std::fabs(at.x - tank_world.x) < 1e-10 && std::fabs(at.y - tank_world.y) < 1e-10;
                 // Corner 0 is the upper-left: (-half_w, -half_h) and (u0, v0);
                 // corner 2 the lower-right: (u1, v1).
@@ -426,11 +384,11 @@ int main()
         QHash<quint32, QVector<MapBgfx2d::WorldPoint>> per_link_world;
         for (const MapBgfx2dMeshChunk &chunk : flow_mesh.chunks())
         {
-            for (qsizetype k = 0; k < chunk.chevron_render_ids.size(); ++k)
+            for (qsizetype k = 0; k < chunk.chevron_vertices.size() / 4; ++k)
             {
-                per_link[chunk.chevron_render_ids[k]].append(chunk.chevron_vertices[k * 4]);
-                per_link_world[chunk.chevron_render_ids[k]].append(
-                    worldOf(chunk, chunk.chevron_vertices, k * 4));
+                const quint32 link = quint32(chunk.chevron_vertices[k * 4].entity);
+                per_link[link].append(chunk.chevron_vertices[k * 4]);
+                per_link_world[link].append(worldOf(chunk, chunk.chevron_vertices, k * 4));
             }
         }
         bool bounded = per_link.size() == 5;
@@ -512,105 +470,41 @@ int main()
         std::printf("chevrons=%lld max visibility change per 0.01 zoom=%.4f\n",
                     static_cast<long long>(flow_mesh.chevronCount()), maximum_jump);
 
-        // 11. Flow attribute: contrast colour against the link colour, sign
-        //     from flow_directions; direction 0 or the switch off hides.
-        MapNetworkRenderSymbology symbology;
-        symbology.link_colors.insert(pipes[0], qRgb(250, 250, 250));
-        symbology.link_colors.insert(pipes[1], qRgb(10, 20, 30));
-        symbology.flow_directions.insert(pipes[0], 1);
-        symbology.flow_directions.insert(pipes[1], -1);
-        symbology.flow_directions.insert(pipes[2], 0);
-        const MapBgfx2dFlowAttribute light = MapBgfx2dSymbology::flow(symbology, pipes[0]);
-        const MapBgfx2dFlowAttribute dark = MapBgfx2dSymbology::flow(symbology, pipes[1]);
-        req(light.sign == 1.0f && light.abgr == 0xff000000u, "black chevron on a light link, forward");
-        req(dark.sign == -1.0f && dark.abgr == 0xffffffffu, "white chevron on a dark link, reverse");
-        req(MapBgfx2dSymbology::flow(symbology, pipes[2]).sign == 0.0f, "no flow hides chevrons");
-        req(MapBgfx2dSymbology::flow(symbology, pipes[3]).sign == 0.0f, "unknown flow hides chevrons");
-        symbology.show_flow_direction = false;
-        req(MapBgfx2dSymbology::flow(symbology, pipes[0]).sign == 0.0f, "switch off hides chevrons");
-        symbology.show_flow_direction = true;
-
-        const MapBgfx2dMesh::ColorLookup lookup =
-            [&symbology](MapBgfx2dPrimitive primitive, quint32 render_id, InfrastructureEntity entity_type)
+        // 11. Each chevron references its link: the flow direction and the
+        //     contrast colour are the link's GPU data (vs_flow_2d.sc).
+        bool chevron_links_ok = true;
+        for (const MapBgfx2dMeshChunk &chunk : flow_mesh.chunks())
         {
-            return MapBgfx2dSymbology::color(symbology, primitive, render_id, entity_type, false);
-        };
-        const MapBgfx2dMesh::FlowLookup flow_lookup = [&symbology](quint32 render_id)
-        {
-            return MapBgfx2dSymbology::flow(symbology, render_id);
-        };
-        const QVector<MapBgfx2dChunkColors> colors = flow_mesh.buildColors(lookup, flow_lookup);
-        bool chevron_stream_ok = colors.size() == flow_mesh.chunks().size();
-        for (qsizetype index = 0; chevron_stream_ok && index < colors.size(); ++index)
-        {
-            const MapBgfx2dMeshChunk &chunk = flow_mesh.chunks()[index];
-            chevron_stream_ok = colors[index].chevron.size() == chunk.chevron_vertices.size();
-            for (qsizetype k = 0; chevron_stream_ok && k < chunk.chevron_render_ids.size(); ++k)
+            for (qsizetype k = 0; k + 3 < chunk.chevron_vertices.size(); k += 4)
             {
-                const float expected = MapBgfx2dSymbology::flow(symbology, chunk.chevron_render_ids[k]).sign;
-                for (int vertex = 0; vertex < 4; ++vertex)
-                    chevron_stream_ok = chevron_stream_ok
-                        && colors[index].chevron[k * 4 + vertex].sign == expected;
+                const float entity = chunk.chevron_vertices[k].entity;
+                const bool known_link = pipes.contains(quint32(entity)) || quint32(entity) == pump;
+                chevron_links_ok = chevron_links_ok && known_link
+                    && chunk.chevron_vertices[k + 1].entity == entity
+                    && chunk.chevron_vertices[k + 2].entity == entity
+                    && chunk.chevron_vertices[k + 3].entity == entity;
             }
         }
-        req(chevron_stream_ok, "chevron attribute stream carries each link's flow per vertex");
+        req(chevron_links_ok, "every chevron quad carries its link render id");
     }
 
-    // 12. Heatmap (slice 4c): one spot per node on the node quads, colour
-    //     from the heatmap palette, no spot without a value, radius uniform
-    //     continuous in the zoom, QRhi opacity/solid-centre bounds.
+    // 12. Heatmap (slice 4c): one spot per node on the node quads (colour
+    //     and "no spot without a value" are GPU rules, entity_style.sh),
+    //     radius uniform continuous in the zoom, QRhi opacity/solid-centre
+    //     bounds.
     {
         TestScene t;
-        const quint32 with_value = t.addNode(7.0, 46.0, InfrastructureEntity::Junction);
-        const quint32 without_value = t.addNode(7.01, 46.0, InfrastructureEntity::DemandPoint);
-        const quint32 top_value = t.addNode(7.02, 46.0, InfrastructureEntity::Tank);
+        t.addNode(7.0, 46.0, InfrastructureEntity::Junction);
+        t.addNode(7.01, 46.0, InfrastructureEntity::DemandPoint);
+        t.addNode(7.02, 46.0, InfrastructureEntity::Tank);
         MapBgfx2dMesh heatmap_mesh;
         heatmap_mesh.prepare(t.prepare(), no_icons);
 
+        // Heatmap spots reuse the node quads: no geometry of their own.
+        req(heatmap_mesh.nodeVertexCount() == 3 * 6, "heatmap adds no geometry");
         MapNetworkRenderSymbology symbology;
         symbology.visual_heatmap = VisualHeatmap::Pressure;
-        symbology.heatmap_palette = NetworkSymbologyPalette::Viridis;
-        symbology.heatmap_fractions.insert(with_value, 0.0);
-        symbology.heatmap_fractions.insert(top_value, 1.0);
-        // Viridis ends #440154 / #fde725 as ABGR.
-        req(MapBgfx2dSymbology::color(symbology, MapBgfx2dPrimitive::Heatmap, with_value,
-                                      InfrastructureEntity::Junction, false) == 0xff540144u,
-            "heatmap spot takes the palette start colour");
-        req(MapBgfx2dSymbology::color(symbology, MapBgfx2dPrimitive::Heatmap, top_value,
-                                      InfrastructureEntity::Tank, false) == 0xff25e7fdu,
-            "heatmap spot takes the palette end colour");
-        req(MapBgfx2dSymbology::color(symbology, MapBgfx2dPrimitive::Heatmap, without_value,
-                                      InfrastructureEntity::DemandPoint, false) == 0u,
-            "node without a heatmap value has no spot");
-        symbology.heatmap_palette_flipped = true;
-        req(MapBgfx2dSymbology::color(symbology, MapBgfx2dPrimitive::Heatmap, with_value,
-                                      InfrastructureEntity::Junction, false) == 0xff25e7fdu,
-            "flipped palette reverses the spot colour");
-        symbology.heatmap_palette_flipped = false;
-
-        const MapBgfx2dMesh::ColorLookup lookup =
-            [&symbology](MapBgfx2dPrimitive primitive, quint32 render_id, InfrastructureEntity entity_type)
-        {
-            return MapBgfx2dSymbology::color(symbology, primitive, render_id, entity_type, false);
-        };
-        const QVector<MapBgfx2dChunkColors> colors =
-            heatmap_mesh.buildColors(lookup, MapBgfx2dMesh::FlowLookup());
-        bool heatmap_stream_ok = colors.size() == heatmap_mesh.chunks().size();
-        int spots = 0;
-        for (qsizetype index = 0; heatmap_stream_ok && index < colors.size(); ++index)
-        {
-            const MapBgfx2dMeshChunk &chunk = heatmap_mesh.chunks()[index];
-            heatmap_stream_ok = colors[index].heatmap.size() == chunk.node_vertices.size();
-            for (qsizetype k = 0; heatmap_stream_ok && k < chunk.node_render_ids.size(); ++k)
-            {
-                const quint32 expected = MapBgfx2dSymbology::color(symbology, MapBgfx2dPrimitive::Heatmap,
-                    chunk.node_render_ids[k], chunk.node_entity_types[k], false);
-                spots += (expected >> 24) != 0u ? 1 : 0;
-                for (int vertex = 0; vertex < 6; ++vertex)
-                    heatmap_stream_ok = heatmap_stream_ok && colors[index].heatmap[k * 6 + vertex] == expected;
-            }
-        }
-        req(heatmap_stream_ok && spots == 2, "heatmap stream parallel to the node quads, one spot per valued node");
+        symbology.heatmap_values = QVector<double>(3, 1.0);
 
         // Sizes: metre radius continuous in the zoom, pixel radius fixed,
         // bounds as QRhi, pass disabled without a heatmap.
@@ -632,10 +526,8 @@ int main()
                 && MapBgfx2dSymbology::sizes(symbology, 46.0, 18.3).heatmap_radius_px == 50.0,
             "pixel heatmap radius is zoom independent");
         symbology.visual_heatmap = VisualHeatmap::None;
-        req(MapBgfx2dSymbology::sizes(symbology, 46.0, 15.0).heatmap_radius_px == 0.0
-                && MapBgfx2dSymbology::color(symbology, MapBgfx2dPrimitive::Heatmap, top_value,
-                                             InfrastructureEntity::Tank, false) == 0u,
-            "no heatmap selected: pass disabled, no spots");
+        req(MapBgfx2dSymbology::sizes(symbology, 46.0, 15.0).heatmap_radius_px == 0.0,
+            "no heatmap selected: pass disabled");
         symbology.visual_heatmap = VisualHeatmap::Pressure;
         symbology.heatmap_opacity = 0;
         req(MapBgfx2dSymbology::sizes(symbology, 46.0, 15.0).heatmap_radius_px == 0.0,

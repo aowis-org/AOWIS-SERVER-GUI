@@ -2,6 +2,7 @@ $input a_position, a_texcoord0, a_texcoord1, a_color0, a_texcoord2
 $output v_color0, v_segment, v_segment_size
 
 #include <bgfx_shader.sh>
+#include "entity_style.sh"
 #include "globe_network.sh"
 
 // Flow-direction chevron stroke (MapGlobeNetworkScene::flowDirectionVertices,
@@ -20,8 +21,16 @@ vec3 depthSeparatedPosition(vec3 position, float view_depth, vec2 viewport)
     return position + direction_to_eye / distance_to_eye * (world_units_per_pixel * 8.0);
 }
 
+// Every link with chevrons has them in both orientations (a_color0: the
+// entity reference, z the orientation): the link's current flow direction
+// (entity_style.sh) shows one set, so a time step never rebuilds them. The
+// colour contrasts with the link's.
 void main()
 {
+    vec4 texel = entityLinkTexel(a_color0.x);
+    float shown = u_entity_options.z * (1.0 - entityFlag(texel.z, ENTITY_FLAG_HIDDEN))
+        * step(abs(texel.y - a_color0.z), 0.5) * abs(texel.y);
+    vec4 color = vec4(entityFlowColor(entityLinkColor(texel)), shown);
     vec2 viewport = netViewport();
     vec4 unseparated_start_clip = mul(u_net_view_proj, vec4(a_position, 1.0));
     vec4 unseparated_end_clip = mul(u_net_view_proj, vec4(a_texcoord0, 1.0));
@@ -59,14 +68,15 @@ void main()
     else
         half_width = max(half_width + a_texcoord2, 0.0);
 
-    float extent = half_width + 1.0;
+    // Nothing to draw: a zero-area quad.
+    float extent = (half_width + 1.0) * step(0.001, color.a);
     float endpoint_sign = a_texcoord1.x * 2.0 - 1.0;
     vec4 clip_position = mix(start_clip, end_clip, a_texcoord1.x);
     vec2 offset_pixels = tangent * endpoint_sign * extent + normal * a_texcoord1.y * extent;
     clip_position.xy += offset_pixels * 2.0 / viewport * clip_position.w;
 
     gl_Position = clip_position;
-    v_color0 = a_color0;
+    v_color0 = color;
     v_segment = netScreenLinear(vec2(mix(-extent, direction_length + extent, a_texcoord1.x),
                                      a_texcoord1.y * extent),
                                 clip_position.w);

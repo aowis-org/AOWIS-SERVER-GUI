@@ -1,6 +1,7 @@
 #include "map/bgfx/map_bgfx_labels.h"
 
 #include "map/bgfx/map_bgfx_hud.h"
+#include "map/render/map_network_render_symbology.h"
 
 #include <algorithm>
 #include <cmath>
@@ -83,15 +84,15 @@ void MapBgfxLabels::synchronizeIdentity(const MapBgfx2dScene &scene,
 }
 
 QString MapBgfxLabels::labelText(const QString &id, bool show_id, bool show_value,
-                                 const QHash<quint32, double> *values,
+                                 const QVector<double> *values,
                                  const MapBgfxLabelValueFormat &format, quint32 render_id) const
 {
     QString value_text;
     if (show_value && format.valid && values != nullptr)
     {
-        const QHash<quint32, double>::const_iterator found = values->constFind(render_id);
-        if (found != values->cend() && std::isfinite(found.value()))
-            value_text = MapBgfxHud::formatLegendValue(format.displayed(found.value()));
+        const double value = mapNetworkSymbologyValue(*values, render_id);
+        if (std::isfinite(value))
+            value_text = MapBgfxHud::formatLegendValue(format.displayed(value));
     }
     const bool with_id = show_id && !id.isEmpty();
     if (with_id && !value_text.isEmpty())

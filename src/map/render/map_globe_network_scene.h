@@ -238,14 +238,16 @@ private:
         const QVector3D &start, const QVector3D &end) const;
     void appendNode(InfrastructureEntity entity_type, quint32 render_id,
                     const QVector3D &center);
+    // Writes the entity reference the GPU colours the vertex by
+    // (mapNetworkSetEntityReference()).
     void applyLinkColor(MapNetworkLinkVertex *vertex) const;
     void applyNodeColor(MapNetworkNodeVertex *vertex) const;
     void rebuildFlowDirections();
+    // One chevron stroke of a link in one orientation (entity reference).
     void appendFlowDirectionStroke(
         const QVector3D &start, const QVector3D &end,
-        QRgb color, float half_width_px);
+        quint32 render_id, float orientation, float half_width_px);
     QVector3D ellipsoidNormalAt(const QVector3D &relative_ecef) const;
-    QRgb flowDirectionColor(quint32 render_id) const;
     void rebuildIcons();
     void appendIcon(const IconMarker &marker);
     void rebuildTankInstances();
@@ -255,9 +257,9 @@ private:
         QVector3D *basis_x,
         QVector3D *basis_y,
         QVector3D *basis_z) const;
-    // Rebuilds compact placement/radius/style-index instances from the
-    // junction markers. Color, selection, diagnostics and visibility now
-    // live in the shared GPU style table.
+    // Rebuilds compact placement/radius instances from the junction markers.
+    // Colour, selection, diagnostics and visibility come from the per-entity
+    // GPU data (MapBgfxEntityStyle), not from the instances.
     void rebuildJunctionInstances();
     void rebuildHighlights();
     void appendEntityHighlight(InfrastructureEntity entity_type, quint32 render_id,

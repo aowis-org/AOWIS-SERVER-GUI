@@ -84,4 +84,24 @@ struct MapNetworkNodeVertex
     InfrastructureEntity entity_type = InfrastructureEntity::Unknown;
 };
 
+// Entity-coloured vertices (the globe network's base geometry) carry no
+// colour: their colour fields hold a reference to the entity, and the
+// renderer colours them from per-entity data on the GPU
+// (map_bgfx_entity_style.h, shaders/entity_style.sh). A time step, metric,
+// palette or range change therefore never rebuilds or re-uploads them.
+//   red:   render id (exact in a float up to 2^24 entities per class),
+//   green: 1 for a link, 0 for a node (demand point attachments reference
+//          their demand point),
+//   blue:  flow chevron orientation: +1 along the link, -1 against it,
+//   alpha: 1.
+template <typename Vertex>
+void mapNetworkSetEntityReference(Vertex *vertex, quint32 render_id, bool link,
+                                  float orientation = 0.0f)
+{
+    vertex->red = float(render_id);
+    vertex->green = link ? 1.0f : 0.0f;
+    vertex->blue = orientation;
+    vertex->alpha = 1.0f;
+}
+
 #endif // MAP_NETWORK_RENDER_DATA_H

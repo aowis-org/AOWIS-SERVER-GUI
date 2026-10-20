@@ -110,8 +110,9 @@ struct Harness
     MapBgfxHudTextCache cache{2048};
     MapBgfxHudCanvas canvas;
     MapLabelSettings settings;
-    QHash<quint32, double> node_values;
-    QHash<quint32, double> link_values;
+    // Dense by render id, NaN: no value (MapNetworkRenderSymbology).
+    QVector<double> node_values;
+    QVector<double> link_values;
     MapBgfxLabelValueFormat node_format;
     MapBgfxLabelValueFormat link_format;
     QSet<quint64> hidden;
@@ -314,8 +315,8 @@ void testValuesAndSettings()
     harness.snapshot.links.append(link(4, "PU-1", InfrastructureEntity::Pump,
         {coordinate(8.9990, 47.0), coordinate(9.0010, 47.0)}));
     harness.prepare();
-    harness.node_values.insert(1, 10.0);
-    harness.link_values.insert(4, 0.5);
+    harness.node_values = {std::nan(""), 10.0};
+    harness.link_values = {std::nan(""), std::nan(""), std::nan(""), std::nan(""), 0.5};
     harness.node_format.valid = true;
     harness.node_format.scale = 1.4219;
     harness.node_format.offset = 0.0;

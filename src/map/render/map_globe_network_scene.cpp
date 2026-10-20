@@ -210,9 +210,9 @@ bool MapGlobeNetworkScene::setHiddenEntityUuids(const QSet<QUuid> &hidden_entity
 
 void MapGlobeNetworkScene::setSymbology(const MapNetworkRenderSymbology &symbology)
 {
-    const bool link_colors_changed = this->symbology.link_colors != symbology.link_colors;
-    const bool node_colors_changed = this->symbology.node_colors != symbology.node_colors;
-    const bool icon_visibility_changed = this->symbology.show_icons != symbology.show_icons;
+    // Colours are not part of the geometry (entity references, see
+    // mapNetworkSetEntityReference()): only sizes, visibility toggles and
+    // whether flow directions exist at all rebuild anything here.
     const bool link_thickness_changed =
         this->symbology.link_thickness_unit != symbology.link_thickness_unit
         || this->symbology.link_thickness_px != symbology.link_thickness_px
@@ -221,23 +221,20 @@ void MapGlobeNetworkScene::setSymbology(const MapNetworkRenderSymbology &symbolo
         this->symbology.icon_size_unit != symbology.icon_size_unit
         || this->symbology.icon_size_px != symbology.icon_size_px
         || this->symbology.icon_size_m != symbology.icon_size_m
-        || this->symbology.show_icons != symbology.show_icons
-        || this->symbology.icon_default_fill_color != symbology.icon_default_fill_color
-        || this->symbology.visual_node != symbology.visual_node
-        || this->symbology.visual_link != symbology.visual_link
-        || link_colors_changed || node_colors_changed;
+        || this->symbology.show_icons != symbology.show_icons;
     const bool junction_instance_changed =
         this->symbology.node_size_unit != symbology.node_size_unit
         || (symbology.node_size_unit == NetworkSymbologySizeUnit::Meters
             && this->symbology.node_size_m != symbology.node_size_m);
+    // Chevrons exist for every link in both orientations while a result
+    // gives flow directions; the direction itself is per-entity GPU data.
     const bool flow_direction_changed =
         this->symbology.show_flow_direction != symbology.show_flow_direction
         || this->symbology.flow_direction_size_px != symbology.flow_direction_size_px
-        || this->symbology.flow_directions != symbology.flow_directions
-        || this->symbology.link_thickness_unit != symbology.link_thickness_unit
-        || this->symbology.link_thickness_px != symbology.link_thickness_px
-        || this->symbology.link_thickness_m != symbology.link_thickness_m
-        || link_colors_changed;
+        || this->symbology.flow_directions.isEmpty() != symbology.flow_directions.isEmpty()
+        || link_thickness_changed;
+    const bool highlights_changed =
+        link_thickness_changed || this->symbology.show_junctions != symbology.show_junctions;
 
     this->symbology = symbology;
     if (link_thickness_changed && !this->retained_network.snapshot().demand_point_attachments.isEmpty())
@@ -246,18 +243,6 @@ void MapGlobeNetworkScene::setSymbology(const MapNetworkRenderSymbology &symbolo
         return;
     }
 
-    if (link_colors_changed || node_colors_changed)
-    {
-        for (MapNetworkLinkVertex &vertex : this->link_vertices)
-            applyLinkColor(&vertex);
-        for (MapNetworkLinkVertex &vertex : this->underground_link_vertices)
-            applyLinkColor(&vertex);
-    }
-    if (node_colors_changed || icon_visibility_changed)
-    {
-        for (MapNetworkNodeVertex &vertex : this->node_vertices)
-            applyNodeColor(&vertex);
-    }
     if (icon_changed)
     {
         rebuildIcons();
@@ -272,7 +257,7 @@ void MapGlobeNetworkScene::setSymbology(const MapNetworkRenderSymbology &symbolo
     }
     if (flow_direction_changed)
         rebuildFlowDirections();
-    if (link_thickness_changed)
+    if (highlights_changed)
         rebuildHighlights();
 }
 
@@ -1223,9 +1208,6 @@ void MapGlobeNetworkScene::appendLinkSegment(
         vertex.end_z = end.z();
         vertex.along = corners[index][0];
         vertex.side = corners[index][1];
-        vertex.red = 0.05f;
-        vertex.green = 0.05f;
-        vertex.blue = 0.05f;
         vertex.width_direction_x = width_direction.x();
         vertex.width_direction_y = width_direction.y();
         vertex.width_direction_z = width_direction.z();
@@ -1267,10 +1249,7 @@ void MapGlobeNetworkScene::appendUndergroundLinkSegment(
         vertex.width_direction_y = width_direction.y();
         vertex.width_direction_z = width_direction.z();
         vertex.entity_type = entity_type;
-        // The X-Ray path reuses the normal link vertex layout, so it still
-        // expects a tinted vertex color to blend
-        // its dashed pattern against -- reuse the entity's normal color
-        // rather than inventing an xray-specific one.
+        // The X-Ray path draws the entity's normal colour, dashed.
         applyLinkColor(&vertex);
         this->underground_link_vertices.append(vertex);
     }
@@ -1505,9 +1484,6 @@ void MapGlobeNetworkScene::appendNode(
         vertex.center_z = center.z();
         vertex.corner_x = corners[index][0];
         vertex.corner_y = corners[index][1];
-        vertex.red = 0.02f;
-        vertex.green = 0.02f;
-        vertex.blue = 0.02f;
         vertex.metric_billboard = 1.0f;
         vertex.render_id = render_id;
         vertex.entity_type = entity_type;
@@ -1519,33 +1495,15 @@ void MapGlobeNetworkScene::appendNode(
 
 void MapGlobeNetworkScene::applyLinkColor(MapNetworkLinkVertex *vertex) const
 {
-    if (vertex == nullptr)
-        return;
-
-    const QRgb color = vertex->entity_type == InfrastructureEntity::DemandPoint
-        ? this->symbology.node_colors.value(
-            vertex->render_id, networkSymbologyDefaultColor())
-        : this->symbology.link_colors.value(
-            vertex->render_id, networkSymbologyDefaultColor());
-    vertex->red = qRed(color) / 255.0f;
-    vertex->green = qGreen(color) / 255.0f;
-    vertex->blue = qBlue(color) / 255.0f;
-    vertex->alpha = qAlpha(color) / 255.0f;
+    // Demand point attachments take their demand point's colour.
+    mapNetworkSetEntityReference(vertex, vertex->render_id,
+                                 vertex->entity_type != InfrastructureEntity::DemandPoint);
 }
 
 void MapGlobeNetworkScene::applyNodeColor(MapNetworkNodeVertex *vertex) const
 {
-    if (vertex == nullptr)
-        return;
-
-    const QRgb color = this->symbology.node_colors.value(
-        vertex->render_id, networkSymbologyDefaultColor());
-    vertex->red = qRed(color) / 255.0f;
-    vertex->green = qGreen(color) / 255.0f;
-    vertex->blue = qBlue(color) / 255.0f;
-    vertex->alpha = this->symbology.show_icons && mapHasIcon(vertex->entity_type)
-        ? 0.0f
-        : qAlpha(color) / 255.0f;
+    // The shader also drops the marker under a shown icon.
+    mapNetworkSetEntityReference(vertex, vertex->render_id, false);
 }
 
 void MapGlobeNetworkScene::rebuildFlowDirections()
@@ -1553,6 +1511,9 @@ void MapGlobeNetworkScene::rebuildFlowDirections()
     const MapRenderDiagnostics::Scope timing(MapRenderDiagnostics::Counter::GlobeFlowRebuilt);
     this->flow_direction_vertices.clear();
 
+    // Built once per scale for every link long enough, in both
+    // orientations: the shader shows the set matching the link's current
+    // flow direction (per-entity GPU data), so time steps never rebuild them.
     if (!this->symbology.show_flow_direction
         || this->symbology.flow_direction_size_px <= 0
         || this->symbology.flow_directions.isEmpty()
@@ -1574,7 +1535,7 @@ void MapGlobeNetworkScene::rebuildFlowDirections()
             1, int(std::floor(total_screen_length_px / FlowDirectionSpacingPixels)),
             FlowDirectionMaximumMarkersPerLink);
     }
-    this->flow_direction_vertices.reserve(estimated_marker_count * 12);
+    this->flow_direction_vertices.reserve(estimated_marker_count * 24);
 
     const double chevron_length_m = double(this->symbology.flow_direction_size_px)
         / this->flow_direction_pixels_per_meter;
@@ -1593,9 +1554,7 @@ void MapGlobeNetworkScene::rebuildFlowDirections()
 
     for (const LinkPath &path : this->link_paths)
     {
-        const qint8 flow_direction =
-            this->symbology.flow_directions.value(path.render_id, 0);
-        if (flow_direction == 0 || path.segments.isEmpty())
+        if (path.segments.isEmpty())
             continue;
 
         const double total_screen_length_px =
@@ -1609,7 +1568,6 @@ void MapGlobeNetworkScene::rebuildFlowDirections()
         const int marker_count = qBound(
             1, int(std::floor(total_screen_length_px / FlowDirectionSpacingPixels)),
             FlowDirectionMaximumMarkersPerLink);
-        const QRgb arrow_color = flowDirectionColor(path.render_id);
 
         for (int marker_index = 0; marker_index < marker_count; ++marker_index)
         {
@@ -1648,8 +1606,6 @@ void MapGlobeNetworkScene::rebuildFlowDirections()
                 if (direction.lengthSquared() <= 1.0e-12f)
                     break;
                 direction.normalize();
-                if (flow_direction < 0)
-                    direction *= -1.0f;
 
                 QVector3D normal = QVector3D::crossProduct(surface_normal, direction);
                 if (normal.lengthSquared() <= 1.0e-12f)
@@ -1657,19 +1613,22 @@ void MapGlobeNetworkScene::rebuildFlowDirections()
                 normal.normalize();
 
                 center += surface_normal * elevation_m;
-                const QVector3D tip = center
-                    + direction * float(chevron_length_m / 2.0);
-                const QVector3D base = center
-                    - direction * float(chevron_length_m / 2.0);
-                const QVector3D tail_first = base
-                    + normal * float(chevron_half_width_m);
-                const QVector3D tail_second = base
-                    - normal * float(chevron_half_width_m);
+                for (const float orientation : {1.0f, -1.0f})
+                {
+                    const QVector3D tip = center
+                        + direction * float(orientation * chevron_length_m / 2.0);
+                    const QVector3D base = center
+                        - direction * float(orientation * chevron_length_m / 2.0);
+                    const QVector3D tail_first = base
+                        + normal * float(chevron_half_width_m);
+                    const QVector3D tail_second = base
+                        - normal * float(chevron_half_width_m);
 
-                appendFlowDirectionStroke(
-                    tail_first, tip, arrow_color, half_stroke_px);
-                appendFlowDirectionStroke(
-                    tail_second, tip, arrow_color, half_stroke_px);
+                    appendFlowDirectionStroke(
+                        tail_first, tip, path.render_id, orientation, half_stroke_px);
+                    appendFlowDirectionStroke(
+                        tail_second, tip, path.render_id, orientation, half_stroke_px);
+                }
                 break;
             }
         }
@@ -1678,7 +1637,7 @@ void MapGlobeNetworkScene::rebuildFlowDirections()
 
 void MapGlobeNetworkScene::appendFlowDirectionStroke(
     const QVector3D &start, const QVector3D &end,
-    QRgb color, float half_width_px)
+    quint32 render_id, float orientation, float half_width_px)
 {
     const float corners[6][2] = {
         {0.0f, -1.0f},
@@ -1701,10 +1660,9 @@ void MapGlobeNetworkScene::appendFlowDirectionStroke(
         vertex.end_z = end.z();
         vertex.along = corners[index][0];
         vertex.side = corners[index][1];
-        vertex.red = qRed(color) / 255.0f;
-        vertex.green = qGreen(color) / 255.0f;
-        vertex.blue = qBlue(color) / 255.0f;
-        vertex.alpha = qAlpha(color) / 255.0f;
+        vertex.render_id = render_id;
+        vertex.entity_type = InfrastructureEntity::Pipe;
+        mapNetworkSetEntityReference(&vertex, render_id, true, orientation);
         vertex.size_adjust_px = this->symbology.link_thickness_unit
                 == NetworkSymbologySizeUnit::Meters
             ? -half_width_px
@@ -1737,18 +1695,6 @@ QVector3D MapGlobeNetworkScene::ellipsoidNormalAt(
         float(normal_z / normal_length));
 }
 
-QRgb MapGlobeNetworkScene::flowDirectionColor(quint32 render_id) const
-{
-    const QRgb link_color = this->symbology.link_colors.value(
-        render_id, networkSymbologyDefaultColor());
-    const int red = qRed(link_color);
-    const int green = qGreen(link_color);
-    const int blue = qBlue(link_color);
-    const double luminance =
-        0.2126 * double(red) + 0.7152 * double(green) + 0.0722 * double(blue);
-    return luminance >= 150.0 ? qRgb(0, 0, 0) : qRgb(255, 255, 255);
-}
-
 void MapGlobeNetworkScene::rebuildIcons()
 {
     this->icon_vertices.clear();
@@ -1775,34 +1721,9 @@ void MapGlobeNetworkScene::appendIcon(const IconMarker &marker)
 
     const float half_width_ratio = float(atlas_entry.width_ratio / 2.0);
     const float half_height_ratio = float(atlas_entry.height_ratio / 2.0);
+    // Fill colour and the selection tint come from the entity's data.
     const bool node_entity =
         InfrastructureEntityTraits::isHydraulicPointEntity(marker.entity_type);
-    const bool colorization_active = node_entity
-        ? this->symbology.visual_node != VisualNode::None
-        : this->symbology.visual_link != VisualLink::None;
-    QRgb color = this->symbology.icon_default_fill_color;
-    if (colorization_active)
-    {
-        color = node_entity
-            ? this->symbology.node_colors.value(
-                marker.render_id, networkSymbologyUnavailableColor())
-            : this->symbology.link_colors.value(
-                marker.render_id, networkSymbologyUnavailableColor());
-        if (color == networkSymbologyUnavailableColor())
-            color = networkSymbologyIconUnavailableFillColor();
-    }
-
-    if (this->selected_entity_type == marker.entity_type
-        && !this->selected_entity_uuid.isNull())
-    {
-        const QHash<QUuid, quint64>::const_iterator selected_iterator =
-            this->entity_keys_by_uuid.constFind(this->selected_entity_uuid);
-        if (selected_iterator != this->entity_keys_by_uuid.cend()
-            && selected_iterator.value() == entityRenderKey(marker.entity_type, marker.render_id))
-        {
-            color = QColor(0, 190, 255).rgba();
-        }
-    }
 
     const float corners[6][2] = {
         {-1.0f, -1.0f},
@@ -1827,10 +1748,7 @@ void MapGlobeNetworkScene::appendIcon(const IconMarker &marker)
         vertex.offset_y_ratio = corners[index][1] * half_height_ratio;
         vertex.u = corners[index][0] < 0.0f ? u_left : u_right;
         vertex.v = corners[index][1] < 0.0f ? v_bottom : v_top;
-        vertex.red = qRed(color) / 255.0f;
-        vertex.green = qGreen(color) / 255.0f;
-        vertex.blue = qBlue(color) / 255.0f;
-        vertex.alpha = qAlpha(color) / 255.0f;
+        mapNetworkSetEntityReference(&vertex, marker.render_id, !node_entity);
         vertex.render_id = marker.render_id;
         vertex.entity_type = marker.entity_type;
         this->icon_vertices.append(vertex);

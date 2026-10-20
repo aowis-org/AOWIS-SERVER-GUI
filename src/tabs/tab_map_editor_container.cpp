@@ -327,9 +327,6 @@ void MapEditorContainer::applyRenderSurfaceEditorSymbology()
     if (this->bgfx_surface == nullptr || this->hydraulic_data == nullptr)
         return;
 
-    const NetworkRenderSnapshot &snapshot =
-        this->hydraulic_data->networkRenderSnapshot();
-
     // The editor look: black pipes and node dots, brown device links, no
     // GPU icons (the overlay draws the full-colour editor icons), no flow.
     MapNetworkRenderSymbology symbology;
@@ -347,18 +344,11 @@ void MapEditorContainer::applyRenderSurfaceEditorSymbology()
     symbology.show_flow_direction = false;
     symbology.visual_heatmap = VisualHeatmap::None;
 
-    symbology.node_colors.reserve(snapshot.nodes.size());
-    for (const NetworkRenderNode &node : snapshot.nodes)
-        symbology.node_colors.insert(node.render_id, qRgb(0, 0, 0));
-
-    symbology.link_colors.reserve(snapshot.links.size());
-    for (const NetworkRenderLink &link : snapshot.links)
-    {
-        const QRgb color = link.entity_type == InfrastructureEntity::Pipe
-            ? qRgb(0, 0, 0)
-            : qRgb(139, 90, 43);
-        symbology.link_colors.insert(link.render_id, color);
-    }
+    // Visual None everywhere: the base colours are the editor look (the
+    // GPU colours every entity from its class, no per-entity data).
+    symbology.node_base_color = qRgb(0, 0, 0);
+    symbology.pipe_base_color = qRgb(0, 0, 0);
+    symbology.device_link_base_color = qRgb(139, 90, 43);
 
     this->bgfx_surface->setSymbology(symbology);
 }

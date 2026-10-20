@@ -712,6 +712,9 @@ void MapBgfxSurface::setNetworkSnapshot(const NetworkRenderSnapshot &snapshot)
             this->entity_key_by_uuid.insert(link.uuid, key);
         }
         this->highlights_dirty = true;
+        // New render ids: entity classes and the uuid-based states again.
+        this->entity_classes_dirty = true;
+        this->entity_state_dirty = true;
     }
     // A network opened in Globe mode: load the DEM of the current camera now
     // and arm the one-shot for the fitted camera that normally follows
@@ -756,6 +759,7 @@ void MapBgfxSurface::setSelectedEntity(InfrastructureEntity entity_type, const Q
     this->selected_entity_type = entity_type;
     this->selected_entity_uuid = uuid;
     this->highlights_dirty = true;
+    this->entity_state_dirty = true;
     this->globe_network.setSelectedEntity(entity_type, uuid);
 }
 
@@ -770,6 +774,7 @@ void MapBgfxSurface::setSimulationErrorEntities(
     this->simulation_error_entities = error_entities;
     this->simulation_stale_entity_uuids = stale_entity_uuids;
     this->highlights_dirty = true;
+    this->entity_state_dirty = true;
     this->globe_network.setSimulationErrorEntities(error_entities, stale_entity_uuids);
 }
 
@@ -846,11 +851,8 @@ void MapBgfxSurface::synchronizeHighlights()
         return true;
     };
 
-    // QRhi colours: selection (0, 190, 255); errors red, stale results grey.
-    const quint32 selected_abgr = mapBgfx2dAbgrFromArgb(quint32(qRgb(0, 190, 255)));
-    const quint32 error_abgr = mapBgfx2dAbgrFromArgb(quint32(qRgb(255, 0, 0)));
-    const quint32 stale_abgr = mapBgfx2dAbgrFromArgb(quint32(qRgb(128, 128, 128)));
-
+    // Colours (selection; errors red, stale results grey) come from the
+    // entity flags (synchronizeEntityStyle()); only the geometry is here.
     QSet<quint64> selected_keys;
     quint64 selected_key = 0;
     const bool selected_has_error =
@@ -862,49 +864,18 @@ void MapBgfxSurface::synchronizeHighlights()
         selected_keys.insert(selected_key);
 
     QSet<quint64> diagnostic_keys;
-    // Links reach the colour lookup without their entity type (see
-    // MapBgfx2dMesh::buildColors()), nodes with it: keep both maps.
-    QHash<quint64, quint32> diagnostic_node_colors;
-    QHash<quint32, quint32> diagnostic_link_colors;
     for (QHash<QUuid, InfrastructureEntity>::const_iterator error =
              this->simulation_error_entities.cbegin();
          error != this->simulation_error_entities.cend(); ++error)
     {
         quint64 key = 0;
-        if (!resolve(error.key(), error.value(), &key))
-            continue;
-        const quint32 color = this->simulation_stale_entity_uuids.contains(error.key())
-            ? stale_abgr : error_abgr;
-        diagnostic_keys.insert(key);
-        diagnostic_node_colors.insert(key, color);
-        diagnostic_link_colors.insert(quint32(key), color);
+        if (resolve(error.key(), error.value(), &key))
+            diagnostic_keys.insert(key);
     }
 
     const bool show_junctions = this->symbology.show_junctions;
-    // Hidden junctions get no node highlight (QRhi appendEntityHighlight()).
-    const MapBgfx2dMesh::ColorLookup selected_lookup =
-        [selected_abgr, show_junctions](MapBgfx2dPrimitive primitive, quint32,
-                                        InfrastructureEntity entity_type)
-    {
-        if (primitive == MapBgfx2dPrimitive::Node
-            && entity_type == InfrastructureEntity::Junction && !show_junctions)
-            return 0u;
-        return selected_abgr;
-    };
-    const MapBgfx2dMesh::ColorLookup diagnostic_lookup =
-        [&diagnostic_node_colors, &diagnostic_link_colors, show_junctions](
-            MapBgfx2dPrimitive primitive, quint32 render_id, InfrastructureEntity entity_type)
-    {
-        if (primitive == MapBgfx2dPrimitive::Link)
-            return diagnostic_link_colors.value(render_id, 0u);
-        if (entity_type == InfrastructureEntity::Junction && !show_junctions)
-            return 0u;
-        return diagnostic_node_colors.value(MapBgfx2dScene::entityKey(entity_type, render_id), 0u);
-    };
-
-    if (!this->gpu_2d_scene.setHighlights(
-            this->prepared_2d_scene.filtered(selected_keys), selected_lookup, selected_has_error,
-            this->prepared_2d_scene.filtered(diagnostic_keys), diagnostic_lookup))
+    if (!this->gpu_2d_scene.setHighlights(this->prepared_2d_scene.filtered(selected_keys), selected_has_error,
+                                          this->prepared_2d_scene.filtered(diagnostic_keys)))
         qWarning() << "bgfx selection/error highlight upload failed";
     this->highlights_dirty = false;
     this->highlight_preparation_id = this->prepared_2d_scene.preparationId();
@@ -913,6 +884,7 @@ void MapBgfxSurface::synchronizeHighlights()
 
 void MapBgfxSurface::releaseGpuResources()
 {
+    this->entity_style.release();
     this->globe_network.release();
     this->globe_network_ready = false;
     this->globe_surface->release();
@@ -1065,8 +1037,8 @@ void MapBgfxSurface::setHiddenEntityUuids(const QSet<QUuid> &uuids)
     if (this->hidden_entity_uuids == uuids)
         return;
     this->hidden_entity_uuids = uuids;
-    // Only the colour stream changes (alpha 0 for hidden entities).
-    this->symbology_colors_dirty = true;
+    // Only an entity flag changes (the shaders drop hidden entities).
+    this->entity_state_dirty = true;
     this->globe_network.setHiddenEntityUuids(uuids);
     syncGlobeHeatmap();
     // Moved entities lose their labels during the move.
@@ -1309,8 +1281,12 @@ void MapBgfxSurface::renderGlobe(const QSizeF &logical)
     {
         // The terrain as drawn this frame (demand points are draped on it).
         this->globe_network.setTerrainSurfaceRevision(this->globe_surface->surfaceRevision());
+        // The themed icon fill of the globe (globeSymbology()).
+        this->entity_style.setIconDefaultFill(globeSymbology().icon_default_fill_color);
+        synchronizeEntityStyle();
         const MapBgfxGlobeNetwork::FrameResult network = this->globe_network.render(
-            kMapBgfxView, this->globe_camera, viewport, this->gpu_2d_scene.iconAtlasTexture());
+            kMapBgfxView, this->globe_camera, viewport, this->gpu_2d_scene.iconAtlasTexture(),
+            this->entity_style);
         this->network_frame_stats.draw_calls += network.draw_calls;
     }
 }
@@ -1798,7 +1774,9 @@ bool MapBgfxSurface::initializeBackend()
         g_bgfx_device_owner = this;
         this->startup_step = "creating shaders and GPU resources";
         // Each part reports what it rejected; name the part here as well.
-        const bool network_ready = this->gpu_2d_scene.initialize(mapIconAtlasImage());
+        // The network's colours (entity data textures) for both views.
+        const bool network_ready = this->entity_style.initialize()
+            && this->gpu_2d_scene.initialize(mapIconAtlasImage());
         const bool imagery_ready = network_ready && this->imagery_gpu.initialize();
         const bool hud_ready = imagery_ready && this->hud_gpu.initialize()
             && this->overlay_gpu.initialize() && this->label_gpu.initialize();
@@ -1954,67 +1932,11 @@ void MapBgfxSurface::renderFrameAt(double elapsed_seconds)
             this->camera_state.center_lon_deg, this->camera_state.center_lat_deg,
             this->camera_state.continuous_2d_zoom,
             logical.width(), logical.height());
-        // Colour stream: rebuilt only after a geometry upload or a symbology
-        // change, never per frame.
-        if (this->gpu_2d_scene.colorsStale() || this->symbology_colors_dirty)
-        {
-            const MapNetworkRenderSymbology &symbology = this->symbology;
-            // Hidden entities (editor move preview) by the keys the colour
-            // lookup sees: links by render id, nodes by entity key, demand
-            // point attachments by the demand point's render id.
-            QSet<quint32> hidden_links;
-            QSet<quint64> hidden_nodes;
-            QSet<quint32> hidden_attachments;
-            for (const QUuid &uuid : this->hidden_entity_uuids)
-            {
-                const QHash<QUuid, quint64>::const_iterator found =
-                    this->entity_key_by_uuid.constFind(uuid);
-                if (found == this->entity_key_by_uuid.cend())
-                    continue;
-                const InfrastructureEntity entity_type =
-                    static_cast<InfrastructureEntity>(quint8(found.value() >> 32));
-                const quint32 render_id = quint32(found.value() & 0xffffffffu);
-                if (InfrastructureEntityTraits::isHydraulicNetworkLink(entity_type))
-                {
-                    hidden_links.insert(render_id);
-                    continue;
-                }
-                hidden_nodes.insert(found.value());
-                if (entity_type == InfrastructureEntity::DemandPoint)
-                    hidden_attachments.insert(render_id);
-            }
-            const MapBgfx2dMesh::ColorLookup lookup =
-                [&symbology, &hidden_links, &hidden_nodes, &hidden_attachments](
-                    MapBgfx2dPrimitive primitive, quint32 render_id,
-                    InfrastructureEntity entity_type)
-            {
-                switch (primitive)
-                {
-                    case MapBgfx2dPrimitive::Link:
-                    case MapBgfx2dPrimitive::LinkIcon:
-                        if (hidden_links.contains(render_id))
-                            return 0u;
-                        break;
-                    case MapBgfx2dPrimitive::Attachment:
-                        if (hidden_attachments.contains(render_id))
-                            return 0u;
-                        break;
-                    default:
-                        if (!hidden_nodes.isEmpty()
-                            && hidden_nodes.contains(MapBgfx2dScene::entityKey(entity_type, render_id)))
-                            return 0u;
-                        break;
-                }
-                return MapBgfx2dSymbology::color(symbology, primitive, render_id, entity_type,
-                                                 mapHasIcon(entity_type));
-            };
-            const MapBgfx2dMesh::FlowLookup flow_lookup = [&symbology](quint32 link_render_id)
-            {
-                return MapBgfx2dSymbology::flow(symbology, link_render_id);
-            };
-            if (this->gpu_2d_scene.updateColors(lookup, flow_lookup))
-                this->symbology_colors_dirty = false;
-        }
+        // Colours: entity data textures, uploaded only when values,
+        // visibility, selection or diagnostics changed (never per frame, and
+        // never a vertex buffer).
+        this->entity_style.setIconDefaultFill(this->symbology.icon_default_fill_color);
+        synchronizeEntityStyle();
         synchronizeHighlights();
         // Sizes are uniforms from the continuous camera: metre-based widths
         // scale smoothly with the zoom.
@@ -2039,7 +1961,7 @@ void MapBgfxSurface::renderFrameAt(double elapsed_seconds)
             network_view.center.x -= this->network_screen_translation.x() / view.world_pixels;
             network_view.center.y -= this->network_screen_translation.y() / view.world_pixels;
         }
-        this->network_frame_stats = this->gpu_2d_scene.draw(network_view, style);
+        this->network_frame_stats = this->gpu_2d_scene.draw(network_view, style, this->entity_style);
         renderOverlay(logical, view);
         // Labels above the network and the editor's icons, below the HUD.
         renderLabels(logical, network_view, sizes);
@@ -2097,8 +2019,9 @@ void MapBgfxSurface::renderDebugOverlay()
                         static_cast<unsigned long long>(this->gpu_2d_scene.uploadCount()),
                         static_cast<unsigned long long>(this->gpu_2d_scene.uploadedBytes()),
                         static_cast<unsigned long long>(this->frame_count));
-    bgfx::dbgTextPrintf(2, 14, 0x0f, "Symbology colour uploads %llu, flow chevrons %lld",
-                        static_cast<unsigned long long>(this->gpu_2d_scene.colorUploadCount()),
+    bgfx::dbgTextPrintf(2, 14, 0x0f, "Entity data uploads %llu (%llu bytes), flow chevrons %lld",
+                        static_cast<unsigned long long>(this->entity_style.textureUploadCount()),
+                        static_cast<unsigned long long>(this->entity_style.textureUploadBytes()),
                         static_cast<long long>(this->gpu_2d_scene.chevronCount()));
     bgfx::dbgTextPrintf(2, 13, 0x0f, "Network chunks %d/%d drawn, %d draw calls",
                         this->network_frame_stats.chunks_drawn,
@@ -2291,7 +2214,8 @@ void MapBgfxSurface::setSymbology(const MapNetworkRenderSymbology &symbology)
 {
     requestRedraw();
     this->symbology = symbology;
-    this->symbology_colors_dirty = true;
+    // Values, ranges, palettes: data textures and uniforms, no geometry.
+    this->entity_style.setSymbology(this->symbology);
     // New values (time step, metric) and symbol sizes.
     this->labels_dirty = true;
     this->globe_network.setSymbology(globeSymbology());
@@ -2301,13 +2225,17 @@ void MapBgfxSurface::setSymbology(const MapNetworkRenderSymbology &symbology)
 void MapBgfxSurface::setVisualControlSettings(const NetworkSymbologySettings &settings)
 {
     requestRedraw();
-    // Cheap path for slider/toggle changes: sizes, the heatmap radius,
-    // opacity and solid centre are uniforms; only the junction and flow-arrow
-    // toggles need the attribute stream again. Heatmap values and palette
-    // arrive through setSymbology().
+    // Cheap path for slider/toggle and palette changes: sizes, the heatmap
+    // radius, opacity and solid centre, the junction and flow-arrow toggles
+    // are uniforms, the palettes the palette texture. Values arrive through
+    // setSymbology().
     const NetworkSymbologySettings bounded = settings.bounded();
-    const bool attributes_changed = this->symbology.show_junctions != bounded.show_junctions
-        || this->symbology.show_flow_direction != bounded.show_flow_direction;
+    this->symbology.node_palette = bounded.node_palette;
+    this->symbology.node_palette_flipped = bounded.node_palette_flipped;
+    this->symbology.link_palette = bounded.link_palette;
+    this->symbology.link_palette_flipped = bounded.link_palette_flipped;
+    this->symbology.heatmap_palette = bounded.heatmap_palette;
+    this->symbology.heatmap_palette_flipped = bounded.heatmap_palette_flipped;
     this->symbology.node_size_unit = bounded.node_size_unit;
     this->symbology.node_size_px = bounded.node_size_px;
     this->symbology.node_size_m = bounded.node_size_m;
@@ -2325,8 +2253,7 @@ void MapBgfxSurface::setVisualControlSettings(const NetworkSymbologySettings &se
     this->symbology.heatmap_radius_m = bounded.heatmap_radius_m;
     this->symbology.heatmap_radius_px = bounded.heatmap_radius_px;
     this->symbology.heatmap_solid_center_percent = bounded.heatmap_solid_center_percent;
-    if (attributes_changed)
-        this->symbology_colors_dirty = true;
+    this->entity_style.setSymbology(this->symbology);
     // Junction visibility and icon sizes move the labels' symbol boxes.
     this->labels_dirty = true;
     this->globe_network.setSymbology(globeSymbology());
@@ -2341,6 +2268,8 @@ void MapBgfxSurface::syncGlobeHeatmap()
         && this->symbology.visual_heatmap != VisualHeatmap::None && this->retained_scene.hasSnapshot())
     {
         const NetworkRenderSnapshot &snapshot = this->retained_scene.snapshot();
+        const double heat_minimum = this->symbology.ranges.heatmap_minimum;
+        const double heat_maximum = this->symbology.ranges.heatmap_maximum;
         markers.reserve(snapshot.nodes.size());
         for (const NetworkRenderNode &node : snapshot.nodes)
         {
@@ -2351,13 +2280,14 @@ void MapBgfxSurface::syncGlobeHeatmap()
             marker.render_id = node.render_id;
             marker.longitude_deg = node.coordinate_wgs84.longitude_deg;
             marker.latitude_deg = node.coordinate_wgs84.latitude_deg;
-            const QHash<quint32, double>::const_iterator fraction =
-                this->symbology.heatmap_fractions.constFind(node.render_id);
-            marker.active = fraction != this->symbology.heatmap_fractions.cend();
+            const double value = mapNetworkSymbologyValue(this->symbology.heatmap_values, node.render_id);
+            marker.active = std::isfinite(value) && std::isfinite(heat_minimum) && std::isfinite(heat_maximum);
             if (marker.active)
             {
+                const double fraction = heat_minimum == heat_maximum
+                    ? 0.5 : std::clamp((value - heat_minimum) / (heat_maximum - heat_minimum), 0.0, 1.0);
                 marker.color = networkSymbologyInterpolatedRampColor(
-                    fraction.value(), this->symbology.heatmap_palette, this->symbology.heatmap_palette_flipped);
+                    fraction, this->symbology.heatmap_palette, this->symbology.heatmap_palette_flipped);
             }
             markers.append(marker);
         }
@@ -2409,6 +2339,47 @@ MapNetworkRenderSymbology MapBgfxSurface::globeSymbology() const
     if (luminance >= 128.0)
         themed.icon_default_fill_color = qRgb(244, 174, 194);
     return themed;
+}
+
+void MapBgfxSurface::synchronizeEntityStyle()
+{
+    if (this->entity_classes_dirty && this->retained_scene.hasSnapshot())
+    {
+        this->entity_style.setEntities(this->retained_scene.snapshot());
+        this->entity_classes_dirty = false;
+    }
+    if (this->entity_state_dirty)
+    {
+        // uuid states -> entity keys (render ids are only unique per class).
+        QSet<quint64> hidden_keys;
+        for (const QUuid &uuid : this->hidden_entity_uuids)
+        {
+            const QHash<QUuid, quint64>::const_iterator found = this->entity_key_by_uuid.constFind(uuid);
+            if (found != this->entity_key_by_uuid.cend())
+                hidden_keys.insert(found.value());
+        }
+        quint64 selected_key = 0;
+        const QHash<QUuid, quint64>::const_iterator selected =
+            this->entity_key_by_uuid.constFind(this->selected_entity_uuid);
+        if (!this->selected_entity_uuid.isNull() && selected != this->entity_key_by_uuid.cend()
+            && selected.value() == MapBgfx2dScene::entityKey(this->selected_entity_type, quint32(selected.value())))
+            selected_key = selected.value();
+        QHash<quint64, bool> diagnostics;
+        for (QHash<QUuid, InfrastructureEntity>::const_iterator error = this->simulation_error_entities.cbegin();
+             error != this->simulation_error_entities.cend(); ++error)
+        {
+            const QHash<QUuid, quint64>::const_iterator found = this->entity_key_by_uuid.constFind(error.key());
+            if (found == this->entity_key_by_uuid.cend()
+                || found.value() != MapBgfx2dScene::entityKey(error.value(), quint32(found.value())))
+                continue;
+            diagnostics.insert(found.value(), this->simulation_stale_entity_uuids.contains(error.key()));
+        }
+        this->entity_style.setHiddenEntities(hidden_keys);
+        this->entity_style.setSelectedEntity(selected_key);
+        this->entity_style.setDiagnosticEntities(diagnostics);
+        this->entity_state_dirty = false;
+    }
+    this->entity_style.synchronize();
 }
 
 void MapBgfxSurface::setGlobe3dIconsEnabled(bool enabled)

@@ -302,6 +302,9 @@ private:
     // The symbology for the globe network: the icon fill themed like the
     // QRhi monitor (light theme: soft pink).
     MapNetworkRenderSymbology globeSymbology() const;
+    // Brings entity_style up to date (classes, hidden / selected /
+    // diagnostic entities) and uploads what changed; before any network draw.
+    void synchronizeEntityStyle();
     // The globe heatmap's markers (node positions, ramp colours of the
     // heatmap metric), radius and solid centre from the symbology (as the
     // former QRhi globe did): a pixel radius is converted
@@ -335,9 +338,15 @@ private:
     MapBgfx2dScene prepared_2d_scene;
     MapBgfx2dGpu gpu_2d_scene;
     MapBgfx2dGpu::FrameStats network_frame_stats;
-    // Resolved colours/sizes; colours reach the GPU only when this changes.
+    // Resolved values and sizes; the GPU colours the network from them.
     MapNetworkRenderSymbology symbology;
-    bool symbology_colors_dirty = true;
+    // Per-entity GPU colouring shared by the 2D map and the globe: values,
+    // visibility, selection and diagnostics as data textures.
+    MapBgfxEntityStyle entity_style;
+    // Entity classes (geometry) / hidden, selected, diagnostic entities out
+    // of date in entity_style.
+    bool entity_classes_dirty = true;
+    bool entity_state_dirty = true;
     // Entity identity for picking and highlights (render ids are only unique
     // per entity type, see MapBgfx2dScene::entityKey()).
     QHash<quint64, QUuid> uuid_by_entity_key;

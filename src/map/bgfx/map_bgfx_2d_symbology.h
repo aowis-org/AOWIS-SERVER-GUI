@@ -3,15 +3,13 @@
 
 #include "map/bgfx/map_bgfx_2d_mesh.h"
 #include "map/render/map_network_render_symbology.h"
-#include "network/network_symbology_rendering.h"
 
 #include <algorithm>
 #include <cmath>
 
-// Maps the backend-neutral MapNetworkRenderSymbology onto the bgfx 2D
-// attribute stream (colours, flow sign) and uniforms (sizes). Same rules as
-// the former QRhi 2D scene (its applyLinkColor, applyNodeColor, appendIcon,
-// appendHeatmap, flowDirectionColor) and the globe network scene.
+// Symbol sizes of the backend-neutral MapNetworkRenderSymbology as bgfx 2D
+// uniforms. Colours are not resolved here: the shaders colour every entity
+// from its data (MapBgfxEntityStyle, shaders/entity_style.sh).
 namespace MapBgfx2dSymbology
 {
 // Demand-point attachment lines: fixed hairline width, like QRhi (0.75 px
@@ -34,14 +32,6 @@ struct Sizes
     // Radius fraction drawn at full strength (QRhi clamps it to 0.9).
     double heatmap_solid_fraction = 0.7;
 };
-
-// Whether any heatmap spot can be visible (the pass is skipped otherwise).
-inline bool heatmapActive(const MapNetworkRenderSymbology &symbology)
-{
-    return symbology.visual_heatmap != VisualHeatmap::None
-        && !symbology.heatmap_fractions.isEmpty()
-        && symbology.heatmap_opacity > 0;
-}
 
 // Metre-based sizes are converted with the continuous zoom, so they scale
 // smoothly, never per imagery level.
@@ -68,7 +58,7 @@ inline Sizes sizes(const MapNetworkRenderSymbology &symbology,
         0.5 * std::max(1.0, result.flow_length_px * FlowStrokeWidthRatio);
     // Heatmap radius (QRhi heatmapRadiusPixels(), but from the continuous
     // zoom, so a metre radius grows smoothly instead of per imagery level).
-    if (heatmapActive(symbology))
+    if (symbology.heatmapActive())
     {
         result.heatmap_radius_px = symbology.heatmap_radius_unit == HeatmapRadiusUnit::Pixels
             ? std::max(1.0, double(symbology.heatmap_radius_px))
@@ -79,90 +69,6 @@ inline Sizes sizes(const MapNetworkRenderSymbology &symbology,
     result.heatmap_solid_fraction =
         std::clamp(double(symbology.heatmap_solid_center_percent) / 100.0, 0.0, 0.9);
     return result;
-}
-
-// has_icon: mapHasIcon(entity_type), passed in so this header does not need
-// the QPainter-based atlas.
-inline quint32 color(const MapNetworkRenderSymbology &symbology, MapBgfx2dPrimitive primitive,
-                     quint32 render_id, InfrastructureEntity entity_type, bool has_icon)
-{
-    QRgb argb = networkSymbologyDefaultColor();
-    switch (primitive)
-    {
-        case MapBgfx2dPrimitive::Link:
-            argb = symbology.link_colors.value(render_id, networkSymbologyDefaultColor());
-            break;
-        case MapBgfx2dPrimitive::Attachment:
-            // Attachments take the colour of their demand point (QRhi rule).
-            argb = symbology.node_colors.value(render_id, networkSymbologyDefaultColor());
-            break;
-        case MapBgfx2dPrimitive::Node:
-            argb = symbology.node_colors.value(render_id, networkSymbologyDefaultColor());
-            // The dot is replaced by the icon when icons are shown, and
-            // junctions can be switched off: alpha 0, no geometry rebuild.
-            if ((entity_type == InfrastructureEntity::Junction && !symbology.show_junctions)
-                || (symbology.show_icons && has_icon))
-            {
-                argb &= 0x00ffffffu;
-            }
-            break;
-        case MapBgfx2dPrimitive::NodeIcon:
-        case MapBgfx2dPrimitive::LinkIcon:
-        {
-            const bool on_link = primitive == MapBgfx2dPrimitive::LinkIcon;
-            const bool colorization_active = on_link
-                ? symbology.visual_link != VisualLink::None
-                : symbology.visual_node != VisualNode::None;
-            argb = symbology.icon_default_fill_color;
-            if (colorization_active)
-            {
-                argb = on_link
-                    ? symbology.link_colors.value(render_id, networkSymbologyUnavailableColor())
-                    : symbology.node_colors.value(render_id, networkSymbologyUnavailableColor());
-                if (argb == networkSymbologyUnavailableColor())
-                    argb = networkSymbologyIconUnavailableFillColor();
-            }
-            if (!symbology.show_icons)
-                argb &= 0x00ffffffu;
-            break;
-        }
-        case MapBgfx2dPrimitive::Heatmap:
-        {
-            // Spot colour from the heatmap palette (QRhi appendHeatmap());
-            // nodes without a value get no spot (alpha 0).
-            const QHash<quint32, double>::const_iterator fraction =
-                symbology.heatmap_fractions.constFind(render_id);
-            if (symbology.visual_heatmap == VisualHeatmap::None
-                || fraction == symbology.heatmap_fractions.cend())
-            {
-                return 0u;
-            }
-            argb = networkSymbologyInterpolatedRampColor(
-                fraction.value(), symbology.heatmap_palette,
-                symbology.heatmap_palette_flipped).rgb();
-            break;
-        }
-    }
-    return mapBgfx2dAbgrFromArgb(quint32(argb));
-}
-
-// Chevron colour contrasts with the link colour (QRhi flowDirectionColor);
-// the sign is the current flow direction, 0 hides the link's chevrons.
-inline MapBgfx2dFlowAttribute flow(const MapNetworkRenderSymbology &symbology,
-                                   quint32 link_render_id)
-{
-    MapBgfx2dFlowAttribute attribute;
-    const qint8 direction = symbology.flow_directions.value(link_render_id, 0);
-    if (!symbology.show_flow_direction || symbology.flow_direction_size_px <= 0 || direction == 0)
-        return attribute;
-    const QRgb link_color =
-        symbology.link_colors.value(link_render_id, networkSymbologyDefaultColor());
-    const double luminance = 0.2126 * double(qRed(link_color))
-        + 0.7152 * double(qGreen(link_color)) + 0.0722 * double(qBlue(link_color));
-    attribute.abgr = mapBgfx2dAbgrFromArgb(
-        quint32(luminance >= 150.0 ? qRgb(0, 0, 0) : qRgb(255, 255, 255)));
-    attribute.sign = direction > 0 ? 1.0f : -1.0f;
-    return attribute;
 }
 }
 

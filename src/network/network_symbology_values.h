@@ -4,7 +4,6 @@
 #include <cmath>
 #include <limits>
 
-#include <QHash>
 #include <QtGlobal>
 #include <QUuid>
 
@@ -54,40 +53,41 @@ inline double resolvedSymbologyElevationM(const HydraulicDemandPoint &)
 
 
 
-inline QHash<QUuid, double> networkNodeSymbologyValues(
-    const NetworkHydraulic &network_hydraulic, VisualNode visual_node)
-{
-    QHash<QUuid, double> values;
+// Symbology values are produced by visitors: visit(const QUuid &uuid,
+// double value) is called once per entity that has a value, in the order of
+// the source lists. Nothing is collected here, so a time step never builds
+// a hash table: the map resolves the uuids to render ids with an
+// order-cached lookup (MapNetworkSymbologyResolver) and the ranges are
+// minimum / maximum folds over the same visit (HydraulicData::symbologyRanges()).
 
+template <typename Visitor>
+void visitNetworkNodeSymbologyValues(
+    const NetworkHydraulic &network_hydraulic, VisualNode visual_node, Visitor &&visit)
+{
     switch (visual_node)
     {
     case VisualNode::Elevation:
-        values.reserve(network_hydraulic.nodes_junctions.size() +
-                       network_hydraulic.nodes_reservoirs.size() +
-                       network_hydraulic.nodes_tanks.size());
         for (const HydraulicNodeJunction &junction : network_hydraulic.nodes_junctions)
-            values.insert(junction.uuid, resolvedSymbologyElevationM(junction));
+            visit(junction.uuid, resolvedSymbologyElevationM(junction));
         for (const HydraulicNodeReservoir &reservoir : network_hydraulic.nodes_reservoirs)
-            values.insert(reservoir.uuid, resolvedSymbologyElevationM(reservoir));
+            visit(reservoir.uuid, resolvedSymbologyElevationM(reservoir));
         for (const HydraulicNodeTank &tank : network_hydraulic.nodes_tanks)
-            values.insert(tank.uuid, resolvedSymbologyElevationM(tank));
+            visit(tank.uuid, resolvedSymbologyElevationM(tank));
         break;
     case VisualNode::BaseDemand:
-        values.reserve(network_hydraulic.nodes_junctions.size()
-                       + network_hydraulic.demand_points.size());
         for (const HydraulicNodeJunction &junction : network_hydraulic.nodes_junctions)
         {
             double base_demand_m3_per_h = 0.0;
             for (const HydraulicDemand &demand : junction.demands)
                 base_demand_m3_per_h += demand.base_demand_m3_per_h;
-            values.insert(junction.uuid, base_demand_m3_per_h);
+            visit(junction.uuid, base_demand_m3_per_h);
         }
         for (const HydraulicDemandPoint &demand_point : network_hydraulic.demand_points)
         {
             double base_demand_m3_per_h = 0.0;
             for (const HydraulicDemand &demand : demand_point.demands)
                 base_demand_m3_per_h += demand.base_demand_m3_per_h;
-            values.insert(demand_point.uuid, base_demand_m3_per_h);
+            visit(demand_point.uuid, base_demand_m3_per_h);
         }
         break;
     case VisualNode::None:
@@ -103,44 +103,37 @@ inline QHash<QUuid, double> networkNodeSymbologyValues(
     case VisualNode::WaterAge:
         break;
     }
-
-    return values;
 }
 
-inline QHash<QUuid, double> networkLinkSymbologyValues(
-    const NetworkHydraulic &network_hydraulic, VisualLink visual_link)
+template <typename Visitor>
+void visitNetworkLinkSymbologyValues(
+    const NetworkHydraulic &network_hydraulic, VisualLink visual_link, Visitor &&visit)
 {
-    QHash<QUuid, double> values;
-
     switch (visual_link)
     {
     case VisualLink::Diameter:
-        values.reserve(network_hydraulic.links_pipes.size()
-                       + network_hydraulic.links_valves.size());
         for (const HydraulicLinkPipe &pipe : network_hydraulic.links_pipes)
-            values.insert(pipe.uuid, pipe.diameter_mm);
+            visit(pipe.uuid, pipe.diameter_mm);
         for (const HydraulicLinkValve &valve : network_hydraulic.links_valves)
-            values.insert(valve.uuid, valve.diameter_mm);
+            visit(valve.uuid, valve.diameter_mm);
         break;
     case VisualLink::Length:
-        values.reserve(network_hydraulic.links_pipes.size());
         for (const HydraulicLinkPipe &pipe : network_hydraulic.links_pipes)
-            values.insert(pipe.uuid, pipe.length_measured_m.value_or(pipe.length_calculated_m));
+            visit(pipe.uuid, pipe.length_measured_m.value_or(pipe.length_calculated_m));
         break;
     case VisualLink::Roughness:
-        values.reserve(network_hydraulic.links_pipes.size());
         for (const HydraulicLinkPipe &pipe : network_hydraulic.links_pipes)
         {
             switch (network_hydraulic.options_hydraulic.headloss_formula)
             {
             case HydraulicHeadlossFormula::HazenWilliams:
-                values.insert(pipe.uuid, pipe.roughness_hazen_williams);
+                visit(pipe.uuid, pipe.roughness_hazen_williams);
                 break;
             case HydraulicHeadlossFormula::DarcyWeisbach:
-                values.insert(pipe.uuid, pipe.roughness_darcy_weisbach_mm);
+                visit(pipe.uuid, pipe.roughness_darcy_weisbach_mm);
                 break;
             case HydraulicHeadlossFormula::ChezyManning:
-                values.insert(pipe.uuid, pipe.roughness_chezy_manning);
+                visit(pipe.uuid, pipe.roughness_chezy_manning);
                 break;
             }
         }
@@ -156,43 +149,41 @@ inline QHash<QUuid, double> networkLinkSymbologyValues(
     case VisualLink::WaterAge:
         break;
     }
-
-    return values;
 }
 
-inline QHash<QUuid, double> networkHeatmapSymbologyValues(
-    const NetworkHydraulic &network_hydraulic, VisualHeatmap visual_heatmap)
+// The node metric a network-model heatmap shows (None: no network value).
+inline VisualNode networkHeatmapNodeVisual(VisualHeatmap visual_heatmap)
 {
     switch (visual_heatmap)
     {
     case VisualHeatmap::Elevation:
-        return networkNodeSymbologyValues(network_hydraulic, VisualNode::Elevation);
+        return VisualNode::Elevation;
     case VisualHeatmap::BaseDemand:
-        return networkNodeSymbologyValues(network_hydraulic, VisualNode::BaseDemand);
+        return VisualNode::BaseDemand;
     case VisualHeatmap::TotalDemand:
-        return networkNodeSymbologyValues(network_hydraulic, VisualNode::TotalDemand);
+        return VisualNode::TotalDemand;
     case VisualHeatmap::DemandDeficit:
-        return networkNodeSymbologyValues(network_hydraulic, VisualNode::DemandDeficit);
+        return VisualNode::DemandDeficit;
     case VisualHeatmap::EmitterFlow:
-        return networkNodeSymbologyValues(network_hydraulic, VisualNode::EmitterFlow);
+        return VisualNode::EmitterFlow;
     case VisualHeatmap::Leakage:
-        return networkNodeSymbologyValues(network_hydraulic, VisualNode::Leakage);
+        return VisualNode::Leakage;
     case VisualHeatmap::Head:
-        return networkNodeSymbologyValues(network_hydraulic, VisualNode::Head);
+        return VisualNode::Head;
     case VisualHeatmap::Pressure:
-        return networkNodeSymbologyValues(network_hydraulic, VisualNode::Pressure);
+        return VisualNode::Pressure;
     case VisualHeatmap::Chlorine:
-        return networkNodeSymbologyValues(network_hydraulic, VisualNode::Chlorine);
+        return VisualNode::Chlorine;
     case VisualHeatmap::RiverWater:
-        return networkNodeSymbologyValues(network_hydraulic, VisualNode::RiverWater);
+        return VisualNode::RiverWater;
     case VisualHeatmap::LakeWater:
-        return networkNodeSymbologyValues(network_hydraulic, VisualNode::LakeWater);
+        return VisualNode::LakeWater;
     case VisualHeatmap::WaterAge:
     case VisualHeatmap::None:
         break;
     }
 
-    return QHash<QUuid, double>();
+    return VisualNode::None;
 }
 
 inline bool nodeVisualUsesHydraulicSimulationResult(VisualNode visual_node)
@@ -244,79 +235,50 @@ inline bool linkVisualUsesHydraulicSimulationResult(VisualLink visual_link)
 
 inline bool heatmapVisualUsesHydraulicSimulationResult(VisualHeatmap visual_heatmap)
 {
-    switch (visual_heatmap)
-    {
-    case VisualHeatmap::TotalDemand:
-    case VisualHeatmap::DemandDeficit:
-    case VisualHeatmap::EmitterFlow:
-    case VisualHeatmap::Leakage:
-    case VisualHeatmap::Head:
-    case VisualHeatmap::Pressure:
-        return true;
-    case VisualHeatmap::None:
-    case VisualHeatmap::Elevation:
-    case VisualHeatmap::BaseDemand:
-    case VisualHeatmap::Chlorine:
-    case VisualHeatmap::RiverWater:
-    case VisualHeatmap::LakeWater:
-    case VisualHeatmap::WaterAge:
-        return false;
-    }
-
-    return false;
+    return nodeVisualUsesHydraulicSimulationResult(networkHeatmapNodeVisual(visual_heatmap));
 }
 
-inline QHash<QUuid, double> hydraulicNodeSymbologyValues(
-    const HydraulicSimulationResult &result, VisualNode visual_node)
+template <typename Visitor>
+void visitHydraulicNodeSymbologyValues(
+    const HydraulicSimulationResult &result, VisualNode visual_node, Visitor &&visit)
 {
-    QHash<QUuid, double> values;
-
     switch (visual_node)
     {
     case VisualNode::TotalDemand:
-        values.reserve(result.nodes_junctions.size() + result.nodes_reservoirs.size()
-                       + result.nodes_tanks.size());
         for (const HydraulicSimulationResultNodeJunction &junction : result.nodes_junctions)
-            values.insert(junction.uuid, junction.total_demand_m3_per_h);
+            visit(junction.uuid, junction.total_demand_m3_per_h);
         for (const HydraulicSimulationResultNodeReservoir &reservoir : result.nodes_reservoirs)
-            values.insert(reservoir.uuid, reservoir.net_demand_m3_per_h);
+            visit(reservoir.uuid, reservoir.net_demand_m3_per_h);
         for (const HydraulicSimulationResultNodeTank &tank : result.nodes_tanks)
-            values.insert(tank.uuid, tank.net_demand_m3_per_h);
+            visit(tank.uuid, tank.net_demand_m3_per_h);
         break;
     case VisualNode::DemandDeficit:
-        values.reserve(result.nodes_junctions.size());
         for (const HydraulicSimulationResultNodeJunction &junction : result.nodes_junctions)
-            values.insert(junction.uuid, junction.demand_deficit_m3_per_h);
+            visit(junction.uuid, junction.demand_deficit_m3_per_h);
         break;
     case VisualNode::EmitterFlow:
-        values.reserve(result.nodes_junctions.size());
         for (const HydraulicSimulationResultNodeJunction &junction : result.nodes_junctions)
-            values.insert(junction.uuid, junction.emitter_flow_m3_per_h);
+            visit(junction.uuid, junction.emitter_flow_m3_per_h);
         break;
     case VisualNode::Leakage:
-        values.reserve(result.nodes_junctions.size());
         for (const HydraulicSimulationResultNodeJunction &junction : result.nodes_junctions)
-            values.insert(junction.uuid, junction.leakage_flow_m3_per_h);
+            visit(junction.uuid, junction.leakage_flow_m3_per_h);
         break;
     case VisualNode::Head:
-        values.reserve(result.nodes_junctions.size() + result.nodes_reservoirs.size()
-                       + result.nodes_tanks.size());
         for (const HydraulicSimulationResultNodeJunction &junction : result.nodes_junctions)
-            values.insert(junction.uuid, junction.hydraulic_head_m);
+            visit(junction.uuid, junction.hydraulic_head_m);
         for (const HydraulicSimulationResultNodeReservoir &reservoir : result.nodes_reservoirs)
-            values.insert(reservoir.uuid, reservoir.hydraulic_head_m);
+            visit(reservoir.uuid, reservoir.hydraulic_head_m);
         for (const HydraulicSimulationResultNodeTank &tank : result.nodes_tanks)
-            values.insert(tank.uuid, tank.hydraulic_head_m);
+            visit(tank.uuid, tank.hydraulic_head_m);
         break;
     case VisualNode::Pressure:
-        values.reserve(result.nodes_junctions.size() + result.nodes_reservoirs.size()
-                       + result.nodes_tanks.size());
         for (const HydraulicSimulationResultNodeJunction &junction : result.nodes_junctions)
-            values.insert(junction.uuid, junction.pressure_head_m);
+            visit(junction.uuid, junction.pressure_head_m);
         for (const HydraulicSimulationResultNodeReservoir &reservoir : result.nodes_reservoirs)
-            values.insert(reservoir.uuid, reservoir.pressure_head_m);
+            visit(reservoir.uuid, reservoir.pressure_head_m);
         for (const HydraulicSimulationResultNodeTank &tank : result.nodes_tanks)
-            values.insert(tank.uuid, tank.pressure_head_m);
+            visit(tank.uuid, tank.pressure_head_m);
         break;
     case VisualNode::None:
     case VisualNode::Elevation:
@@ -327,48 +289,39 @@ inline QHash<QUuid, double> hydraulicNodeSymbologyValues(
     case VisualNode::WaterAge:
         break;
     }
-
-    return values;
 }
 
-inline QHash<QUuid, double> hydraulicLinkSymbologyValues(
-    const HydraulicSimulationResult &result, VisualLink visual_link)
+template <typename Visitor>
+void visitHydraulicLinkSymbologyValues(
+    const HydraulicSimulationResult &result, VisualLink visual_link, Visitor &&visit)
 {
-    QHash<QUuid, double> values;
-
     switch (visual_link)
     {
     case VisualLink::FlowRate:
-        values.reserve(result.links_pipes.size() + result.links_pumps.size()
-                       + result.links_valves.size());
         for (const HydraulicSimulationResultLinkPipe &pipe : result.links_pipes)
-            values.insert(pipe.uuid, pipe.flow_m3_per_h);
+            visit(pipe.uuid, pipe.flow_m3_per_h);
         for (const HydraulicSimulationResultLinkPump &pump : result.links_pumps)
-            values.insert(pump.uuid, pump.flow_m3_per_h);
+            visit(pump.uuid, pump.flow_m3_per_h);
         for (const HydraulicSimulationResultLinkValve &valve : result.links_valves)
-            values.insert(valve.uuid, valve.flow_m3_per_h);
+            visit(valve.uuid, valve.flow_m3_per_h);
         break;
     case VisualLink::Velocity:
-        values.reserve(result.links_pipes.size() + result.links_pumps.size()
-                       + result.links_valves.size());
         for (const HydraulicSimulationResultLinkPipe &pipe : result.links_pipes)
-            values.insert(pipe.uuid, pipe.velocity_m_per_s);
+            visit(pipe.uuid, pipe.velocity_m_per_s);
         for (const HydraulicSimulationResultLinkPump &pump : result.links_pumps)
-            values.insert(pump.uuid, pump.velocity_m_per_s);
+            visit(pump.uuid, pump.velocity_m_per_s);
         for (const HydraulicSimulationResultLinkValve &valve : result.links_valves)
-            values.insert(valve.uuid, valve.velocity_m_per_s);
+            visit(valve.uuid, valve.velocity_m_per_s);
         break;
     case VisualLink::HeadLoss:
-        values.reserve(result.links_pipes.size() + result.links_valves.size());
         for (const HydraulicSimulationResultLinkPipe &pipe : result.links_pipes)
-            values.insert(pipe.uuid, pipe.head_loss_m);
+            visit(pipe.uuid, pipe.head_loss_m);
         for (const HydraulicSimulationResultLinkValve &valve : result.links_valves)
-            values.insert(valve.uuid, valve.head_loss_m);
+            visit(valve.uuid, valve.head_loss_m);
         break;
     case VisualLink::Leakage:
-        values.reserve(result.links_pipes.size());
         for (const HydraulicSimulationResultLinkPipe &pipe : result.links_pipes)
-            values.insert(pipe.uuid, pipe.leakage_flow_m3_per_h);
+            visit(pipe.uuid, pipe.leakage_flow_m3_per_h);
         break;
     case VisualLink::None:
     case VisualLink::Diameter:
@@ -380,38 +333,6 @@ inline QHash<QUuid, double> hydraulicLinkSymbologyValues(
     case VisualLink::WaterAge:
         break;
     }
-
-    return values;
-}
-
-inline QHash<QUuid, double> hydraulicHeatmapSymbologyValues(
-    const HydraulicSimulationResult &result, VisualHeatmap visual_heatmap)
-{
-    switch (visual_heatmap)
-    {
-    case VisualHeatmap::TotalDemand:
-        return hydraulicNodeSymbologyValues(result, VisualNode::TotalDemand);
-    case VisualHeatmap::DemandDeficit:
-        return hydraulicNodeSymbologyValues(result, VisualNode::DemandDeficit);
-    case VisualHeatmap::EmitterFlow:
-        return hydraulicNodeSymbologyValues(result, VisualNode::EmitterFlow);
-    case VisualHeatmap::Leakage:
-        return hydraulicNodeSymbologyValues(result, VisualNode::Leakage);
-    case VisualHeatmap::Head:
-        return hydraulicNodeSymbologyValues(result, VisualNode::Head);
-    case VisualHeatmap::Pressure:
-        return hydraulicNodeSymbologyValues(result, VisualNode::Pressure);
-    case VisualHeatmap::None:
-    case VisualHeatmap::Elevation:
-    case VisualHeatmap::BaseDemand:
-    case VisualHeatmap::Chlorine:
-    case VisualHeatmap::RiverWater:
-    case VisualHeatmap::LakeWater:
-    case VisualHeatmap::WaterAge:
-        break;
-    }
-
-    return QHash<QUuid, double>();
 }
 
 inline qint8 hydraulicFlowDirection(double flow_m3_per_h)
@@ -438,67 +359,38 @@ inline qint8 hydraulicFlowDirection(double flow_m3_per_h)
     return flow_m3_per_h > 0.0 ? qint8(1) : qint8(-1);
 }
 
-inline QHash<QUuid, qint8> hydraulicLinkFlowDirections(
-    const HydraulicSimulationResult &result)
+// visit(uuid, direction) for every link of the result (-1, 0, +1).
+template <typename Visitor>
+void visitHydraulicLinkFlowDirections(const HydraulicSimulationResult &result, Visitor &&visit)
 {
-    QHash<QUuid, qint8> directions;
-    directions.reserve(result.links_pipes.size() + result.links_pumps.size()
-                       + result.links_valves.size());
-
     for (const HydraulicSimulationResultLinkPipe &pipe : result.links_pipes)
-    {
-        const qint8 direction = hydraulicFlowDirection(pipe.flow_m3_per_h);
-        if (direction != 0)
-            directions.insert(pipe.uuid, direction);
-    }
+        visit(pipe.uuid, hydraulicFlowDirection(pipe.flow_m3_per_h));
     for (const HydraulicSimulationResultLinkPump &pump : result.links_pumps)
-    {
-        const qint8 direction = hydraulicFlowDirection(pump.flow_m3_per_h);
-        if (direction != 0)
-            directions.insert(pump.uuid, direction);
-    }
+        visit(pump.uuid, hydraulicFlowDirection(pump.flow_m3_per_h));
     for (const HydraulicSimulationResultLinkValve &valve : result.links_valves)
-    {
-        const qint8 direction = hydraulicFlowDirection(valve.flow_m3_per_h);
-        if (direction != 0)
-            directions.insert(valve.uuid, direction);
-    }
-
-    return directions;
+        visit(valve.uuid, hydraulicFlowDirection(valve.flow_m3_per_h));
 }
 
-inline QHash<QUuid, double> waterAgeNodeSymbologyValues(
-    const WaterQualitySimulationResult &result)
+template <typename Visitor>
+void visitWaterAgeNodeSymbologyValues(const WaterQualitySimulationResult &result, Visitor &&visit)
 {
-    QHash<QUuid, double> values;
-    values.reserve(result.nodes_junctions.size() + result.nodes_reservoirs.size()
-                   + result.nodes_tanks.size());
-
     for (const WaterQualitySimulationResultNodeJunction &junction : result.nodes_junctions)
-        values.insert(junction.uuid, junction.water_age_h);
+        visit(junction.uuid, junction.water_age_h);
     for (const WaterQualitySimulationResultNodeReservoir &reservoir : result.nodes_reservoirs)
-        values.insert(reservoir.uuid, reservoir.water_age_h);
+        visit(reservoir.uuid, reservoir.water_age_h);
     for (const WaterQualitySimulationResultNodeTank &tank : result.nodes_tanks)
-        values.insert(tank.uuid, tank.water_age_h);
-
-    return values;
+        visit(tank.uuid, tank.water_age_h);
 }
 
-inline QHash<QUuid, double> waterAgeLinkSymbologyValues(
-    const WaterQualitySimulationResult &result)
+template <typename Visitor>
+void visitWaterAgeLinkSymbologyValues(const WaterQualitySimulationResult &result, Visitor &&visit)
 {
-    QHash<QUuid, double> values;
-    values.reserve(result.links_pipes.size() + result.links_pumps.size()
-                   + result.links_valves.size());
-
     for (const WaterQualitySimulationResultLinkPipe &pipe : result.links_pipes)
-        values.insert(pipe.uuid, pipe.water_age_h);
+        visit(pipe.uuid, pipe.water_age_h);
     for (const WaterQualitySimulationResultLinkPump &pump : result.links_pumps)
-        values.insert(pump.uuid, pump.water_age_h);
+        visit(pump.uuid, pump.water_age_h);
     for (const WaterQualitySimulationResultLinkValve &valve : result.links_valves)
-        values.insert(valve.uuid, valve.water_age_h);
-
-    return values;
+        visit(valve.uuid, valve.water_age_h);
 }
 
 #endif // NETWORK_SYMBOLOGY_VALUES_H

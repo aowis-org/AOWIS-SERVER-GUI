@@ -22,6 +22,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <functional>
 #include <limits>
 
 namespace
@@ -380,42 +381,32 @@ void MapBgfxGlobeNetwork::synchronize()
     if (this->symbology_pending)
     {
         this->symbology_pending = false;
-        // What changed decides the streams (as the former QRhi globe did).
+        // Colours never reach the vertex streams (the shaders read them from
+        // MapBgfxEntityStyle): only sizes and toggles change streams, as the
+        // scene rebuilds them (MapGlobeNetworkScene::setSymbology()).
         const MapNetworkRenderSymbology &previous = this->applied_symbology;
         const MapNetworkRenderSymbology &next = this->symbology;
         const bool first = !this->symbology_applied;
-        const bool node_colors_changed = first || previous.node_colors != next.node_colors;
-        const bool link_colors_changed = first || previous.link_colors != next.link_colors;
-        const bool junctions_changed = first || previous.show_junctions != next.show_junctions
-            || previous.node_size_unit != next.node_size_unit
+        const bool junctions_changed = first || previous.node_size_unit != next.node_size_unit
             || (next.node_size_unit == NetworkSymbologySizeUnit::Meters && previous.node_size_m != next.node_size_m);
         const bool thickness_changed = first || !sameSymbologySizes(previous, next);
         const bool icons_changed = first || previous.icon_size_unit != next.icon_size_unit
             || previous.icon_size_px != next.icon_size_px || previous.icon_size_m != next.icon_size_m
-            || previous.show_icons != next.show_icons
-            || previous.icon_default_fill_color != next.icon_default_fill_color
-            || previous.visual_node != next.visual_node || previous.visual_link != next.visual_link
-            || node_colors_changed || link_colors_changed;
+            || previous.show_icons != next.show_icons;
         const bool flow_changed = first || previous.show_flow_direction != next.show_flow_direction
             || previous.flow_direction_size_px != next.flow_direction_size_px
-            || previous.flow_directions != next.flow_directions || thickness_changed || link_colors_changed;
+            || previous.flow_directions.isEmpty() != next.flow_directions.isEmpty() || thickness_changed;
+        const bool highlights_changed = first || thickness_changed || previous.show_junctions != next.show_junctions;
         this->network_scene.setSymbology(next);
         this->applied_symbology = next;
         this->symbology_applied = true;
-        if (node_colors_changed || link_colors_changed)
-            markDirty(GeometryStream);
-        // Junction colours are resolved on the CPU (junctionVertices()).
-        if (node_colors_changed || junctions_changed)
+        if (junctions_changed)
             markDirty(JunctionStream | UndergroundStream);
-        if (link_colors_changed)
-            markDirty(UndergroundStream);
-        if (thickness_changed)
-        {
+        if (highlights_changed)
             markDirty(HighlightStream);
-            // With demand point attachments the scene rebuilds the geometry.
-            if (this->has_attachments)
-                markDirty(AllStreams);
-        }
+        // With demand point attachments the scene rebuilds the geometry.
+        if (thickness_changed && this->has_attachments)
+            markDirty(AllStreams);
         if (icons_changed)
             markDirty(IconStream);
         if (flow_changed)
@@ -425,14 +416,16 @@ void MapBgfxGlobeNetwork::synchronize()
     {
         this->selection_pending = false;
         this->network_scene.setSelectedEntity(this->selected_entity_type, this->selected_entity_uuid);
-        markDirty(HighlightStream | IconStream | JunctionStream | UndergroundStream);
+        // Junction and icon tints are entity flags (MapBgfxEntityStyle); the
+        // outlines and the tank / reservoir models are geometry.
+        markDirty(HighlightStream | IconStream);
     }
     if (this->errors_pending)
     {
         this->errors_pending = false;
         this->network_scene.setSimulationErrorEntities(this->simulation_error_entities,
                                                        this->simulation_stale_entity_uuids);
-        markDirty(HighlightStream | JunctionStream | UndergroundStream);
+        markDirty(HighlightStream);
     }
     if (this->icon_models_pending)
     {
@@ -471,44 +464,21 @@ void MapBgfxGlobeNetwork::ensureModelVertices()
 
 // --- GPU ------------------------------------------------------------------
 
-bool MapBgfxGlobeNetwork::junctionColor(quint32 render_id, float (&rgba)[4]) const
+bool MapBgfxGlobeNetwork::junctionDrawn(quint32 render_id) const
 {
     const QUuid uuid = this->entity_uuids.value(entityKey(InfrastructureEntity::Junction, render_id));
-    if (!this->applied_symbology.show_junctions || this->hidden_entity_uuids.contains(uuid))
-        return false;
-    QRgb color = this->applied_symbology.node_colors.value(render_id, networkSymbologyDefaultColor());
-    float alpha = float(qAlpha(color)) / 255.0f;
-    // Diagnostics before selection (they used to be drawn on top of it).
-    if (this->simulation_error_entities.value(uuid, InfrastructureEntity::Unknown)
-        == InfrastructureEntity::Junction)
-    {
-        color = this->simulation_stale_entity_uuids.contains(uuid) ? qRgb(128, 128, 128) : qRgb(255, 0, 0);
-        alpha = 1.0f;
-    }
-    else if (this->selected_entity_type == InfrastructureEntity::Junction && this->selected_entity_uuid == uuid)
-    {
-        color = qRgb(0, 190, 255);
-        alpha = 1.0f;
-    }
-    if (alpha <= 0.0f)
-        return false;
-    rgba[0] = float(qRed(color)) / 255.0f;
-    rgba[1] = float(qGreen(color)) / 255.0f;
-    rgba[2] = float(qBlue(color)) / 255.0f;
-    rgba[3] = alpha;
-    return true;
+    return this->applied_symbology.show_junctions && !this->hidden_entity_uuids.contains(uuid);
 }
 
 QVector<MapBgfxGlobeNetwork::JunctionVertex> MapBgfxGlobeNetwork::junctionVertices(
     const QVector<MapGlobeJunctionInstance> &instances) const
 {
+    // Colour, selection, diagnostics and visibility are the junction's
+    // entity data (vs_globe_junction.sc): the vertices only reference it.
     QVector<JunctionVertex> vertices;
     vertices.reserve(instances.size() * 6);
     for (const MapGlobeJunctionInstance &instance : instances)
     {
-        float rgba[4];
-        if (!junctionColor(instance.render_id, rgba))
-            continue;
         for (const float (&corner)[2] : kImpostorCorners)
         {
             JunctionVertex vertex;
@@ -517,10 +487,7 @@ QVector<MapBgfxGlobeNetwork::JunctionVertex> MapBgfxGlobeNetwork::junctionVertic
             vertex.z = instance.center_z;
             vertex.corner_x = corner[0];
             vertex.corner_y = corner[1];
-            vertex.red = rgba[0];
-            vertex.green = rgba[1];
-            vertex.blue = rgba[2];
-            vertex.alpha = rgba[3];
+            mapNetworkSetEntityReference(&vertex, instance.render_id, false);
             vertex.radius = instance.radius_world;
             vertices.append(vertex);
         }
@@ -604,12 +571,15 @@ void MapBgfxGlobeNetwork::uploadStreams(FrameResult *result)
 
 void MapBgfxGlobeNetwork::submitStream(bgfx::ViewId view, const Buffer &buffer, bgfx::ProgramHandle program,
                                        uint64_t state, const FrameUniforms &uniforms,
+                                       const MapBgfxEntityStyle &entity_style, MapBgfxEntityStyle::Mode mode,
                                        bgfx::TextureHandle texture, bgfx::UniformHandle sampler,
                                        FrameResult *result) const
 {
     if (buffer.count == 0 || !bgfx::isValid(buffer.handle))
         return;
     bgfx::setVertexBuffer(0, buffer.handle, 0, buffer.count);
+    // Selected icons take the selection colour on the globe.
+    entity_style.bind(mode, MapBgfxEntityStyle::Table::Nodes, true);
     bgfx::setUniform(this->view_projection_uniform, uniforms.view_projection);
     bgfx::setUniform(this->viewport_uniform, uniforms.viewport);
     bgfx::setUniform(this->params_uniform, uniforms.params);
@@ -625,10 +595,11 @@ void MapBgfxGlobeNetwork::submitStream(bgfx::ViewId view, const Buffer &buffer, 
 
 MapBgfxGlobeNetwork::FrameResult MapBgfxGlobeNetwork::render(bgfx::ViewId view, const MapGlobeCamera &camera,
                                                              const QSize &logical_viewport,
-                                                             bgfx::TextureHandle icon_atlas)
+                                                             bgfx::TextureHandle icon_atlas,
+                                                             const MapBgfxEntityStyle &entity_style)
 {
     FrameResult result;
-    if (!ready() || !logical_viewport.isValid())
+    if (!ready() || !entity_style.ready() || !logical_viewport.isValid())
         return result;
     synchronize();
     // An empty scene adopts the camera's origin once; networks keep their
@@ -700,58 +671,52 @@ MapBgfxGlobeNetwork::FrameResult MapBgfxGlobeNetwork::render(bgfx::ViewId view, 
     const bgfx::TextureHandle no_texture = BGFX_INVALID_HANDLE;
     const bgfx::UniformHandle no_sampler = BGFX_INVALID_HANDLE;
     const bool show_junctions = resources.show_junctions;
+    // The base streams reference entities (colour from MapBgfxEntityStyle);
+    // the selection and diagnostic outlines carry their own colours.
+    const MapBgfxEntityStyle::Mode entity = MapBgfxEntityStyle::Mode::Symbology;
+    const MapBgfxEntityStyle::Mode outline = MapBgfxEntityStyle::Mode::VertexColor;
+    const std::function<void(const Buffer &, bgfx::ProgramHandle, uint64_t, MapBgfxEntityStyle::Mode)> submit =
+        [this, view, &uniforms, &entity_style, no_texture, no_sampler, &result](
+            const Buffer &buffer, bgfx::ProgramHandle program, uint64_t state, MapBgfxEntityStyle::Mode mode)
+    {
+        submitStream(view, buffer, program, state, uniforms, entity_style, mode, no_texture, no_sampler, &result);
+    };
     // Draw order of the former QRhi globe network, kept as it was.
     // Solid: the whole network once through the terrain first.
     if (this->underground_mode == MapUndergroundMode::Solid)
     {
-        submitStream(view, this->link_buffer, this->link_program, kOverlayState, uniforms, no_texture,
-                     no_sampler, &result);
-        submitStream(view, this->node_buffer, this->node_program, kOverlayState, uniforms, no_texture,
-                     no_sampler, &result);
+        submit(this->link_buffer, this->link_program, kOverlayState, entity);
+        submit(this->node_buffer, this->node_program, kOverlayState, entity);
         if (show_junctions)
-            submitStream(view, this->junction_buffer, this->junction_program, kOverlayState, uniforms,
-                         no_texture, no_sampler, &result);
-        submitStream(view, this->selected_node_buffer, this->node_program, kOverlayState, uniforms, no_texture,
-                     no_sampler, &result);
-        submitStream(view, this->diagnostic_link_buffer, this->link_program, kOverlayState, uniforms,
-                     no_texture, no_sampler, &result);
-        submitStream(view, this->diagnostic_node_buffer, this->node_program, kOverlayState, uniforms,
-                     no_texture, no_sampler, &result);
+            submit(this->junction_buffer, this->junction_program, kOverlayState, entity);
+        submit(this->selected_node_buffer, this->node_program, kOverlayState, outline);
+        submit(this->diagnostic_link_buffer, this->link_program, kOverlayState, outline);
+        submit(this->diagnostic_node_buffer, this->node_program, kOverlayState, outline);
     }
-    submitStream(view, this->link_buffer, this->link_program, kDepthState, uniforms, no_texture, no_sampler,
-                 &result);
-    submitStream(view, this->flow_buffer, this->flow_program, kDepthTestState, uniforms, no_texture, no_sampler,
-                 &result);
-    submitStream(view, this->node_buffer, this->node_program, kDepthState, uniforms, no_texture, no_sampler,
-                 &result);
+    submit(this->link_buffer, this->link_program, kDepthState, entity);
+    submit(this->flow_buffer, this->flow_program, kDepthTestState, entity);
+    submit(this->node_buffer, this->node_program, kDepthState, entity);
     if (show_junctions)
-        submitStream(view, this->junction_buffer, this->junction_program, kDepthState, uniforms, no_texture,
-                     no_sampler, &result);
-    submitStream(view, this->tank_buffer, this->model_program, kModelState, uniforms, this->tank_texture,
-                 this->albedo_sampler, &result);
-    submitStream(view, this->reservoir_buffer, this->model_program, kModelState, uniforms,
+        submit(this->junction_buffer, this->junction_program, kDepthState, entity);
+    submitStream(view, this->tank_buffer, this->model_program, kModelState, uniforms, entity_style, outline,
+                 this->tank_texture, this->albedo_sampler, &result);
+    submitStream(view, this->reservoir_buffer, this->model_program, kModelState, uniforms, entity_style, outline,
                  this->reservoir_texture, this->albedo_sampler, &result);
     // Selection is a UI overlay: never depth-tested against its own pipe.
-    submitStream(view, this->selected_link_buffer, this->link_program, kOverlayState, uniforms, no_texture,
-                 no_sampler, &result);
-    submitStream(view, this->selected_node_buffer, this->node_program, kDepthState, uniforms, no_texture,
-                 no_sampler, &result);
-    submitStream(view, this->diagnostic_link_buffer, this->link_program, kDepthState, uniforms, no_texture,
-                 no_sampler, &result);
-    submitStream(view, this->diagnostic_node_buffer, this->node_program, kDepthState, uniforms, no_texture,
-                 no_sampler, &result);
+    submit(this->selected_link_buffer, this->link_program, kOverlayState, outline);
+    submit(this->selected_node_buffer, this->node_program, kDepthState, outline);
+    submit(this->diagnostic_link_buffer, this->link_program, kDepthState, outline);
+    submit(this->diagnostic_node_buffer, this->node_program, kDepthState, outline);
     // X-Ray: the buried runs through the terrain.
     if (this->underground_mode == MapUndergroundMode::XRay)
     {
-        submitStream(view, this->underground_link_buffer, this->link_xray_program, kOverlayState, uniforms,
-                     no_texture, no_sampler, &result);
+        submit(this->underground_link_buffer, this->link_xray_program, kOverlayState, entity);
         if (show_junctions)
-            submitStream(view, this->underground_junction_buffer, this->junction_xray_program, kOverlayState,
-                         uniforms, no_texture, no_sampler, &result);
+            submit(this->underground_junction_buffer, this->junction_xray_program, kOverlayState, entity);
     }
     if (bgfx::isValid(icon_atlas))
-        submitStream(view, this->icon_buffer, this->icon_program, kOverlayState, uniforms, icon_atlas,
-                     this->icon_sampler, &result);
+        submitStream(view, this->icon_buffer, this->icon_program, kOverlayState, uniforms, entity_style, entity,
+                     icon_atlas, this->icon_sampler, &result);
     return result;
 }
 
@@ -877,8 +842,7 @@ MapRenderHit MapBgfxGlobeNetwork::hitTest(const QPointF &screen_position, const 
     quint32 best_junction = 0;
     for (const MapGlobeJunctionInstance &instance : scene.junctionInstances())
     {
-        float rgba[4];
-        if (!junctionColor(instance.render_id, rgba))
+        if (!junctionDrawn(instance.render_id))
             continue;
         const QVector3D center(instance.center_x, instance.center_y, instance.center_z);
         const QPointF projected = projectToScreen(view_projection, center, viewport);

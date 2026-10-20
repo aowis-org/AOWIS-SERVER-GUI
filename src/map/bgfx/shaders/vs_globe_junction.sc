@@ -2,15 +2,28 @@ $input a_position, a_texcoord1, a_color0, a_texcoord2
 $output v_color0, v_corner, v_world, v_sphere
 
 #include <bgfx_shader.sh>
+#include "entity_style.sh"
 #include "globe_network.sh"
 
 // Junction sphere impostor (MapGlobeJunctionInstance expanded to six
-// vertices on the CPU, colour already resolved from the symbology,
-// selection and simulation diagnostics). a_position: sphere centre;
-// a_texcoord1: corner (-1..1); a_texcoord2: radius in metres (used with
-// metre node sizes; pixel sizes are converted at the orbit distance).
+// vertices). a_position: sphere centre; a_texcoord1: corner (-1..1);
+// a_texcoord2: radius in metres (used with metre node sizes; pixel sizes are
+// converted at the orbit distance); a_color0: the entity reference
+// (entity_style.sh). Colour as the QRhi junction shader with its style
+// table: diagnostics red (grey while stale), else the selection cyan, else
+// the node colour; hidden junctions collapse.
 void main()
 {
+    vec4 texel = entityNodeTexel(a_color0.x);
+    vec4 color = entityDiagnosticColor(texel);
+    if (color.a < 0.5)
+    {
+        color = entityHasFlag(texel, ENTITY_FLAG_SELECTED)
+            ? vec4(u_entity_colors[ENTITY_COLOR_SELECTION].rgb, 1.0)
+            : vec4(entityNodeColor(texel), 1.0);
+    }
+    if (entityHasFlag(texel, ENTITY_FLAG_HIDDEN))
+        color.a = 0.0;
     vec2 viewport = netViewport();
     float radius_world = a_texcoord2;
     if (u_net_viewport.w >= 0.0)
@@ -54,9 +67,9 @@ void main()
     }
 
     vec3 world_position = a_position
-        + tangent_radius * (billboard_right * a_texcoord1.x + billboard_up * a_texcoord1.y);
+        + tangent_radius * step(0.001, color.a) * (billboard_right * a_texcoord1.x + billboard_up * a_texcoord1.y);
     gl_Position = mul(u_net_view_proj, vec4(world_position, 1.0));
-    v_color0 = a_color0;
+    v_color0 = color;
     v_corner = a_texcoord1;
     v_world = world_position;
     v_sphere = vec4(a_position, safe_radius);

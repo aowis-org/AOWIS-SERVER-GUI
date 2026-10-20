@@ -1,6 +1,7 @@
 #ifndef MAP_BGFX_GLOBE_NETWORK_H
 #define MAP_BGFX_GLOBE_NETWORK_H
 
+#include "map/bgfx/map_bgfx_entity_style.h"
 #include "map/render/map_globe_network_scene.h"
 #include "map/render/map_globe_reservoir_model.h"
 #include "map/render/map_globe_tank_model.h"
@@ -33,10 +34,17 @@ class MapGlobeCamera;
 //
 // - inputs are applied to the scene lazily, on the next globe frame
 //   (synchronize()): the 2D map never pays for globe geometry;
-// - junction impostors are expanded to six vertices each with their colour
-//   resolved on the CPU (symbology, selection, diagnostics, visibility),
-//   instead of instancing plus a style-table texture read in the vertex
-//   shader (WebGL-friendly, no vertex texture fetch);
+// - no colours in the vertex streams: links, nodes, junction impostors,
+//   icons, chevrons and the X-Ray runs reference their entity
+//   (mapNetworkSetEntityReference()) and the vertex shaders colour them from
+//   MapBgfxEntityStyle's data textures (symbology, selection, diagnostics,
+//   visibility, flow direction). Time steps, metrics, palettes and ranges
+//   never rebuild or re-upload a stream; only the outlines of the selection
+//   and diagnostics keep vertex colours;
+// - junction impostors are expanded to six vertices each instead of
+//   instancing (WebGL-friendly);
+// - flow chevrons exist in both orientations per link; the link's current
+//   direction shows one set (no rebuild per time step);
 // - flow chevrons keep their 8 px pull towards the eye but have no depth
 //   bias (bgfx has no depth bias state).
 //
@@ -91,9 +99,10 @@ public:
     };
     // Draws the network into view after the terrain surface. camera: the
     // frame's camera (viewport and origin already synchronized);
-    // icon_atlas: the shared network icon atlas (MapBgfx2dGpu).
+    // icon_atlas: the shared network icon atlas (MapBgfx2dGpu);
+    // entity_style: the network's colours, synchronized for this frame.
     FrameResult render(bgfx::ViewId view, const MapGlobeCamera &camera, const QSize &logical_viewport,
-                       bgfx::TextureHandle icon_atlas);
+                       bgfx::TextureHandle icon_atlas, const MapBgfxEntityStyle &entity_style);
 
     // Globe picking (slice 4), the QRhi globe's rules: the screen position
     // (logical px) against the network as the camera shows it now - tank /
@@ -124,7 +133,8 @@ private:
         bgfx::DynamicVertexBufferHandle handle = BGFX_INVALID_HANDLE;
         quint32 count = 0;
     };
-    // A junction impostor corner: centre, corner, resolved colour, radius.
+    // A junction impostor corner: centre, corner, entity reference
+    // (mapNetworkSetEntityReference()), radius.
     struct JunctionVertex
     {
         float x = 0.0f;
@@ -159,13 +169,12 @@ private:
     void uploadStreams(FrameResult *result);
     // One draw of a stream (nothing when it is empty).
     void submitStream(bgfx::ViewId view, const Buffer &buffer, bgfx::ProgramHandle program, uint64_t state,
-                      const FrameUniforms &uniforms, bgfx::TextureHandle texture,
+                      const FrameUniforms &uniforms, const MapBgfxEntityStyle &entity_style,
+                      MapBgfxEntityStyle::Mode mode, bgfx::TextureHandle texture,
                       bgfx::UniformHandle sampler, FrameResult *result) const;
     QVector<JunctionVertex> junctionVertices(const QVector<MapGlobeJunctionInstance> &instances) const;
-    // Resolved junction colour (0 alpha: not drawn), as the QRhi junction
-    // shader with the style table: error red, stale grey, selection cyan,
-    // else the symbology colour.
-    bool junctionColor(quint32 render_id, float (&rgba)[4]) const;
+    // Whether a junction is drawn (junctions shown, not hidden): picking.
+    bool junctionDrawn(quint32 render_id) const;
     void destroyBuffers();
 
     MapGlobeNetworkScene network_scene;

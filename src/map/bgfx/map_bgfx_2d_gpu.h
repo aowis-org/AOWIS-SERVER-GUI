@@ -2,6 +2,7 @@
 #define MAP_BGFX_2D_GPU_H
 
 #include "map/bgfx/map_bgfx_2d_mesh.h"
+#include "map/bgfx/map_bgfx_entity_style.h"
 
 #include <QImage>
 #include <QVector>
@@ -11,7 +12,9 @@
 // The bgfx resource owner lives inside MapBgfxSurface. CPU staging is
 // immutable across camera movements; GPU geometry buffers are replaced only
 // when MapBgfx2dScene's geometry revision advances. Per frame only uniforms
-// change, and chunks outside the view issue no draw calls at all.
+// change, and chunks outside the view issue no draw calls at all. There are
+// no colour streams: the shaders colour every primitive from the entity
+// data of MapBgfxEntityStyle, which every draw binds.
 class MapBgfx2dGpu
 {
 public:
@@ -40,29 +43,21 @@ public:
     // icon_atlas: premultiplied RGBA icon atlas (mapIconAtlasImage()).
     bool initialize(const QImage &icon_atlas);
     bool synchronize(const MapBgfx2dScene &scene, const MapBgfx2dMesh::IconLookup &icons);
-    // True after a geometry (re)upload until updateColors() ran: the attribute
-    // stream must match the new vertex counts before anything is drawn.
-    bool colorsStale() const { return this->colors_stale; }
     // The network icon atlas (with mips); the globe network draws its icons
     // from it too.
     bgfx::TextureHandle iconAtlasTexture() const { return this->icon_atlas_texture; }
-    // Rebuilds and uploads only the attribute stream (symbology change).
-    bool updateColors(const MapBgfx2dMesh::ColorLookup &lookup,
-                      const MapBgfx2dMesh::FlowLookup &flow);
     // Selection and simulation-error highlights (QRhi rebuildHighlights()):
-    // scenes from MapBgfx2dScene::filtered(), colours per entity (alpha 0
-    // hides, e.g. a highlighted junction while junctions are hidden). Tiny
-    // meshes, rebuilt on every call; drawn on top of links/nodes by draw().
-    bool setHighlights(const MapBgfx2dScene &selected,
-                       const MapBgfx2dMesh::ColorLookup &selected_colors,
-                       bool selected_has_error,
-                       const MapBgfx2dScene &diagnostic,
-                       const MapBgfx2dMesh::ColorLookup &diagnostic_colors);
-    FrameStats draw(const MapBgfx2d::Camera &camera, const Style &style) const;
+    // scenes from MapBgfx2dScene::filtered(). Tiny meshes, rebuilt on every
+    // call; drawn on top of links/nodes by draw() in the selection and
+    // diagnostic modes (the colours come from the entity flags).
+    bool setHighlights(const MapBgfx2dScene &selected, bool selected_has_error,
+                       const MapBgfx2dScene &diagnostic);
+    // entity_style: synchronized for this frame.
+    FrameStats draw(const MapBgfx2d::Camera &camera, const Style &style,
+                    const MapBgfxEntityStyle &entity_style) const;
     void release();
 
     quint64 uploadCount() const { return this->upload_count; }
-    quint64 colorUploadCount() const { return this->color_upload_count; }
     quint64 uploadedBytes() const { return this->uploaded_bytes; }
     quint64 meshPreparationCount() const { return this->mesh.preparationCount(); }
     qsizetype chevronCount() const { return this->mesh.chevronCount(); }
@@ -89,14 +84,6 @@ private:
         bgfx::VertexBufferHandle chevron_vertices = BGFX_INVALID_HANDLE;
         bgfx::IndexBufferHandle chevron_indices = BGFX_INVALID_HANDLE;
         uint32_t chevron_index_count = 0;
-        // Stream 1: per-vertex symbology, updated in place on symbology changes.
-        bgfx::DynamicVertexBufferHandle link_colors = BGFX_INVALID_HANDLE;
-        bgfx::DynamicVertexBufferHandle attachment_colors = BGFX_INVALID_HANDLE;
-        bgfx::DynamicVertexBufferHandle node_colors = BGFX_INVALID_HANDLE;
-        bgfx::DynamicVertexBufferHandle icon_colors = BGFX_INVALID_HANDLE;
-        bgfx::DynamicVertexBufferHandle chevron_attributes = BGFX_INVALID_HANDLE;
-        // Heatmap spot colours, parallel to node_vertices.
-        bgfx::DynamicVertexBufferHandle heatmap_colors = BGFX_INVALID_HANDLE;
     };
 
     // A small separately staged mesh (selection or error highlights).
@@ -109,20 +96,17 @@ private:
     bool createIconAtlas(const QImage &icon_atlas);
     void releaseChunks();
     static void releaseBuffers(QVector<ChunkBuffers> *chunk_buffers);
-    // Creates every stream-0 buffer and correctly sized (empty) attribute
-    // streams for all chunks of source, index aligned with source.chunks().
+    // Creates every buffer for all chunks of source, index aligned with
+    // source.chunks().
     bool uploadMesh(const MapBgfx2dMesh &source, QVector<ChunkBuffers> *chunk_buffers,
                     quint64 *bytes);
-    static bool updateMeshColors(const MapBgfx2dMesh &source,
-                                 const QVector<ChunkBuffers> &chunk_buffers,
-                                 const MapBgfx2dMesh::ColorLookup &lookup,
-                                 const MapBgfx2dMesh::FlowLookup &flow);
-    bool setHighlightLayer(HighlightLayer *layer, const MapBgfx2dScene &scene,
-                           const MapBgfx2dMesh::ColorLookup &colors);
+    bool setHighlightLayer(HighlightLayer *layer, const MapBgfx2dScene &scene);
     void drawHighlightLines(const HighlightLayer &layer, const MapBgfx2d::Camera &camera,
-                            double half_width_px, FrameStats *stats) const;
+                            double half_width_px, MapBgfxEntityStyle::Mode mode,
+                            const MapBgfxEntityStyle &entity_style, FrameStats *stats) const;
     void drawHighlightNodes(const HighlightLayer &layer, const MapBgfx2d::Camera &camera,
-                            double half_size_px, FrameStats *stats) const;
+                            double half_size_px, MapBgfxEntityStyle::Mode mode,
+                            const MapBgfxEntityStyle &entity_style, FrameStats *stats) const;
     void setCameraUniforms(const MapBgfx2dMeshChunk &chunk,
                            const MapBgfx2d::Camera &camera) const;
 
@@ -135,8 +119,6 @@ private:
     bgfx::VertexLayout line_layout;
     bgfx::VertexLayout icon_layout;
     bgfx::VertexLayout chevron_layout;
-    bgfx::VertexLayout color_layout;
-    bgfx::VertexLayout flow_attribute_layout;
     bgfx::ProgramHandle point_program = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle line_program = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle icon_program = BGFX_INVALID_HANDLE;
@@ -152,8 +134,6 @@ private:
     bgfx::UniformHandle heatmap_style_uniform = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle icon_atlas_sampler = BGFX_INVALID_HANDLE;
     bgfx::TextureHandle icon_atlas_texture = BGFX_INVALID_HANDLE;
-    bool colors_stale = true;
-    quint64 color_upload_count = 0;
     quint64 upload_count = 0;
     quint64 uploaded_bytes = 0;
 };

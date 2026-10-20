@@ -98,6 +98,7 @@ list(APPEND AOWIS_BGFX_SHADER_INPUTS
     "${AOWIS_BGFX_SHADER_DIR}/varying_globe_network.def.sc"
     "${AOWIS_BGFX_SHADER_DIR}/varying_globe_heatmap.def.sc"
     "${AOWIS_BGFX_SHADER_DIR}/globe_network.sh"
+    "${AOWIS_BGFX_SHADER_DIR}/entity_style.sh"
     "${AOWIS_BGFX_DIR}/src/bgfx_shader.sh")
 # dx11 on Linux/macOS: shaderc's d3d4linux runs the compiler under Wine.
 if(AOWIS_BGFX_SHADER_TOOLS AND NOT CMAKE_HOST_WIN32)

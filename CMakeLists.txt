@@ -456,6 +456,8 @@ target_sources(aowis-server-gui PRIVATE
     src/map/bgfx/map_bgfx_2d_mesh.h
     src/map/bgfx/map_bgfx_2d_gpu.h
     src/map/bgfx/map_bgfx_2d_gpu.cpp
+    src/map/bgfx/map_bgfx_entity_style.h
+    src/map/bgfx/map_bgfx_entity_style.cpp
     src/map/bgfx/map_bgfx_2d_symbology.h
     src/map/bgfx/map_bgfx_2d_picking.h
     src/map/bgfx/map_bgfx_2d_imagery_layout.h
@@ -595,6 +597,21 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
     target_link_libraries(aowis-bgfx-2d-mesh-tests PRIVATE Qt6::Core Qt6::Gui AOWIS::ServerModel)
     add_test(NAME aowis-bgfx-2d-mesh COMMAND aowis-bgfx-2d-mesh-tests)
     set_tests_properties(aowis-bgfx-2d-mesh PROPERTIES LABELS "aowis")
+
+    # GPU network colouring data (MapBgfxEntityStyle): per-entity texels by
+    # render id (values, flags, flow), hidden / selected / diagnostic flags,
+    # dense resolved values. CPU side only (prepare()); no bgfx device.
+    add_executable(aowis-bgfx-entity-style-tests tests/bgfx_entity_style_test.cpp
+        src/map/bgfx/map_bgfx_entity_style.cpp
+        src/map/render/map_icon_atlas.cpp)
+    target_include_directories(aowis-bgfx-entity-style-tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/external/AOWIS-SERVER-MODEL/include)
+    target_link_libraries(aowis-bgfx-entity-style-tests PRIVATE
+        Qt6::Core Qt6::Gui AOWIS::ServerModel bgfx)
+    add_test(NAME aowis-bgfx-entity-style COMMAND aowis-bgfx-entity-style-tests)
+    set_tests_properties(aowis-bgfx-entity-style PROPERTIES
+        LABELS "aowis" ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
     # bgfx 2D picking (click selection, hover) and highlight subsets.
     add_executable(aowis-bgfx-2d-picking-tests tests/bgfx_2d_picking_test.cpp
@@ -1086,6 +1103,7 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
             aowis-bgfx-2d-imagery-atlas-tests
             aowis-bgfx-2d-scene-tests
             aowis-bgfx-2d-mesh-tests
+            aowis-bgfx-entity-style-tests
             aowis-bgfx-2d-picking-tests
             aowis-bgfx-hud-tests
             aowis-bgfx-editor-overlay-tests

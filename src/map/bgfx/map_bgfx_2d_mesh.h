@@ -30,16 +30,17 @@
 // joins. GL line primitives cannot do this: they are 1 px on core profiles
 // and WebGL.
 //
-// Geometry and symbology are separate vertex streams. Stream 0 (the vertex
-// structs below) is geometry only and immutable until the geometry revision
-// changes. Stream 1 is built by buildColors() from per-primitive render ids
-// and re-uploaded only when the symbology changes. Sizes are uniforms. A
-// hydraulic timeline step therefore never touches geometry buffers.
+// Geometry only, no colours: every vertex carries the render id of its
+// entity, and the vertex shaders colour it from the per-entity data
+// textures (MapBgfxEntityStyle, shaders/entity_style.sh). The buffers are
+// immutable until the geometry revision changes; sizes are uniforms. A
+// hydraulic time step, a metric, palette or range change, hiding, selection
+// and diagnostics therefore never touch a vertex buffer.
 //
 // Heatmap: every node marker quad doubles as the node's heatmap spot. The
-// heatmap pass draws node_vertices with the radius as size uniform and its
-// own colour stream (MapBgfx2dChunkColors::heatmap, alpha 0 = no spot), so
-// the heatmap adds no geometry and its radius scales continuously.
+// heatmap pass draws node_vertices with the radius as size uniform in the
+// heatmap mode (the heatmap ramp, no spot without a value), so the heatmap
+// adds no geometry and its radius scales continuously.
 //
 // Flow chevrons are zoom-independent: every link gets chevrons at fixed world
 // positions centred on the link, organised as a level hierarchy (position j
@@ -53,6 +54,8 @@ struct MapBgfx2dGpuVertex
     float y = 0.0f;
     float corner_x = 0.0f;  // -1 / +1, scaled by the marker size uniform
     float corner_y = 0.0f;
+    float entity = 0.0f;    // node render id
+    float reserved = 0.0f;
 };
 
 struct MapBgfx2dLineVertex
@@ -62,7 +65,8 @@ struct MapBgfx2dLineVertex
     float other_x = 0.0f;  // opposite endpoint, chunk-local world
     float other_y = 0.0f;
     float side = 0.0f;     // +1 / -1
-    float reserved = 0.0f;
+    // Render id of the link; of the demand point for attachment lines.
+    float entity = 0.0f;
 };
 
 struct MapBgfx2dIconVertex
@@ -73,6 +77,8 @@ struct MapBgfx2dIconVertex
     float offset_y = 0.0f;
     float u = 0.0f;          // icon atlas coordinates
     float v = 0.0f;
+    float entity = 0.0f;     // render id of the node or link
+    float on_link = 0.0f;    // 1: a link icon (pump, valve), 0: a node icon
 };
 
 struct MapBgfx2dChevronVertex
@@ -85,26 +91,10 @@ struct MapBgfx2dChevronVertex
     float corner_v = 0.0f;   // -1 / +1 across
     float level = 0.0f;      // hierarchy level; MapBgfx2dFlow::AlwaysLevel for the centre
     float link_length = 0.0f; // whole link length, world units
-};
-
-// Stream 1 for chevrons: colour plus the current flow sign (-1, 0, +1).
-struct MapBgfx2dFlowAttribute
-{
-    quint32 abgr = 0;
-    float sign = 0.0f;
+    // Link render id: the flow direction (which way the chevron points, or
+    // none) and its colour come from the link's data.
+    float entity = 0.0f;
     float reserved = 0.0f;
-};
-
-enum class MapBgfx2dPrimitive
-{
-    Link,
-    Attachment,
-    Node,
-    NodeIcon,
-    LinkIcon,
-    // Heatmap spot of a node. No geometry of its own: the heatmap pass draws
-    // the node marker quads with a larger radius and its own colour stream.
-    Heatmap
 };
 
 // Atlas placement for one entity type; supplied by the caller so this header
@@ -119,13 +109,6 @@ struct MapBgfx2dIconSprite
     float half_width_ratio = 0.5f;
     float half_height_ratio = 0.5f;
 };
-
-// QRgb (0xAARRGGBB) -> the ABGR uint32 whose memory bytes are R,G,B,A, i.e.
-// bgfx Color0 as 4 x Uint8 normalized.
-inline quint32 mapBgfx2dAbgrFromArgb(quint32 argb)
-{
-    return (argb & 0xff00ff00u) | ((argb >> 16) & 0xffu) | ((argb & 0xffu) << 16);
-}
 
 struct MapBgfx2dClipCamera
 {
@@ -165,27 +148,6 @@ struct MapBgfx2dMeshChunk
     QVector<MapBgfx2dIconVertex> icon_vertices;
     QVector<MapBgfx2dChevronVertex> chevron_vertices;
     QVector<quint32> chevron_indices;
-    // One entry per primitive (segment / marker / icon / chevron), in vertex order.
-    QVector<quint32> link_render_ids;
-    QVector<quint32> attachment_render_ids;
-    QVector<quint32> node_render_ids;
-    QVector<InfrastructureEntity> node_entity_types;
-    QVector<quint32> icon_render_ids;
-    QVector<InfrastructureEntity> icon_entity_types;
-    QVector<bool> icon_on_link;
-    QVector<quint32> chevron_render_ids;
-};
-
-// Stream-1 data for one chunk, parallel to its vertex arrays.
-struct MapBgfx2dChunkColors
-{
-    QVector<quint32> link;
-    QVector<quint32> attachment;
-    QVector<quint32> node;
-    QVector<quint32> icon;
-    QVector<MapBgfx2dFlowAttribute> chevron;
-    // Parallel to node_vertices (heatmap spots reuse the node quads).
-    QVector<quint32> heatmap;
 };
 
 namespace MapBgfx2dChunking
@@ -313,7 +275,7 @@ public:
                 MapBgfx2d::WorldPoint middle;
                 if (sprite.valid && polylineMiddle(polyline, &middle))
                 {
-                    appendIcon(middle, sprite, polyline.render_id, polyline.entity_type, true);
+                    appendIcon(middle, sprite, polyline.render_id, true);
                 }
             }
         }
@@ -326,7 +288,7 @@ public:
             {
                 const MapBgfx2dIconSprite sprite = icons(point.entity_type);
                 if (sprite.valid)
-                    appendIcon(point.position, sprite, point.render_id, point.entity_type, false);
+                    appendIcon(point.position, sprite, point.render_id, false);
             }
         }
 
@@ -349,60 +311,6 @@ public:
     }
 
     const QVector<MapBgfx2dMeshChunk> &chunks() const { return this->chunk_list; }
-
-    // ABGR for one primitive (alpha 0 hides it without touching geometry).
-    using ColorLookup =
-        std::function<quint32(MapBgfx2dPrimitive, quint32 render_id, InfrastructureEntity)>;
-    // Colour and flow sign for the chevrons of one link.
-    using FlowLookup = std::function<MapBgfx2dFlowAttribute(quint32 link_render_id)>;
-
-    // Stream-1 data for every chunk, index aligned with chunks().
-    QVector<MapBgfx2dChunkColors> buildColors(const ColorLookup &lookup,
-                                              const FlowLookup &flow) const
-    {
-        QVector<MapBgfx2dChunkColors> result;
-        result.reserve(this->chunk_list.size());
-        for (const MapBgfx2dMeshChunk &chunk : this->chunk_list)
-        {
-            MapBgfx2dChunkColors colors;
-            colors.link.reserve(chunk.link_vertices.size());
-            for (const quint32 render_id : chunk.link_render_ids)
-                appendRepeated(&colors.link, lookup(MapBgfx2dPrimitive::Link, render_id,
-                                                    InfrastructureEntity::Unknown), 4);
-            colors.attachment.reserve(chunk.attachment_vertices.size());
-            for (const quint32 render_id : chunk.attachment_render_ids)
-                appendRepeated(&colors.attachment, lookup(MapBgfx2dPrimitive::Attachment, render_id,
-                                                          InfrastructureEntity::DemandPoint), 4);
-            colors.node.reserve(chunk.node_vertices.size());
-            colors.heatmap.reserve(chunk.node_vertices.size());
-            for (qsizetype index = 0; index < chunk.node_render_ids.size(); ++index)
-            {
-                appendRepeated(&colors.node, lookup(MapBgfx2dPrimitive::Node,
-                                                    chunk.node_render_ids[index],
-                                                    chunk.node_entity_types[index]), 6);
-                appendRepeated(&colors.heatmap, lookup(MapBgfx2dPrimitive::Heatmap,
-                                                       chunk.node_render_ids[index],
-                                                       chunk.node_entity_types[index]), 6);
-            }
-            colors.icon.reserve(chunk.icon_vertices.size());
-            for (qsizetype index = 0; index < chunk.icon_render_ids.size(); ++index)
-                appendRepeated(&colors.icon, lookup(chunk.icon_on_link[index]
-                                                        ? MapBgfx2dPrimitive::LinkIcon
-                                                        : MapBgfx2dPrimitive::NodeIcon,
-                                                    chunk.icon_render_ids[index],
-                                                    chunk.icon_entity_types[index]), 6);
-            colors.chevron.reserve(chunk.chevron_vertices.size());
-            for (const quint32 render_id : chunk.chevron_render_ids)
-            {
-                const MapBgfx2dFlowAttribute attribute = flow ? flow(render_id)
-                                                              : MapBgfx2dFlowAttribute();
-                for (int vertex = 0; vertex < 4; ++vertex)
-                    colors.chevron.append(attribute);
-            }
-            result.append(colors);
-        }
-        return result;
-    }
 
     quint64 geometryRevision() const { return this->geometry_revision; }
     quint64 preparationCount() const { return this->preparation_count; }
@@ -437,16 +345,10 @@ public:
     }
     qsizetype chevronCount() const
     {
-        return total([](const MapBgfx2dMeshChunk &chunk) { return chunk.chevron_render_ids.size(); });
+        return total([](const MapBgfx2dMeshChunk &chunk) { return chunk.chevron_vertices.size() / 4; });
     }
 
 private:
-    static void appendRepeated(QVector<quint32> *target, quint32 value, int count)
-    {
-        for (int index = 0; index < count; ++index)
-            target->append(value);
-    }
-
     qsizetype total(const std::function<qsizetype(const MapBgfx2dMeshChunk &)> &count) const
     {
         qsizetype sum = 0;
@@ -542,14 +444,14 @@ private:
         // With n = normal of A->B: 0 = A+n, 1 = A-n, 2 = B-n, 3 = B+n. At B the
         // shader's direction is B->A, so its normal is -n and side +1 gives
         // B-n. Triangles (0,1,2) and (0,2,3) cover the quad.
-        vertices.append({ax, ay, bx, by, 1.0f, 0.0f});
-        vertices.append({ax, ay, bx, by, -1.0f, 0.0f});
-        vertices.append({bx, by, ax, ay, 1.0f, 0.0f});
-        vertices.append({bx, by, ax, ay, -1.0f, 0.0f});
+        const float entity = float(segment.render_id);
+        vertices.append({ax, ay, bx, by, 1.0f, entity});
+        vertices.append({ax, ay, bx, by, -1.0f, entity});
+        vertices.append({bx, by, ax, ay, 1.0f, entity});
+        vertices.append({bx, by, ax, ay, -1.0f, entity});
         const quint32 quad[6] = {base, base + 1, base + 2, base, base + 2, base + 3};
         for (const quint32 index : quad)
             indices.append(index);
-        (attachment ? chunk.attachment_render_ids : chunk.link_render_ids).append(segment.render_id);
     }
 
     void appendMarker(const MapBgfx2dPoint &point)
@@ -564,18 +466,17 @@ private:
         // them by the marker size uniform and the fragment shader cuts an
         // antialiased circle. Not GL_POINTS, whose size and support differ
         // across desktop GL and WebGL 2.
-        chunk.node_vertices.append({x, y, -1.0f, -1.0f});
-        chunk.node_vertices.append({x, y,  1.0f, -1.0f});
-        chunk.node_vertices.append({x, y,  1.0f,  1.0f});
-        chunk.node_vertices.append({x, y, -1.0f, -1.0f});
-        chunk.node_vertices.append({x, y,  1.0f,  1.0f});
-        chunk.node_vertices.append({x, y, -1.0f,  1.0f});
-        chunk.node_render_ids.append(point.render_id);
-        chunk.node_entity_types.append(point.entity_type);
+        const float entity = float(point.render_id);
+        chunk.node_vertices.append({x, y, -1.0f, -1.0f, entity, 0.0f});
+        chunk.node_vertices.append({x, y,  1.0f, -1.0f, entity, 0.0f});
+        chunk.node_vertices.append({x, y,  1.0f,  1.0f, entity, 0.0f});
+        chunk.node_vertices.append({x, y, -1.0f, -1.0f, entity, 0.0f});
+        chunk.node_vertices.append({x, y,  1.0f,  1.0f, entity, 0.0f});
+        chunk.node_vertices.append({x, y, -1.0f,  1.0f, entity, 0.0f});
     }
 
     void appendIcon(const MapBgfx2d::WorldPoint &position, const MapBgfx2dIconSprite &sprite,
-                    quint32 render_id, InfrastructureEntity entity_type, bool on_link)
+                    quint32 render_id, bool on_link)
     {
         MapBgfx2dMeshChunk &chunk = chunkFor(position.x, position.y);
         double world_x = 0.0;
@@ -595,11 +496,9 @@ private:
             chunk.icon_vertices.append({x, y,
                 corner[0] * sprite.half_width_ratio, corner[1] * sprite.half_height_ratio,
                 corner[0] < 0.0f ? sprite.u0 : sprite.u1,
-                corner[1] < 0.0f ? sprite.v0 : sprite.v1});
+                corner[1] < 0.0f ? sprite.v0 : sprite.v1,
+                float(render_id), on_link ? 1.0f : 0.0f});
         }
-        chunk.icon_render_ids.append(render_id);
-        chunk.icon_entity_types.append(entity_type);
-        chunk.icon_on_link.append(on_link);
     }
 
     void appendChevrons(const MapBgfx2dPolyline &polyline)
@@ -648,14 +547,14 @@ private:
         const quint32 base = quint32(chunk.chevron_vertices.size());
         const float dx = float(direction.x);
         const float dy = float(direction.y);
-        chunk.chevron_vertices.append({x, y, dx, dy, -1.0f, -1.0f, level, link_length});
-        chunk.chevron_vertices.append({x, y, dx, dy, 1.0f, -1.0f, level, link_length});
-        chunk.chevron_vertices.append({x, y, dx, dy, 1.0f, 1.0f, level, link_length});
-        chunk.chevron_vertices.append({x, y, dx, dy, -1.0f, 1.0f, level, link_length});
+        const float entity = float(render_id);
+        chunk.chevron_vertices.append({x, y, dx, dy, -1.0f, -1.0f, level, link_length, entity, 0.0f});
+        chunk.chevron_vertices.append({x, y, dx, dy, 1.0f, -1.0f, level, link_length, entity, 0.0f});
+        chunk.chevron_vertices.append({x, y, dx, dy, 1.0f, 1.0f, level, link_length, entity, 0.0f});
+        chunk.chevron_vertices.append({x, y, dx, dy, -1.0f, 1.0f, level, link_length, entity, 0.0f});
         const quint32 quad[6] = {base, base + 1, base + 2, base, base + 2, base + 3};
         for (const quint32 index : quad)
             chunk.chevron_indices.append(index);
-        chunk.chevron_render_ids.append(render_id);
     }
 
     QVector<MapBgfx2dMeshChunk> chunk_list;

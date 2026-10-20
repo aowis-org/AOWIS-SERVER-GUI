@@ -28,6 +28,7 @@
 
 #include "common/_enums_structs.h"
 #include "network/network_symbology.h"
+#include "map/render/map_network_render_symbology.h"
 #include "map/core/map_model.h"
 #include "map/data/map_tile_repository.h"
 #include "map/core/map_widget.h"
@@ -149,6 +150,8 @@ private:
     // slider changes against them take the surface's cheap path.
     NetworkSymbologySettings resolved_symbology_settings;
     bool symbology_resolved = false;
+    // Dense per-entity values per time step (order-cached render ids).
+    MapNetworkSymbologyResolver symbology_resolver;
     // Network or simulation data changed: the next coalesced apply must
     // resolve again whatever the settings say.
     bool symbology_resolve_requested = false;
@@ -204,6 +207,8 @@ private:
 
     bool selectNetworkEntity(quint32 render_id, InfrastructureEntity entity_type, const QUuid &uuid = QUuid());
     void applySymbology();
+    // A palette or flip change: GPU state and the legend only, no resolve.
+    void applyPaletteSymbology();
     void applyVisualControlSymbology();
     void setNetworkBackgroundOpacity(int opacity);
 

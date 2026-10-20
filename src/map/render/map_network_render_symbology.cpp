@@ -2,12 +2,85 @@
 
 #include "network/hydraulic_data.h"
 #include "network/network_render_snapshot.h"
-#include "network/network_symbology_rendering.h"
 #include "network/network_symbology_values.h"
 
+#include <algorithm>
 #include <cmath>
+#include <limits>
 
-MapNetworkRenderSymbology resolveMapNetworkRenderSymbology(
+void MapNetworkSymbologyResolver::synchronizeSnapshot(const NetworkRenderSnapshot &snapshot)
+{
+    if (this->snapshot_known && this->snapshot_geometry_revision == snapshot.geometry_revision
+        && this->node_count == snapshot.nodes.size() && this->link_count == snapshot.links.size())
+        return;
+    this->snapshot_known = true;
+    this->snapshot_geometry_revision = snapshot.geometry_revision;
+    this->node_count = snapshot.nodes.size();
+    this->link_count = snapshot.links.size();
+    // Built once per network geometry, then only looked up when a source's
+    // order differs from the cached one.
+    this->node_render_ids.clear();
+    this->node_render_ids.reserve(snapshot.nodes.size());
+    for (const NetworkRenderNode &node : snapshot.nodes)
+        this->node_render_ids.insert(node.uuid, node.render_id);
+    this->link_render_ids.clear();
+    this->link_render_ids.reserve(snapshot.links.size());
+    for (const NetworkRenderLink &link : snapshot.links)
+        this->link_render_ids.insert(link.uuid, link.render_id);
+    for (OrderCache &cache : this->order_caches)
+    {
+        cache.uuids.clear();
+        cache.render_ids.clear();
+    }
+}
+
+quint32 MapNetworkSymbologyResolver::renderIdAt(OrderCache *cache, qsizetype index, const QUuid &uuid,
+                                                const QHash<QUuid, quint32> &render_ids) const
+{
+    // The common case of every time step: same position, same entity.
+    if (index < cache->uuids.size() && cache->uuids.constData()[index] == uuid)
+        return cache->render_ids.constData()[index];
+    const quint32 render_id = render_ids.value(uuid, 0);
+    if (index < cache->uuids.size())
+    {
+        cache->uuids[index] = uuid;
+        cache->render_ids[index] = render_id;
+    }
+    else
+    {
+        cache->uuids.append(uuid);
+        cache->render_ids.append(render_id);
+    }
+    return render_id;
+}
+
+void MapNetworkSymbologyResolver::ValueWriter::operator()(const QUuid &uuid, double value)
+{
+    const quint32 render_id = this->resolver->renderIdAt(this->cache, this->index, uuid, *this->render_ids);
+    ++this->index;
+    if (render_id != 0 && qsizetype(render_id) < this->values->size())
+        this->values->data()[qsizetype(render_id)] = value;
+}
+
+void MapNetworkSymbologyResolver::ValueWriter::finish()
+{
+    // A shorter source than last time: forget the stale tail.
+    this->cache->uuids.resize(std::min(this->cache->uuids.size(), this->index));
+    this->cache->render_ids.resize(std::min(this->cache->render_ids.size(), this->index));
+}
+
+MapNetworkSymbologyResolver::ValueWriter MapNetworkSymbologyResolver::valueWriter(
+    Source source, const QHash<QUuid, quint32> &render_ids, QVector<double> *values)
+{
+    ValueWriter writer;
+    writer.resolver = this;
+    writer.cache = &this->order_caches[source];
+    writer.render_ids = &render_ids;
+    writer.values = values;
+    return writer;
+}
+
+MapNetworkRenderSymbology MapNetworkSymbologyResolver::resolve(
     const HydraulicData &hydraulic_data,
     const NetworkSymbologySettings &settings,
     const NetworkSymbologyRanges &ranges)
@@ -15,67 +88,7 @@ MapNetworkRenderSymbology resolveMapNetworkRenderSymbology(
     const NetworkSymbologySettings bounded_settings = settings.bounded();
     const NetworkRenderSnapshot &snapshot = hydraulic_data.networkRenderSnapshot();
     const NetworkHydraulic &network_hydraulic = hydraulic_data.networkHydraulic();
-
-    QHash<QUuid, double> water_age_node_values;
-    QHash<QUuid, double> water_age_link_values;
-    const WaterQualitySimulationResult *quality_result =
-        hydraulic_data.currentWaterQualitySimulationResult(WaterQualityAnalysisType::WaterAge);
-    if (quality_result != nullptr)
-    {
-        if (bounded_settings.visual_node == VisualNode::WaterAge
-            || bounded_settings.visual_heatmap == VisualHeatmap::WaterAge)
-        {
-            water_age_node_values = waterAgeNodeSymbologyValues(*quality_result);
-        }
-        if (bounded_settings.visual_link == VisualLink::WaterAge)
-            water_age_link_values = waterAgeLinkSymbologyValues(*quality_result);
-    }
-
-    QHash<QUuid, double> hydraulic_node_values;
-    QHash<QUuid, double> hydraulic_link_values;
-    QHash<QUuid, double> hydraulic_heatmap_values;
-    QHash<QUuid, qint8> hydraulic_flow_directions;
-    const HydraulicSimulationResult *hydraulic_result = hydraulic_data.currentSimulationResult();
-    if (hydraulic_result != nullptr)
-    {
-        if (nodeVisualUsesHydraulicSimulationResult(bounded_settings.visual_node))
-        {
-            hydraulic_node_values = hydraulicNodeSymbologyValues(
-                *hydraulic_result, bounded_settings.visual_node);
-        }
-        if (linkVisualUsesHydraulicSimulationResult(bounded_settings.visual_link))
-        {
-            hydraulic_link_values = hydraulicLinkSymbologyValues(
-                *hydraulic_result, bounded_settings.visual_link);
-        }
-        if (heatmapVisualUsesHydraulicSimulationResult(bounded_settings.visual_heatmap))
-        {
-            hydraulic_heatmap_values = hydraulicHeatmapSymbologyValues(
-                *hydraulic_result, bounded_settings.visual_heatmap);
-        }
-        if (bounded_settings.show_flow_direction)
-            hydraulic_flow_directions = hydraulicLinkFlowDirections(*hydraulic_result);
-    }
-
-    const QHash<QUuid, double> node_values =
-        bounded_settings.visual_node == VisualNode::WaterAge
-            ? water_age_node_values
-            : nodeVisualUsesHydraulicSimulationResult(bounded_settings.visual_node)
-                ? hydraulic_node_values
-                : networkNodeSymbologyValues(network_hydraulic, bounded_settings.visual_node);
-    const QHash<QUuid, double> link_values =
-        bounded_settings.visual_link == VisualLink::WaterAge
-            ? water_age_link_values
-            : linkVisualUsesHydraulicSimulationResult(bounded_settings.visual_link)
-                ? hydraulic_link_values
-                : networkLinkSymbologyValues(network_hydraulic, bounded_settings.visual_link);
-    const QHash<QUuid, double> heatmap_values =
-        bounded_settings.visual_heatmap == VisualHeatmap::WaterAge
-            ? water_age_node_values
-            : heatmapVisualUsesHydraulicSimulationResult(bounded_settings.visual_heatmap)
-                ? hydraulic_heatmap_values
-                : networkHeatmapSymbologyValues(
-                    network_hydraulic, bounded_settings.visual_heatmap);
+    synchronizeSnapshot(snapshot);
 
     MapNetworkRenderSymbology result;
     result.node_size_unit = bounded_settings.node_size_unit;
@@ -87,7 +100,11 @@ MapNetworkRenderSymbology resolveMapNetworkRenderSymbology(
     result.icon_size_m = bounded_settings.icon_size_m;
     result.show_icons = true;
     result.visual_node = bounded_settings.visual_node;
+    result.node_palette = bounded_settings.node_palette;
+    result.node_palette_flipped = bounded_settings.node_palette_flipped;
     result.visual_link = bounded_settings.visual_link;
+    result.link_palette = bounded_settings.link_palette;
+    result.link_palette_flipped = bounded_settings.link_palette_flipped;
     result.link_thickness_unit = bounded_settings.link_thickness_unit;
     result.link_thickness_px = bounded_settings.link_thickness_px;
     result.link_thickness_m = bounded_settings.link_thickness_m;
@@ -101,82 +118,97 @@ MapNetworkRenderSymbology resolveMapNetworkRenderSymbology(
     result.heatmap_solid_center_percent = bounded_settings.heatmap_solid_center_percent;
     result.heatmap_palette = bounded_settings.heatmap_palette;
     result.heatmap_palette_flipped = bounded_settings.heatmap_palette_flipped;
+    result.ranges = ranges;
+
+    const WaterQualitySimulationResult *quality_result =
+        hydraulic_data.currentWaterQualitySimulationResult(WaterQualityAnalysisType::WaterAge);
+    const HydraulicSimulationResult *hydraulic_result = hydraulic_data.currentSimulationResult();
+    const double no_value = std::numeric_limits<double>::quiet_NaN();
+    const qsizetype node_slots = snapshot.nodes.size() + 1;
+    const qsizetype link_slots = snapshot.links.size() + 1;
+
+    // One dense fill per metric: every visited (uuid, value) lands at its
+    // render id; entities the source does not list keep NaN.
+    if (result.visual_node != VisualNode::None)
+    {
+        result.node_values.fill(no_value, node_slots);
+        ValueWriter writer = valueWriter(NodeValueSource, this->node_render_ids, &result.node_values);
+        const VisualNode visual = result.visual_node;
+        if (visual == VisualNode::WaterAge)
+        {
+            if (quality_result != nullptr)
+                visitWaterAgeNodeSymbologyValues(*quality_result, writer);
+        }
+        else if (nodeVisualUsesHydraulicSimulationResult(visual))
+        {
+            if (hydraulic_result != nullptr)
+                visitHydraulicNodeSymbologyValues(*hydraulic_result, visual, writer);
+        }
+        else
+        {
+            visitNetworkNodeSymbologyValues(network_hydraulic, visual, writer);
+        }
+        writer.finish();
+    }
+
+    if (result.visual_link != VisualLink::None)
+    {
+        result.link_values.fill(no_value, link_slots);
+        ValueWriter writer = valueWriter(LinkValueSource, this->link_render_ids, &result.link_values);
+        const VisualLink visual = result.visual_link;
+        if (visual == VisualLink::WaterAge)
+        {
+            if (quality_result != nullptr)
+                visitWaterAgeLinkSymbologyValues(*quality_result, writer);
+        }
+        else if (linkVisualUsesHydraulicSimulationResult(visual))
+        {
+            if (hydraulic_result != nullptr)
+                visitHydraulicLinkSymbologyValues(*hydraulic_result, visual, writer);
+        }
+        else
+        {
+            visitNetworkLinkSymbologyValues(network_hydraulic, visual, writer);
+        }
+        writer.finish();
+    }
 
     if (result.visual_heatmap != VisualHeatmap::None)
     {
-        result.heatmap_fractions.reserve(snapshot.nodes.size());
-        for (const NetworkRenderNode &node : snapshot.nodes)
+        result.heatmap_values.fill(no_value, node_slots);
+        ValueWriter writer = valueWriter(HeatmapValueSource, this->node_render_ids, &result.heatmap_values);
+        const VisualHeatmap visual = result.visual_heatmap;
+        const VisualNode node_visual = networkHeatmapNodeVisual(visual);
+        if (visual == VisualHeatmap::WaterAge)
         {
-            const QHash<QUuid, double>::const_iterator iterator = heatmap_values.constFind(node.uuid);
-            if (iterator == heatmap_values.cend())
-                continue;
-            const double value = iterator.value();
-            if (!std::isfinite(value)
-                || !std::isfinite(ranges.heatmap_minimum)
-                || !std::isfinite(ranges.heatmap_maximum))
-            {
-                continue;
-            }
-            const double fraction = ranges.heatmap_minimum == ranges.heatmap_maximum
-                ? 0.5
-                : qBound(0.0,
-                    (value - ranges.heatmap_minimum)
-                        / (ranges.heatmap_maximum - ranges.heatmap_minimum),
-                    1.0);
-            result.heatmap_fractions.insert(node.render_id, fraction);
+            if (quality_result != nullptr)
+                visitWaterAgeNodeSymbologyValues(*quality_result, writer);
         }
+        else if (heatmapVisualUsesHydraulicSimulationResult(visual))
+        {
+            if (hydraulic_result != nullptr)
+                visitHydraulicNodeSymbologyValues(*hydraulic_result, node_visual, writer);
+        }
+        else
+        {
+            visitNetworkNodeSymbologyValues(network_hydraulic, node_visual, writer);
+        }
+        writer.finish();
     }
 
-    if (result.show_flow_direction)
+    // Flow directions only exist with a hydraulic result and the arrows on.
+    if (result.show_flow_direction && hydraulic_result != nullptr)
     {
-        result.flow_directions.reserve(snapshot.links.size());
-        for (const NetworkRenderLink &link : snapshot.links)
+        QVector<double> directions(link_slots, 0.0);
+        ValueWriter writer = valueWriter(FlowSource, this->link_render_ids, &directions);
+        visitHydraulicLinkFlowDirections(*hydraulic_result, [&writer](const QUuid &uuid, qint8 direction)
         {
-            const QHash<QUuid, qint8>::const_iterator iterator =
-                hydraulic_flow_directions.constFind(link.uuid);
-            if (iterator != hydraulic_flow_directions.cend() && iterator.value() != 0)
-                result.flow_directions.insert(link.render_id, iterator.value());
-        }
-    }
-
-    result.node_colors.reserve(snapshot.nodes.size());
-    if (bounded_settings.visual_node != VisualNode::None)
-        result.node_values.reserve(snapshot.nodes.size());
-    if (bounded_settings.visual_link != VisualLink::None)
-        result.link_values.reserve(snapshot.links.size());
-    for (const NetworkRenderNode &node : snapshot.nodes)
-    {
-        QRgb color = networkSymbologyDefaultColor();
-        if (bounded_settings.visual_node != VisualNode::None)
-        {
-            const QHash<QUuid, double>::const_iterator iterator = node_values.constFind(node.uuid);
-            color = iterator == node_values.cend()
-                ? networkSymbologyUnavailableColor()
-                : networkSymbologyColor(
-                    iterator.value(), ranges.node_minimum, ranges.node_maximum,
-                    bounded_settings.node_palette, bounded_settings.node_palette_flipped);
-            if (iterator != node_values.cend())
-                result.node_values.insert(node.render_id, iterator.value());
-        }
-        result.node_colors.insert(node.render_id, color);
-    }
-
-    result.link_colors.reserve(snapshot.links.size());
-    for (const NetworkRenderLink &link : snapshot.links)
-    {
-        QRgb color = networkSymbologyDefaultColor();
-        if (bounded_settings.visual_link != VisualLink::None)
-        {
-            const QHash<QUuid, double>::const_iterator iterator = link_values.constFind(link.uuid);
-            color = iterator == link_values.cend()
-                ? networkSymbologyUnavailableColor()
-                : networkSymbologyColor(
-                    iterator.value(), ranges.link_minimum, ranges.link_maximum,
-                    bounded_settings.link_palette, bounded_settings.link_palette_flipped);
-            if (iterator != link_values.cend())
-                result.link_values.insert(link.render_id, iterator.value());
-        }
-        result.link_colors.insert(link.render_id, color);
+            writer(uuid, double(direction));
+        });
+        writer.finish();
+        result.flow_directions.resize(link_slots);
+        for (qsizetype index = 0; index < link_slots; ++index)
+            result.flow_directions[index] = qint8(directions[index]);
     }
 
     return result;
