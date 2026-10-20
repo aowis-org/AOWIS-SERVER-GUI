@@ -1295,6 +1295,10 @@ void MapMonitorContainer::handleBgfxHudAction(int action, int group, int value, 
             if (this->bgfx_surface != nullptr)
                 this->bgfx_surface->setMapTilesVisible(!this->bgfx_surface->mapTilesVisible());
             break;
+        case MapBgfxHud::Action::ToggleHillshade:
+            if (this->bgfx_surface != nullptr)
+                this->bgfx_surface->setTerrainHillshadeVisible(!this->bgfx_surface->terrainHillshadeVisible());
+            break;
         case MapBgfxHud::Action::UndergroundMode:
             if (this->bgfx_surface != nullptr)
                 this->bgfx_surface->setUndergroundMode(static_cast<MapUndergroundMode>(value));

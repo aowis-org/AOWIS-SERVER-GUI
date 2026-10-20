@@ -61,6 +61,9 @@ struct MapGlobeSurfaceTile
     int terrain_cell_count = 1;
     quint64 terrain_mesh_request_id = 0;
     bool terrain_mesh_applied = false;
+    // MapTerrainMeshResult::missing_neighbor_mask of the applied own-DEM
+    // mesh: neighbor DEM tiles whose arrival rebuilds it.
+    int terrain_missing_neighbor_mask = 0;
     bool terrain_mesh_has_relief = false;
     // While the tile's own DEM is loading, its mesh is built from the
     // nearest cached coarser DEM tile (scheduleAncestorTerrainStandIns()):
@@ -172,8 +175,9 @@ private:
     int allocateWindowSlot(int vertex_count);
     void releaseWindowSlot(int first_vertex, int vertex_count);
     // Writes a new tile's grid and skirt into its pool range: its own DEM's
-    // mesh, else a stand-in from the nearest cached coarser DEM, else flat.
-    void buildWindowTileVertices(MapGlobeSurfaceTile *tile, int subdivisions);
+    // mesh, else a stand-in from the nearest cached coarser DEM, else (or
+    // without build_mesh: over the frame's budget) flat for the mesh thread.
+    void buildWindowTileVertices(MapGlobeSurfaceTile *tile, int subdivisions, bool build_mesh);
     // The finest cached, usable DEM tile above the tile's own DEM zoom and
     // finer than coarsest_excluded_zoom; nullptr when there is none.
     const MapTerrainTile *cachedAncestorTerrainTile(

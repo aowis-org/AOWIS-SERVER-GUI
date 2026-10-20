@@ -601,23 +601,26 @@ void MapBgfxHud::buildOnce(MapBgfxHudCanvas *canvas, MapBgfxHudTextCache *cache,
     // Top left, one panel: the fullscreen button, always (every map, every
     // platform), then the 2D / 3D switch where the map has one (3D stays
     // disabled until the bgfx globe exists) and, on the globe, the
-    // "wireframe" and "map" toggles (the QWidget HUD's check boxes).
+    // "wireframe", "map" and "hillshade" toggles.
     {
         const double segment_height = buttonHeight(cache);
         const QString label_2d = QStringLiteral("2D");
         const QString label_3d = QStringLiteral("3D");
         const QString label_wireframe = QStringLiteral("wireframe");
         const QString label_map = QStringLiteral("map");
+        const QString label_hillshade = QStringLiteral("hillshade");
         const double width_2d = std::max(SegmentMinimumWidthPx, buttonWidth(cache, label_2d));
         const double width_3d = std::max(SegmentMinimumWidthPx, buttonWidth(cache, label_3d));
         const bool toggles = this->view_switch_visible && this->globe.visible;
         const double width_wireframe = toggles ? buttonWidth(cache, label_wireframe) : 0.0;
         const double width_map = toggles ? buttonWidth(cache, label_map) : 0.0;
+        const double width_hillshade = toggles ? buttonWidth(cache, label_hillshade) : 0.0;
         double content_width = segment_height;
         if (this->view_switch_visible)
             content_width += ViewToggleSpacingPx + width_2d + width_3d;
         if (toggles)
-            content_width += ViewToggleSpacingPx + width_wireframe + ControlsSpacingPx + width_map;
+            content_width += ViewToggleSpacingPx + width_wireframe + ControlsSpacingPx + width_map
+                + ControlsSpacingPx + width_hillshade;
         const MapBgfxHudRect frame{MarginPx, MarginPx, 2.0 * FramePaddingPx + content_width,
                                    2.0 * FramePaddingPx + segment_height};
         drawPanel(canvas, frame, palette);
@@ -662,6 +665,10 @@ void MapBgfxHud::buildOnce(MapBgfxHudCanvas *canvas, MapBgfxHudTextCache *cache,
             drawButton(canvas, cache, MapBgfxHudRect{x, y, width_map, segment_height}, label_map,
                        Target{Element::GlobeMapTiles, -1, -1}, true, this->globe.map_tiles, palette,
                        QStringLiteral("Draw map tiles as textures on the 3D globe surface."));
+            x += width_map + ControlsSpacingPx;
+            drawButton(canvas, cache, MapBgfxHudRect{x, y, width_hillshade, segment_height}, label_hillshade,
+                       Target{Element::GlobeHillshade, -1, -1}, true, this->globe.hillshade, palette,
+                       QStringLiteral("Shade the 3D terrain relief, lit from the north-west."));
         }
     }
 
@@ -1785,6 +1792,7 @@ bool MapBgfxHud::isClickable(Element element)
         case Element::LegendPaletteReset:
         case Element::GlobeWireframe:
         case Element::GlobeMapTiles:
+        case Element::GlobeHillshade:
         case Element::GlobeUnderground:
             return true;
         default:
@@ -1820,6 +1828,8 @@ MapBgfxHud::Action MapBgfxHud::actionFor(Element element)
             return Action::ToggleWireframe;
         case Element::GlobeMapTiles:
             return Action::ToggleMapTiles;
+        case Element::GlobeHillshade:
+            return Action::ToggleHillshade;
         case Element::GlobeUnderground:
             return Action::UndergroundMode;
         default:

@@ -98,6 +98,7 @@ list(APPEND AOWIS_BGFX_SHADER_INPUTS
     "${AOWIS_BGFX_SHADER_DIR}/varying_globe_network.def.sc"
     "${AOWIS_BGFX_SHADER_DIR}/varying_globe_heatmap.def.sc"
     "${AOWIS_BGFX_SHADER_DIR}/globe_network.sh"
+    "${AOWIS_BGFX_SHADER_DIR}/globe_hillshade.sh"
     "${AOWIS_BGFX_SHADER_DIR}/entity_style.sh"
     "${AOWIS_BGFX_DIR}/src/bgfx_shader.sh")
 # dx11 on Linux/macOS: shaderc's d3d4linux runs the compiler under Wine.
@@ -164,9 +165,16 @@ function(aowis_bgfx_add_shaders target)
                 set(aowis_optimize -O 3)
                 if(NOT CMAKE_HOST_WIN32)
                     # Wine quietly, in its own prefix inside the build tree.
+                    # Wine has its own builtin d3dcompiler_47 (vkd3d-shader),
+                    # which it prefers even when d3d4linux loads bgfx's DLL by
+                    # full path; it lacks intrinsics bgfx_shader.sh uses
+                    # (reversebits) and emits different DXBC. "n" forces
+                    # Microsoft's native DLL and fails loudly if it is missing
+                    # rather than falling back to the builtin.
                     set(aowis_shaderc_launcher "${CMAKE_COMMAND}" -E env
                         "D3D4LINUX_WINE=${AOWIS_BGFX_WINE}"
                         "WINEPREFIX=${CMAKE_BINARY_DIR}/aowis-bgfx-shaderc/wineprefix"
+                        "WINEDLLOVERRIDES=d3dcompiler_47=n"
                         "WINEDEBUG=-all")
                 endif()
             endif()

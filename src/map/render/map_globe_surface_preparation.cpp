@@ -9,6 +9,7 @@
 #include "map/render/map_terrain_mesh_scheduler.h"
 
 #include <QDebug>
+#include <QElapsedTimer>
 #include <QtMath>
 
 #include <algorithm>
@@ -23,6 +24,12 @@ constexpr int GlobeImageryMaxZoom = MapModel::MaxZoom;
 constexpr int GlobeTerrainReliefMinimumZoom =
     MapGlobeSurfaceScene::TerrainReliefMinimumZoom;
 constexpr int GlobePolarCapSegments = 48;
+// GUI-thread time a window rebuild may spend building new tiles' meshes in
+// place (buildWindowTileVertices()). A camera move needs a few tiles, well
+// below it; entering the globe or a render-origin rebase needs the whole
+// window (~45 ms at full detail): beyond the budget new tiles start flat
+// and get their mesh from the mesh thread instead of freezing a frame.
+constexpr qint64 GlobeWindowMeshBudgetNs = 8000000;
 
 int subdivisionsForZoom(int zoom)
 {
@@ -296,12 +303,44 @@ void MapGlobeSurfacePreparation::notifyTerrainTileAvailable(const QString &key)
     if (key.isEmpty())
         return;
 
+    // A neighbor DEM tile completes the edge normals of meshes built
+    // without it (MapTerrainMeshResult::missing_neighbor_mask): those are
+    // built again, drawn as they are until then.
+    const MapTerrainTile *arrived =
+        this->terrain_repository != nullptr ? this->terrain_repository->tile(key) : nullptr;
     for (MapGlobeSurfaceTile &tile : this->window_tiles)
     {
-        if (tile.terrain_key != key)
+        if (tile.terrain_key == key)
+        {
+            tile.terrain_mesh_request_id = 0;
+            tile.terrain_mesh_applied = false;
             continue;
-        tile.terrain_mesh_request_id = 0;
-        tile.terrain_mesh_applied = false;
+        }
+        if (arrived == nullptr || tile.terrain_missing_neighbor_mask == 0
+            || tile.terrain_zoom != arrived->address.zoom || !tile.terrain_mesh_applied)
+        {
+            continue;
+        }
+        const int shift = tile.zoom - tile.terrain_zoom;
+        const qint64 tile_count = qint64(1) << tile.terrain_zoom;
+        const qint64 terrain_x = qint64(quint32(tile.tile_x) >> shift);
+        const qint64 terrain_y = qint64(quint32(tile.tile_y) >> shift);
+        const qint64 arrived_x = qint64(arrived->address.x);
+        const qint64 arrived_y = qint64(arrived->address.y);
+        int neighbor = -1;
+        if (arrived_y == terrain_y && arrived_x == (terrain_x + tile_count - 1) % tile_count)
+            neighbor = MapTerrainMeshNeighborWest;
+        else if (arrived_y == terrain_y && arrived_x == (terrain_x + 1) % tile_count)
+            neighbor = MapTerrainMeshNeighborEast;
+        else if (arrived_x == terrain_x && arrived_y == terrain_y - 1)
+            neighbor = MapTerrainMeshNeighborNorth;
+        else if (arrived_x == terrain_x && arrived_y == terrain_y + 1)
+            neighbor = MapTerrainMeshNeighborSouth;
+        if (neighbor >= 0 && (tile.terrain_missing_neighbor_mask & (1 << neighbor)) != 0)
+        {
+            tile.terrain_mesh_request_id = 0;
+            tile.terrain_mesh_applied = false;
+        }
     }
 }
 
@@ -346,6 +385,11 @@ MapGlobeSurfaceVertex MapGlobeSurfacePreparation::makeTileVertex(
     vertex.z = float(position.z - this->render_origin_ecef.z);
     vertex.u = u;
     vertex.v = v;
+    // The ellipsoid's normal (flat tiles, polar caps).
+    const double lat_rad = qDegreesToRadians(lat_deg);
+    const double lon_rad = qDegreesToRadians(lon_deg);
+    vertex.normal = mapGlobePackNormal(std::cos(lat_rad) * std::cos(lon_rad),
+                                       std::cos(lat_rad) * std::sin(lon_rad), std::sin(lat_rad));
     return vertex;
 }
 
@@ -523,7 +567,8 @@ void MapGlobeSurfacePreparation::releaseWindowSlot(int first_vertex, int vertex_
     this->window_free_vertex_count += vertex_count;
 }
 
-void MapGlobeSurfacePreparation::buildWindowTileVertices(MapGlobeSurfaceTile *tile, int subdivisions)
+void MapGlobeSurfacePreparation::buildWindowTileVertices(MapGlobeSurfaceTile *tile, int subdivisions,
+                                                         bool build_mesh)
 {
     const int vertex_count = mapGlobeTileVertexCount(subdivisions);
     MapGlobeSurfaceVertex *target = this->window_vertices.data() + tile->first_vertex;
@@ -536,7 +581,7 @@ void MapGlobeSurfacePreparation::buildWindowTileVertices(MapGlobeSurfaceTile *ti
     // whenever the camera moved.
     const MapTerrainTile *terrain_tile = nullptr;
     bool stand_in = false;
-    if (!tile->terrain_key.isEmpty() && this->terrain_repository != nullptr)
+    if (build_mesh && !tile->terrain_key.isEmpty() && this->terrain_repository != nullptr)
     {
         terrain_tile = this->terrain_repository->tile(tile->terrain_key);
         if (terrain_tile == nullptr || terrain_tile->elevations_m.size() != MapTerrainTileSampleCount
@@ -567,17 +612,33 @@ void MapGlobeSurfacePreparation::buildWindowTileVertices(MapGlobeSurfaceTile *ti
         if (result.vertices.size() == vertex_count)
         {
             for (const MapTerrainMeshVertex &vertex : result.vertices)
-                *target++ = MapGlobeSurfaceVertex{vertex.x, vertex.y, vertex.z, vertex.u, vertex.v};
+                *target++ = MapGlobeSurfaceVertex{vertex.x, vertex.y, vertex.z, vertex.u, vertex.v, vertex.normal};
             // A stand-in is not the tile's own mesh: that one is still
             // scheduled once its DEM arrives (scheduleReadyTerrainMeshes()).
             tile->terrain_mesh_applied = !stand_in;
+            tile->terrain_missing_neighbor_mask = stand_in ? 0 : result.missing_neighbor_mask;
             tile->terrain_mesh_has_relief = true;
             tile->terrain_stand_in_zoom = stand_in ? terrain_tile->address.zoom : -1;
             return;
         }
     }
 
-    // No DEM at all yet (or no relief at this zoom): the ellipsoid.
+    // No DEM at all yet (or over the budget): the ellipsoid, from the mesh
+    // builder without heights (its per-row/column trigonometry; the
+    // per-vertex geodetic conversion below took ~45 ms for a full-detail
+    // window on entering the globe).
+    if (!tile->terrain_key.isEmpty())
+    {
+        const MapTerrainMeshResult result = buildTerrainMeshResult(terrainMeshRequest(*tile, MapTerrainTile()));
+        if (result.vertices.size() == vertex_count)
+        {
+            for (const MapTerrainMeshVertex &vertex : result.vertices)
+                *target++ = MapGlobeSurfaceVertex{vertex.x, vertex.y, vertex.z, vertex.u, vertex.v, vertex.normal};
+            return;
+        }
+    }
+
+    // Tiles without relief at their zoom: the ellipsoid, few vertices.
     QVector<MapGlobeSurfaceVertex> flat;
     flat.reserve(vertex_count);
     for (int row = 0; row <= subdivisions; ++row)
@@ -748,14 +809,18 @@ void MapGlobeSurfacePreparation::rebuildWindow(
         }
     }
 
-    // New tiles: a range each, the mesh built right away.
+    // New tiles: a range each, the mesh built right away (within the budget;
+    // leaves come nearest first).
+    QElapsedTimer mesh_budget;
+    mesh_budget.start();
     for (qsizetype index = 0; index < next_tiles.size(); ++index)
     {
         if (kept_from.at(index) >= 0)
             continue;
         MapGlobeSurfaceTile &tile = next_tiles[index];
         tile.first_vertex = allocateWindowSlot(tile.vertex_count);
-        this->buildWindowTileVertices(&tile, tile.grid_cell_count);
+        this->buildWindowTileVertices(&tile, tile.grid_cell_count,
+                                      mesh_budget.nsecsElapsed() < GlobeWindowMeshBudgetNs);
         this->updateTerrainRayBounds(&tile);
         if (!this->window_full_upload)
         {
@@ -978,6 +1043,33 @@ MapTerrainMeshRequest MapGlobeSurfacePreparation::terrainMeshRequest(
     request.globe_render_origin_x = this->render_origin_ecef.x;
     request.globe_render_origin_y = this->render_origin_ecef.y;
     request.globe_render_origin_z = this->render_origin_ecef.z;
+
+    // The neighbors of the tile's own DEM tile, for seamless edge normals
+    // (implicitly shared copies). A stand-in carries none: its own DEM's
+    // mesh replaces it anyway.
+    if (this->terrain_repository != nullptr && request.terrain_available
+        && terrain_tile.address.zoom == tile.terrain_zoom)
+    {
+        const int zoom = terrain_tile.address.zoom;
+        const qint64 tile_count = qint64(1) << zoom;
+        const qint64 x = qint64(terrain_tile.address.x);
+        const qint64 y = qint64(terrain_tile.address.y);
+        const qint64 neighbor_x[MapTerrainMeshNeighborCount] = {
+            (x + tile_count - 1) % tile_count, (x + 1) % tile_count, x, x};
+        const qint64 neighbor_y[MapTerrainMeshNeighborCount] = {y, y, y - 1, y + 1};
+        for (int neighbor = 0; neighbor < MapTerrainMeshNeighborCount; ++neighbor)
+        {
+            if (neighbor_y[neighbor] < 0 || neighbor_y[neighbor] >= tile_count)
+                continue;
+            const MapTerrainTile *neighbor_tile = this->terrain_repository->tile(
+                this->terrain_levels.dataset, zoom, quint32(neighbor_x[neighbor]), quint32(neighbor_y[neighbor]));
+            if (neighbor_tile != nullptr && neighbor_tile->elevations_m.size() == MapTerrainTileSampleCount
+                && neighbor_tile->vertical_datum == terrain_tile.vertical_datum)
+            {
+                request.terrain_neighbors[neighbor] = *neighbor_tile;
+            }
+        }
+    }
     return request;
 }
 
@@ -1124,11 +1216,13 @@ bool MapGlobeSurfacePreparation::applyReadyTerrainMeshes(
                 target.z = vertex.z;
                 target.u = vertex.u;
                 target.v = vertex.v;
+                target.normal = vertex.normal;
             }
 
             // A stand-in lies at the right height but is not the tile's own
             // mesh: that one is still scheduled once its DEM arrives.
             tile.terrain_mesh_applied = result.stand_in_zoom < 0;
+            tile.terrain_missing_neighbor_mask = result.stand_in_zoom < 0 ? result.missing_neighbor_mask : 0;
             tile.terrain_mesh_has_relief = true;
             tile.terrain_stand_in_zoom = result.stand_in_zoom;
             this->updateTerrainRayBounds(&tile);

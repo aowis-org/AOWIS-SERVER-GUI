@@ -491,7 +491,12 @@ Slice 1, the terrain surface (`map_bgfx_globe_surface.*`):
 * A new tile gets its relief in the same frame: its own DEM's mesh when
   cached, else a stand-in resampled from the nearest cached coarser DEM
   (replaced on the mesh thread when its own DEM arrives); flat only before
-  any DEM covering it is cached. New tiles waited for the mesh thread before
+  any DEM covering it is cached, or beyond an 8 ms meshing budget per
+  rebuild (entering the globe, a render-origin rebase: those tiles start
+  flat and get their mesh from the mesh thread instead of freezing a frame;
+  flat terrain tiles come from the mesh builder too, the per-vertex
+  geodetic conversion took ~45 ms for a full-detail window). New tiles
+  waited for the mesh thread before
   and were drawn on the ellipsoid meanwhile, flickering between the relief
   around them during camera moves. Affordable because the mesh builder
   evaluates the Web Mercator inverse and the trigonometry per row and
@@ -500,6 +505,34 @@ Slice 1, the terrain surface (`map_bgfx_globe_surface.*`):
   zoom 60 -> 3 km, pan, orbit, zoom out; per phase): preparation CPU
   6-12 ms -> ~1 ms per frame, uploads 1.2-2.0 GB -> 17-44 MB, frames with
   flat relief tiles 150-180 -> 0 (only while the first coarse DEM loads).
+* Hillshading (HUD toggle "hillshade", top left after "map", on by
+  default, session state like the other toggles). Every surface vertex
+  carries the terrain normal (ECEF) packed into four unsigned normalized
+  bytes (`MapGlobePackedNormal`, vertex 20 -> 24 bytes). The mesh builder
+  derives it from the DEM by central differences over one DEM cell, with a
+  one-cell ring of samples around the grid taken from the tile's own DEM or,
+  at DEM tile borders, from the four neighbour DEM tiles the request carries
+  (`MapTerrainMeshRequest::terrain_neighbors`), so normals agree across
+  tile borders (no shading seam). A neighbour not cached yet is reported in
+  `missing_neighbor_mask` (edge normals one-sided meanwhile); its arrival
+  rebuilds the mesh (`notifyTerrainTileAvailable()`). Flat tiles and caps
+  carry the ellipsoid normal. Shaders (`globe_hillshade.sh`, used by
+  `vs/fs_globe_surface` and `vs/fs_globe_surface_heatmap`): the vertex
+  shader turns the light, given in east/north/up (`u_globe_light`:
+  azimuth 315 deg, altitude 45 deg, the cartographic convention), into
+  ECEF from the point's own up direction (position + `u_globe_origin`); the
+  fragment shader scales the faded imagery by
+  `mix(1, lambert / sin(altitude), strength)` (`u_globe_shading`: strength
+  0.8, 0 when off): flat ground keeps its brightness, slopes facing the
+  light brighten (up to 1.33x), the others darken; the heatmap colours stay
+  unshaded on top. Verified: rendered with the compiled ESSL in WebGL 2
+  (flat 100 -> 100, facing the light 133 (formula 133.1), facing away 20
+  (20.0), off 100); normal tests (slope direction and size, no seam across
+  a DEM tile border with the neighbour carried, missing-neighbour mask).
+  The dx11 binaries of the four changed shaders need regenerating under Wine
+  (`-DAOWIS_BGFX_SHADER_TOOLS=ON`); until then Direct3D 11 runs the old
+  surface shaders (no hillshading; they ignore the extra vertex attribute
+  and uniforms).
 * GPU: window and cap vertices in dynamic buffers (window: the pool, patched
   per new tile and finished mesh; caps: full upload on a rebuild), one
   indexed draw per tile, depth test and write LessEqual. Window tiles have no index buffer
@@ -737,6 +770,10 @@ Microsoft's `d3dcompiler_47.dll`, which bgfx ships in `tools/bin/windows`
 directly (copied next to `aowis-bgfx-shaderc.exe`); Linux and macOS run it
 through bgfx's d3d4linux helper under **Wine** (any `wine` on `PATH`, or
 `-DAOWIS_BGFX_WINE=/path/to/wine`; it uses its own prefix in the build tree).
+The build sets `WINEDLLOVERRIDES=d3dcompiler_47=n`: Wine otherwise loads its
+own builtin compiler (vkd3d-shader) even for a DLL given by full path, which
+fails on `bgfx_shader.sh` ("Function \"reversebits\" is not defined", error
+codes E5xxx) and would not produce Microsoft's DXBC anyway.
 Without Wine the dx11 family is skipped with a warning and the committed
 binaries stay as they are; a Windows build without current dx11 binaries
 warns and runs on OpenGL.

@@ -12,6 +12,7 @@
 #include <QtMath>
 
 #include <algorithm>
+#include <functional>
 #include <cmath>
 
 namespace
@@ -32,6 +33,11 @@ constexpr uint64_t kWireframeState = BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A
 // not loaded yet, and the polar caps beyond Web Mercator's latitude limit.
 const QColor GlobeMissingTileColor(18, 58, 72);
 const QColor GlobePolarCapColor(235, 240, 245);
+// Hillshading light (cartographic convention) and how far it modulates the
+// imagery (0: not at all, 1: full lambert / sin(altitude)).
+constexpr double GlobeHillshadeAzimuthDeg = 315.0;
+constexpr double GlobeHillshadeAltitudeDeg = 45.0;
+constexpr double GlobeHillshadeStrength = 0.8;
 const float kWholeTexture[4] = {0.0f, 0.0f, 1.0f, 1.0f};
 // Heatmap atlas pages: 2048 x 2048, 8 x 8 cells of the scene's 256 px.
 constexpr int kHeatmapPageSize = 2048;
@@ -111,11 +117,15 @@ MapBgfxGlobeSurface::~MapBgfxGlobeSurface() = default;
 
 bool MapBgfxGlobeSurface::initialize()
 {
-    // MapGlobeSurfaceVertex: x, y, z, u, v (floats); wireframe: x, y, z.
+    // MapGlobeSurfaceVertex: x, y, z, u, v (floats), the packed normal
+    // (4 normalized bytes); wireframe: x, y, z.
     this->surface_layout.begin()
         .add(bgfx::Attrib::Position, 3, bgfx::AttribType::Float)
         .add(bgfx::Attrib::TexCoord0, 2, bgfx::AttribType::Float)
+        .add(bgfx::Attrib::Normal, 4, bgfx::AttribType::Uint8, true)
         .end();
+    if (this->surface_layout.getStride() != sizeof(MapGlobeSurfaceVertex))
+        qWarning() << "bgfx globe surface: vertex layout does not match MapGlobeSurfaceVertex";
     this->wireframe_layout.begin()
         .add(bgfx::Attrib::Position, 3, bgfx::AttribType::Float)
         .end();
@@ -124,6 +134,9 @@ bool MapBgfxGlobeSurface::initialize()
     this->view_projection_uniform = bgfx::createUniform("u_globe_view_proj", bgfx::UniformType::Mat4);
     this->tile_uniform = bgfx::createUniform("u_globe_tile", bgfx::UniformType::Vec4);
     this->background_uniform = bgfx::createUniform("u_globe_background", bgfx::UniformType::Vec4);
+    this->origin_uniform = bgfx::createUniform("u_globe_origin", bgfx::UniformType::Vec4);
+    this->light_uniform = bgfx::createUniform("u_globe_light", bgfx::UniformType::Vec4);
+    this->shading_uniform = bgfx::createUniform("u_globe_shading", bgfx::UniformType::Vec4);
     this->tile_sampler = bgfx::createUniform("s_globe_tile", bgfx::UniformType::Sampler);
     this->missing_texture = solidTexture(GlobeMissingTileColor);
     this->cap_texture = solidTexture(GlobePolarCapColor);
@@ -274,6 +287,9 @@ void MapBgfxGlobeSurface::release()
     destroyHandle(&this->cap_texture);
     destroyHandle(&this->tile_sampler);
     destroyHandle(&this->background_uniform);
+    destroyHandle(&this->origin_uniform);
+    destroyHandle(&this->light_uniform);
+    destroyHandle(&this->shading_uniform);
     destroyHandle(&this->tile_uniform);
     destroyHandle(&this->view_projection_uniform);
     destroyHandle(&this->wireframe_program);
@@ -343,6 +359,11 @@ void MapBgfxGlobeSurface::setMapVisible(bool visible)
     this->map_visible = visible;
     if (visible)
         this->window_tiles_requested = false;
+}
+
+void MapBgfxGlobeSurface::setHillshadeVisible(bool visible)
+{
+    this->hillshade_visible = visible;
 }
 
 bool MapBgfxGlobeSurface::hasPendingTerrainMeshes() const
@@ -621,6 +642,26 @@ MapBgfxGlobeSurface::FrameResult MapBgfxGlobeSurface::render(
         float(inputs.background.redF()), float(inputs.background.greenF()),
         float(inputs.background.blueF()),
         float(std::clamp(inputs.background_opacity, 0.0, 1.0))};
+    // Hillshading: the cartographic convention, light from the north-west
+    // (azimuth 315 deg) 45 deg above each point's own horizon; the shaders
+    // build the point's east/north/up frame from its position (relative to
+    // the render origin) and scale the imagery by lambert / sin(45 deg), so
+    // flat ground keeps its brightness and only slopes lighten or darken.
+    const double light_azimuth_rad = qDegreesToRadians(GlobeHillshadeAzimuthDeg);
+    const double light_altitude_rad = qDegreesToRadians(GlobeHillshadeAltitudeDeg);
+    const float light[4] = {float(std::cos(light_altitude_rad) * std::sin(light_azimuth_rad)),
+                            float(std::cos(light_altitude_rad) * std::cos(light_azimuth_rad)),
+                            float(std::sin(light_altitude_rad)), 0.0f};
+    const float shading[4] = {this->hillshade_visible ? float(GlobeHillshadeStrength) : 0.0f,
+                              float(std::sin(light_altitude_rad)), 0.0f, 0.0f};
+    const GeoWgs84Ellipsoid::EcefPositionD &origin_ecef = camera.renderOriginEcef();
+    const float origin[4] = {float(origin_ecef.x), float(origin_ecef.y), float(origin_ecef.z), 0.0f};
+    const std::function<void()> set_shading_uniforms = [this, &light, &shading, &origin]()
+    {
+        bgfx::setUniform(this->origin_uniform, origin);
+        bgfx::setUniform(this->light_uniform, light);
+        bgfx::setUniform(this->shading_uniform, shading);
+    };
 
     if (this->map_visible)
     {
@@ -641,6 +682,7 @@ MapBgfxGlobeSurface::FrameResult MapBgfxGlobeSurface::render(
                 bgfx::setUniform(this->view_projection_uniform, matrix);
                 bgfx::setUniform(this->tile_uniform, kWholeTexture);
                 bgfx::setUniform(this->background_uniform, background);
+                set_shading_uniforms();
                 bgfx::setState(kSurfaceState);
                 bgfx::submit(view, this->surface_program);
             }
@@ -667,6 +709,7 @@ MapBgfxGlobeSurface::FrameResult MapBgfxGlobeSurface::render(
                 bgfx::setUniform(this->view_projection_uniform, matrix);
                 bgfx::setUniform(this->tile_uniform, state.uniform);
                 bgfx::setUniform(this->background_uniform, background);
+                set_shading_uniforms();
                 bgfx::setState(kSurfaceState);
                 if (state.heatmap_page >= 0)
                 {

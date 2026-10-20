@@ -2,6 +2,7 @@
 #define MAP_TERRAIN_MESH_SCHEDULER_H
 
 #include "map/data/map_terrain_tile.h"
+#include "map/render/map_globe_surface_vertex.h"
 #include "map/render/map_globe_terrain_levels.h"
 
 #include <QMutex>
@@ -24,6 +25,20 @@ struct MapTerrainMeshVertex
     float z = 0.0f;
     float u = 0.0f;
     float v = 0.0f;
+    MapGlobePackedNormal normal;
+};
+
+// The four DEM tiles beside a mesh's own DEM tile (same zoom), in this
+// order: their samples next to the shared edge give the surface normals of
+// the edge vertices the same central differences as everywhere else, so the
+// hillshading has no seam along DEM tile borders.
+enum MapTerrainMeshNeighbor
+{
+    MapTerrainMeshNeighborWest = 0,
+    MapTerrainMeshNeighborEast = 1,
+    MapTerrainMeshNeighborNorth = 2,
+    MapTerrainMeshNeighborSouth = 3,
+    MapTerrainMeshNeighborCount = 4
 };
 
 // Everything needed to build one Globe terrain tile, carried entirely by
@@ -39,6 +54,9 @@ struct MapTerrainMeshRequest
     QString terrain_key;
     MapTerrainTile terrain_tile;
     bool terrain_available = false;
+    // MapTerrainMeshNeighbor order; a neighbor without samples is not cached
+    // (its edge normals are one-sided then). Only for the tile's own DEM.
+    MapTerrainTile terrain_neighbors[MapTerrainMeshNeighborCount];
     // While the tile's own DEM is loading: terrain_tile is the cached coarser
     // DEM tile at this zoom, resampled at terrain_zoom by
     // buildTerrainMeshResult() (mapTerrainTileFromAncestor()); -1: the
@@ -75,6 +93,11 @@ struct MapTerrainMeshResult
     // mapGlobeTerrainCellCount(imagery_zoom, terrain_zoom): the grid always
     // has exactly the DEM resolution, every vertex on a DEM sample.
     int cell_count = 0;
+    // Bit (1 << MapTerrainMeshNeighbor) per neighbor DEM tile the edge
+    // normals needed but the request did not carry (not cached yet); a
+    // neighbor beyond the map's edge is never missing. The mesh is built
+    // again when one of them arrives.
+    int missing_neighbor_mask = 0;
     QVector<MapTerrainMeshVertex> vertices;
 };
 

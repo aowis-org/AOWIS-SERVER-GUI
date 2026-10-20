@@ -140,6 +140,9 @@ public:
     void setMapTilesVisible(bool visible);
     // Current state of the globe HUD's "wireframe" / "map" toggles.
     bool terrainWireframeVisible() const;
+    // The globe HUD's "hillshade" toggle.
+    void setTerrainHillshadeVisible(bool visible);
+    bool terrainHillshadeVisible() const;
     bool mapTilesVisible() const;
 
     // --- Globe on bgfx (roadmap Phase 3) ------------------------------------------

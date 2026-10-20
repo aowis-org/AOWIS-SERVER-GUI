@@ -1183,6 +1183,11 @@ void testGlobe()
             && scan.where(MapBgfxHud::Action::ToggleWireframe).left()
                 > scan.where(MapBgfxHud::Action::ViewMode3d).right(),
         "the toggles follow the view switch, top left");
+    req(scan.found(MapBgfxHud::Action::ToggleHillshade)
+            && scan.where(MapBgfxHud::Action::ToggleHillshade).top() < 60.0
+            && scan.where(MapBgfxHud::Action::ToggleHillshade).left()
+                > scan.where(MapBgfxHud::Action::ToggleMapTiles).right(),
+        "the hillshade toggle follows the map toggle, top left");
     req(scan.found(MapBgfxHud::Action::UndergroundMode), "underground mode buttons are clickable");
     req(scan.where(MapBgfxHud::Action::UndergroundMode).bottom() > ViewportHeight - 100.0,
         "underground mode is at the bottom");

@@ -1,7 +1,8 @@
-$input a_position, a_texcoord0
-$output v_texcoord0
+$input a_position, a_normal, a_texcoord0
+$output v_texcoord0, v_normal, v_light
 
 #include <bgfx_shader.sh>
+#include "globe_hillshade.sh"
 
 // Globe terrain surface (map_bgfx_globe_surface.h). Positions are metres
 // relative to the sticky render origin (MapGlobeCamera), so float precision
@@ -17,4 +18,6 @@ void main()
 {
     gl_Position = mul(u_globe_view_proj, vec4(a_position, 1.0));
     v_texcoord0 = u_globe_tile.xy + a_texcoord0 * u_globe_tile.zw;
+    v_normal = globeHillshadeNormal(a_normal);
+    v_light = globeHillshadeLight(a_position);
 }

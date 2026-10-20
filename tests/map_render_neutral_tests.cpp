@@ -943,6 +943,145 @@ void testTerrainLevels()
     expectTrue(other != levels, "another dataset range is a change");
 }
 
+// Hillshading normals: perpendicular to the DEM's slope, identical on both
+// sides of a DEM tile border when the neighbor tile is carried, and the
+// missing neighbors reported otherwise.
+MapTerrainTile globalSampleTile(int zoom, quint32 x, quint32 y,
+                                const std::function<double(double, double)> &height_at_sample)
+{
+    MapTerrainTile tile;
+    tile.address.zoom = zoom;
+    tile.address.x = x;
+    tile.address.y = y;
+    tile.dataset = QStringLiteral("test-dataset");
+    tile.vertical_datum = MapTerrainVerticalDatum::Wgs84Ellipsoid;
+    tile.elevations_m.resize(MapTerrainTileSampleCount);
+    double minimum_m = std::numeric_limits<double>::infinity();
+    double maximum_m = -std::numeric_limits<double>::infinity();
+    for (int row = 0; row < MapTerrainTileGridSize; ++row)
+    {
+        for (int column = 0; column < MapTerrainTileGridSize; ++column)
+        {
+            // Global sample coordinates: shared border samples agree.
+            const double height_m = height_at_sample(double(x) * MapTerrainTileCellCount + column,
+                                                     double(y) * MapTerrainTileCellCount + row);
+            tile.elevations_m[row * MapTerrainTileGridSize + column] = float(height_m);
+            minimum_m = std::min(minimum_m, height_m);
+            maximum_m = std::max(maximum_m, height_m);
+        }
+    }
+    tile.minimum_elevation_m = minimum_m;
+    tile.maximum_elevation_m = maximum_m;
+    return tile;
+}
+
+QVector3D unpackedNormal(const MapGlobePackedNormal &normal)
+{
+    return QVector3D(float(normal.x) / 127.5f - 1.0f, float(normal.y) / 127.5f - 1.0f,
+                     float(normal.z) / 127.5f - 1.0f);
+}
+
+MapTerrainMeshRequest normalTestRequest(const MapTerrainTile &tile)
+{
+    MapTerrainMeshRequest request;
+    request.terrain_tile = tile;
+    request.terrain_available = true;
+    request.imagery_zoom = tile.address.zoom;
+    request.terrain_zoom = tile.address.zoom;
+    request.tile_x = int(tile.address.x);
+    request.virtual_x = request.tile_x;
+    request.y = int(tile.address.y);
+    const GeoWgs84Ellipsoid::EcefPositionD origin = GeoWgs84Ellipsoid::geodeticToEcefD(
+        GeoWebMercator::tileXToLon(double(tile.address.x) + 0.5, tile.address.zoom),
+        GeoWebMercator::tileYToLat(double(tile.address.y) + 0.5, tile.address.zoom), 0.0);
+    request.globe_render_origin_x = origin.x;
+    request.globe_render_origin_y = origin.y;
+    request.globe_render_origin_z = origin.z;
+    return request;
+}
+
+void testTerrainNormals()
+{
+    const int zoom = 12;
+    const quint32 x = 2150;
+    const quint32 y = 1400;
+    const int cells = MapTerrainTileCellCount;
+
+    // Flat DEM: every normal is the ellipsoid's up.
+    {
+        const MapTerrainTile flat = globalSampleTile(zoom, x, y, [](double, double) { return 300.0; });
+        const MapTerrainMeshResult result = buildTerrainMeshResult(normalTestRequest(flat));
+        const MapTerrainMeshVertex &vertex = result.vertices.at(32 * (cells + 1) + 32);
+        const double lon = GeoWebMercator::tileXToLon(double(x) + 0.5, zoom);
+        const double lat = GeoWebMercator::tileYToLat(double(y) + 0.5, zoom);
+        const GeoWgs84Ellipsoid::LocalFrame frame = GeoWgs84Ellipsoid::localFrameAtGeodetic(lon, lat, 0.0);
+        expectTrue(QVector3D::dotProduct(unpackedNormal(vertex.normal), frame.up) > 0.999f,
+            "a flat DEM's normal is the ellipsoid's up");
+    }
+
+    // Rising towards the east: the normal leans west, by the slope.
+    {
+        const MapTerrainTile ramp = globalSampleTile(zoom, x, y, [](double gx, double) { return 4.0 * gx; });
+        const MapTerrainMeshResult result = buildTerrainMeshResult(normalTestRequest(ramp));
+        const MapTerrainMeshVertex &vertex = result.vertices.at(32 * (cells + 1) + 32);
+        const double lon = GeoWebMercator::tileXToLon(double(x) + 0.5, zoom);
+        const double lat = GeoWebMercator::tileYToLat(double(y) + 0.5, zoom);
+        const GeoWgs84Ellipsoid::LocalFrame frame = GeoWgs84Ellipsoid::localFrameAtGeodetic(lon, lat, 0.0);
+        const QVector3D normal = unpackedNormal(vertex.normal).normalized();
+        // 4 m per sample over a sample spacing of the cell length.
+        const double cell_m = 2.0 * M_PI * GeoWgs84Ellipsoid::EquatorialRadiusM
+            * std::cos(qDegreesToRadians(lat)) / std::ldexp(double(cells), zoom);
+        const double expected_east = -(4.0 / cell_m) / std::sqrt(1.0 + (4.0 / cell_m) * (4.0 / cell_m));
+        expectNear(QVector3D::dotProduct(normal, frame.east), expected_east, 0.02,
+            "a DEM rising eastwards leans the normal west by its slope");
+        expectNear(QVector3D::dotProduct(normal, frame.north), 0.0, 0.01,
+            "a DEM rising eastwards does not lean the normal north or south");
+    }
+
+    // Two tiles side by side: the shared edge's normals agree when each
+    // carries the other; without, the missing neighbors are reported.
+    const std::function<double(double, double)> hills = [](double gx, double gy)
+    {
+        return 800.0 + 300.0 * std::sin(gx * 0.11) * std::cos(gy * 0.07) + 2.0 * gx;
+    };
+    const MapTerrainTile west = globalSampleTile(zoom, x, y, hills);
+    const MapTerrainTile east = globalSampleTile(zoom, x + 1, y, hills);
+    MapTerrainMeshRequest west_request = normalTestRequest(west);
+    MapTerrainMeshRequest east_request = normalTestRequest(east);
+    const MapTerrainMeshResult west_alone = buildTerrainMeshResult(west_request);
+    expectTrue(west_alone.missing_neighbor_mask == 0xf,
+        "a mesh built without its four neighbor DEM tiles reports all of them");
+    west_request.terrain_neighbors[MapTerrainMeshNeighborEast] = east;
+    east_request.terrain_neighbors[MapTerrainMeshNeighborWest] = west;
+    const MapTerrainMeshResult west_result = buildTerrainMeshResult(west_request);
+    const MapTerrainMeshResult east_result = buildTerrainMeshResult(east_request);
+    expectTrue(west_result.missing_neighbor_mask == (0xf & ~(1 << MapTerrainMeshNeighborEast)),
+        "a carried neighbor is not reported missing");
+    int edge_mismatches = 0;
+    int alone_mismatches = 0;
+    for (int row = 0; row <= cells; ++row)
+    {
+        const MapGlobePackedNormal &left = west_result.vertices.at(row * (cells + 1) + cells).normal;
+        const MapGlobePackedNormal &right = east_result.vertices.at(row * (cells + 1)).normal;
+        const MapGlobePackedNormal &alone = west_alone.vertices.at(row * (cells + 1) + cells).normal;
+        if (std::abs(int(left.x) - int(right.x)) > 1 || std::abs(int(left.y) - int(right.y)) > 1
+            || std::abs(int(left.z) - int(right.z)) > 1)
+        {
+            ++edge_mismatches;
+        }
+        if (alone.x != left.x || alone.y != left.y || alone.z != left.z)
+            ++alone_mismatches;
+    }
+    expectTrue(edge_mismatches == 0, "normals agree across a DEM tile border (no hillshading seam)");
+    expectTrue(alone_mismatches > 0, "without the neighbor the edge normals are one-sided (differ)");
+
+    // Above the map's north edge there is no neighbor to miss.
+    const MapTerrainTile top = globalSampleTile(zoom, x, 0, hills);
+    const MapTerrainMeshResult top_result = buildTerrainMeshResult(normalTestRequest(top));
+    expectTrue((top_result.missing_neighbor_mask & (1 << MapTerrainMeshNeighborNorth)) == 0,
+        "no northern neighbor is missing at the map's top edge");
+}
+
 // Stand-in DEM while a tile's own DEM is loading
 // (MapGlobeSurfacePreparation::scheduleAncestorTerrainStandIns()): the matching
 // part of a cached coarser tile, resampled at the tile's own address.
@@ -1073,6 +1212,7 @@ int main()
     test_harness.runCase("terrain mesh generation", testTerrainMeshGeneration);
     test_harness.runCase("terrain mesh follows DEM samples", testTerrainMeshFollowsDemSamples);
     test_harness.runCase("shared tile topology", testSharedTileTopology);
+    test_harness.runCase("terrain normals", testTerrainNormals);
     test_harness.runCase("quadtree foreshortening", testQuadtreeForeshortening);
     test_harness.runCase("terrain dataset catalog", testTerrainDatasetCatalog);
     test_harness.runCase("terrain levels", testTerrainLevels);

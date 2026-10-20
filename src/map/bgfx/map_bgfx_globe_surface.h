@@ -96,6 +96,9 @@ public:
     void setMapVisible(bool visible);
     // Imagery drawn on the terrain (the HUD's "map" toggle).
     bool mapVisible() const { return this->map_visible; }
+    // Hillshading of the terrain (the HUD's "hillshade" toggle).
+    void setHillshadeVisible(bool visible);
+    bool hillshadeVisible() const { return this->hillshade_visible; }
 
     // The network heatmap on the terrain: markers (lon/lat, ramp colour),
     // radius in metres and solid-centre fraction; no markers: no heatmap.
@@ -239,6 +242,13 @@ private:
     bool wireframe_upload_pending = true;
     bool window_tiles_requested = false;
     bool map_visible = true;
+    bool hillshade_visible = true;
+    // Hillshading (vs/fs_globe_surface*): the render origin (normals and the
+    // local light frame), the light in east/north/up, x strength y the flat
+    // ground's lambert (normalisation).
+    bgfx::UniformHandle origin_uniform = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle light_uniform = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle shading_uniform = BGFX_INVALID_HANDLE;
     quint64 surface_revision = 1;
     QVector<TileImagery> window_imagery;
 

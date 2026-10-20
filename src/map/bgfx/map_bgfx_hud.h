@@ -72,6 +72,7 @@ public:
         // --- Globe (slice 5) ---------------------------------------------------
         ToggleWireframe,
         ToggleMapTiles,
+        ToggleHillshade,
         // Command::value: MapUndergroundMode as int (X-Ray 0, Hide 1, Solid 2).
         UndergroundMode,
         // A camera slider dragged: Command::group the GlobeSlider, number its
@@ -233,6 +234,7 @@ public:
         int underground_mode = 0;
         bool wireframe = false;
         bool map_tiles = true;
+        bool hillshade = true;
         // Globe scale bar (MapMonitorScaleHudWidget's globe formula).
         ScaleBar scale;
         // Terrain meshes being built: completed / total (0: unknown yet).
@@ -417,6 +419,7 @@ private:
         // Globe (index = toggle / underground mode / slider).
         GlobeWireframe,
         GlobeMapTiles,
+        GlobeHillshade,
         GlobeUnderground,
         GlobeSlider,
         Compass,

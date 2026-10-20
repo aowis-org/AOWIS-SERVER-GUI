@@ -153,6 +153,45 @@ GridRow gridRow(double lat_deg)
                        / std::sqrt(1.0 - EccentricitySquared * sin_lat * sin_lat)};
 }
 
+// Elevation (m, not exaggerated) at DEM coordinates (u, v) of the request's
+// own DEM tile, where one of them may lie up to a cell beyond 0..1: then the
+// matching neighbor tile is sampled. NaN where that neighbor is not carried.
+double extendedTerrainElevationM(const MapTerrainMeshRequest &request, double terrain_u, double terrain_v,
+                                 int *needed_neighbor)
+{
+    *needed_neighbor = -1;
+    constexpr double Inside = 1e-9;
+    int neighbor = -1;
+    if (terrain_u < -Inside)
+    {
+        neighbor = MapTerrainMeshNeighborWest;
+        terrain_u += 1.0;
+    }
+    else if (terrain_u > 1.0 + Inside)
+    {
+        neighbor = MapTerrainMeshNeighborEast;
+        terrain_u -= 1.0;
+    }
+    else if (terrain_v < -Inside)
+    {
+        neighbor = MapTerrainMeshNeighborNorth;
+        terrain_v += 1.0;
+    }
+    else if (terrain_v > 1.0 + Inside)
+    {
+        neighbor = MapTerrainMeshNeighborSouth;
+        terrain_v -= 1.0;
+    }
+    if (neighbor < 0)
+        return double(terrainElevationMetersAt(request, terrain_u, terrain_v));
+
+    *needed_neighbor = neighbor;
+    const MapTerrainTile &tile = request.terrain_neighbors[neighbor];
+    if (tile.elevations_m.size() != MapTerrainTileSampleCount)
+        return std::numeric_limits<double>::quiet_NaN();
+    return double(bilinearTerrainSample(tile, terrain_u, terrain_v));
+}
+
 MapTerrainMeshVertex gridVertex(const GridColumn &column, const GridRow &row, double height_m,
                                 const MapTerrainMeshRequest &request, float u, float v)
 {
@@ -165,7 +204,7 @@ MapTerrainMeshVertex gridVertex(const GridColumn &column, const GridRow &row, do
     // Relative to the render origin in double, then narrowed.
     return MapTerrainMeshVertex{float(x - request.globe_render_origin_x),
                                 float(y - request.globe_render_origin_y),
-                                float(z - request.globe_render_origin_z), u, v};
+                                float(z - request.globe_render_origin_z), u, v, MapGlobePackedNormal{}};
 }
 
 }
@@ -328,22 +367,100 @@ MapTerrainMeshResult buildTerrainMeshResult(const MapTerrainMeshRequest &request
     const bool polar_top = request.y == 0;
     const bool polar_bottom = request.y == imagery_tile_span - 1;
 
+    // Heights of the grid plus a one-cell ring around it (exaggerated, NaN
+    // where unknown): the ring gives the edge vertices central differences
+    // too (from this DEM tile where the imagery tile lies inside it, else
+    // from the neighbor DEM tiles), so normals agree across tile edges.
+    const int ring_width = width + 2;
+    std::vector<double> heights(static_cast<std::size_t>(ring_width) * static_cast<std::size_t>(ring_width),
+                                std::numeric_limits<double>::quiet_NaN());
+    const double cell_u = terrain_u_span / double(cell_count);
+    const double cell_v = terrain_v_span / double(cell_count);
+    const bool has_north_neighbor = terrain_y > 0;
+    const bool has_south_neighbor = qint64(terrain_y) < (qint64(1) << request.terrain_zoom) - 1;
+    for (int ring_row = 0; ring_row < ring_width; ++ring_row)
+    {
+        const int row = ring_row - 1;
+        for (int ring_column = 0; ring_column < ring_width; ++ring_column)
+        {
+            const int column = ring_column - 1;
+            const bool outside_row = row < 0 || row > cell_count;
+            const bool outside_column = column < 0 || column > cell_count;
+            // Corners of the ring are never used (no diagonal differences).
+            if (outside_row && outside_column)
+                continue;
+            int needed_neighbor = -1;
+            const double elevation_m = extendedTerrainElevationM(
+                request, terrain_u_min + double(column) * cell_u, terrain_v_min + double(row) * cell_v,
+                &needed_neighbor);
+            if (std::isnan(elevation_m) && needed_neighbor >= 0 && result.terrain_available
+                && (needed_neighbor != MapTerrainMeshNeighborNorth || has_north_neighbor)
+                && (needed_neighbor != MapTerrainMeshNeighborSouth || has_south_neighbor))
+            {
+                result.missing_neighbor_mask |= 1 << needed_neighbor;
+            }
+            heights[std::size_t(ring_row * ring_width + ring_column)] =
+                std::isnan(elevation_m) ? elevation_m : vertical_transform.terrainHeightM(elevation_m);
+        }
+    }
+
+    // Ground length of one cell: Web Mercator is conformal, so east and
+    // north spacing are equal at a point, the parallel's arc per cell.
+    const double cell_longitude_rad = 2.0 * M_PI / (std::ldexp(1.0, request.imagery_zoom) * double(cell_count));
+
     result.vertices.resize(mapGlobeTileGridVertexCount(cell_count));
     MapTerrainMeshVertex *target = result.vertices.data();
     for (int row = 0; row < width; ++row)
     {
         const double v = double(row) / double(cell_count);
-        const double terrain_v = terrain_v_min + v * terrain_v_span;
         const GridRow grid_row = gridRow(GeoWebMercator::tileYToLat(double(request.y) + v, request.imagery_zoom));
         const bool on_ellipsoid = (polar_top && row == 0) || (polar_bottom && row == cell_count);
+        const double cell_length_m = qMax(1e-3, grid_row.prime_vertical_m * grid_row.cos_lat * cell_longitude_rad);
         for (int column = 0; column < width; ++column)
         {
             const double u = double(column) / double(cell_count);
-            const double terrain_u = terrain_u_min + u * terrain_u_span;
-            const double height_m = on_ellipsoid
-                ? 0.0
-                : vertical_transform.terrainHeightM(double(terrainElevationMetersAt(request, terrain_u, terrain_v)));
-            *target++ = gridVertex(columns[std::size_t(column)], grid_row, height_m, request, float(u), float(v));
+            const std::size_t center = std::size_t((row + 1) * ring_width + (column + 1));
+            const double height_m = on_ellipsoid || std::isnan(heights[center]) ? 0.0 : heights[center];
+            const GridColumn &grid_column = columns[std::size_t(column)];
+            MapTerrainMeshVertex vertex = gridVertex(grid_column, grid_row, height_m, request, float(u), float(v));
+
+            // Slopes by central differences (one-sided where a side is
+            // unknown); v grows southwards.
+            double slope_east = 0.0;
+            double slope_north = 0.0;
+            if (!on_ellipsoid)
+            {
+                const double west = heights[center - 1];
+                const double east = heights[center + 1];
+                const double north = heights[center - std::size_t(ring_width)];
+                const double south = heights[center + std::size_t(ring_width)];
+                if (!std::isnan(west) && !std::isnan(east))
+                    slope_east = (east - west) / (2.0 * cell_length_m);
+                else if (!std::isnan(east))
+                    slope_east = (east - height_m) / cell_length_m;
+                else if (!std::isnan(west))
+                    slope_east = (height_m - west) / cell_length_m;
+                if (!std::isnan(north) && !std::isnan(south))
+                    slope_north = (north - south) / (2.0 * cell_length_m);
+                else if (!std::isnan(north))
+                    slope_north = (north - height_m) / cell_length_m;
+                else if (!std::isnan(south))
+                    slope_north = (height_m - south) / cell_length_m;
+            }
+            // Local normal (-slope_east, -slope_north, 1) in east/north/up,
+            // turned into ECEF with the row's and column's trigonometry.
+            const double east_x = -grid_column.sin_lon;
+            const double east_y = grid_column.cos_lon;
+            const double north_x = -grid_row.sin_lat * grid_column.cos_lon;
+            const double north_y = -grid_row.sin_lat * grid_column.sin_lon;
+            const double north_z = grid_row.cos_lat;
+            const double up_x = grid_row.cos_lat * grid_column.cos_lon;
+            const double up_y = grid_row.cos_lat * grid_column.sin_lon;
+            const double up_z = grid_row.sin_lat;
+            vertex.normal = mapGlobePackNormal(-slope_east * east_x - slope_north * north_x + up_x,
+                                               -slope_east * east_y - slope_north * north_y + up_y,
+                                               -slope_north * north_z + up_z);
+            *target++ = vertex;
         }
     }
     // A DEM tile whose samples are all missing has no finite range.

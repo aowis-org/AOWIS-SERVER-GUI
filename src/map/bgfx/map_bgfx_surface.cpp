@@ -681,6 +681,17 @@ void MapBgfxSurface::setMapTilesVisible(bool visible)
     this->globe_surface->setMapVisible(visible);
 }
 
+void MapBgfxSurface::setTerrainHillshadeVisible(bool visible)
+{
+    requestRedraw();
+    this->globe_surface->setHillshadeVisible(visible);
+}
+
+bool MapBgfxSurface::terrainHillshadeVisible() const
+{
+    return this->globe_surface->hillshadeVisible();
+}
+
 bool MapBgfxSurface::terrainWireframeVisible() const
 {
     return this->globe_surface->preparation().wireframeVisible();
@@ -1442,6 +1453,7 @@ void MapBgfxSurface::renderHud(const QSizeF &logical, const MapBgfx2d::Camera &c
         globe.underground_mode = int(this->underground_mode);
         globe.wireframe = terrainWireframeVisible();
         globe.map_tiles = mapTilesVisible();
+        globe.hillshade = terrainHillshadeVisible();
         this->globe_surface->terrainMeshProgress(&globe.mesh_completed, &globe.mesh_total, &globe.mesh_active);
     }
     this->hud.setGlobe(globe);
