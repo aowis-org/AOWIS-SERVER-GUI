@@ -25,7 +25,9 @@ MainWindow::MainWindow(QWidget *parent)
     map_monitor( new MapMonitorContainer(this->map_model_monitor, this->map_tile_repository,
                                          this->map_terrain_repository, this->hydraulic_data,
                                          this->gps, this) ),
-    map_editor( new MapEditorContainer(this->map_model_editor, this->map_tile_repository, this->hydraulic_data, this->gps, this->dock_entity_inspector, this) ),
+    map_editor( new MapEditorContainer(this->map_model_editor, this->map_tile_repository,
+                                       this->map_terrain_repository, this->hydraulic_data,
+                                       this->gps, this->dock_entity_inspector, this) ),
     energy( new EnergyWidget(this) ),
     reservoirs( new ReservoirsWidget(this->hydraulic_data, this) ),
     tanks( new TanksWidget(this->hydraulic_data, this) ),
@@ -281,8 +283,8 @@ MainWindow::MainWindow(QWidget *parent)
     connect(this->map_edit, &MapWidget::signalCoordsUnavailable, this->footer, &FooterStatusBar::clearMapCoordinates);
 
     // Writes a footer zoom edit back to whichever tab is currently active
-    // (Globe only ever exists on the monitor tab, but this stays correct
-    // either way since it checks the active model's own view mode).
+    // (both tabs have a Globe view; this checks the active model's own view
+    // mode).
     connect(this->footer, &FooterStatusBar::zoomEdited, this, [this](double zoom)
     {
         const bool editor_active = this->main_navigation->currentWidget() == this->map_editor;
@@ -310,6 +312,12 @@ MainWindow::MainWindow(QWidget *parent)
     connect(this->map_model_editor, &MapModel::centerChangedWGS84, this, [this](CoordinateWGS84)
     {
         this->syncMapMovement(this->map_edit, this->map_mon);
+    });
+    // The editor has a 3D view too: its globe camera distance is its zoom.
+    connect(this->map_model_editor, &MapModel::viewGlobeCameraChanged, this, [this]
+    {
+        if (this->map_model_editor->viewMode() == MapViewMode::Globe)
+            syncMapMovement(this->map_edit, this->map_mon);
     });
     connect(this->map_model_monitor, &MapModel::view2dContinuousZoomChanged,
             this, [this](double)

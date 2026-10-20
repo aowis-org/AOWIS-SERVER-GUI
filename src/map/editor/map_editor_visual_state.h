@@ -12,6 +12,14 @@
 
 #include "map/core/map_models.h"
 
+// Which cache a tile selection of the Map Editor's cache sections is for:
+// the map imagery tiles (green frame) or the terrain (DEM) tiles (brown).
+enum class MapEditorTileSelectionKind
+{
+    MapTiles,
+    Terrain
+};
+
 struct MapEditorPlacementVisualState
 {
     bool creating = false;
@@ -84,9 +92,11 @@ struct MapEditorViewportRenderState
     int background_opacity = 0;
 
     bool tile_selection_visible = false;
-    // Imagery tile level the range below refers to (the level drawn when
-    // the state was taken); the bgfx overlay places it with the continuous
-    // camera.
+    MapEditorTileSelectionKind tile_selection_kind = MapEditorTileSelectionKind::MapTiles;
+    // Tile level the range below refers to (map tiles: the imagery level
+    // drawn when the state was taken; terrain: that level within the terrain
+    // dataset's zoom range); the bgfx overlay places it with the continuous
+    // camera (2D) or on the drawn globe surface (3D).
     int tile_selection_zoom = -1;
     int tile_x_min = 0;
     int tile_x_max = -1;

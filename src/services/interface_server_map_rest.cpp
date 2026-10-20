@@ -155,15 +155,43 @@ void InterfaceServerMapREST::initRestConnection()
         emit signalUpstreamControlError(error);
     });
 
+    connect(this->rest, &RESTClient::requestFinishedDeleteData, this,
+            [this](quint64 rest_id, const QByteArray &data)
+    {
+        const QHash<quint64, quint64>::iterator terrain =
+            this->terrain_deletion_request_ids.find(rest_id);
+        if (terrain == this->terrain_deletion_request_ids.end())
+            return;
+
+        const quint64 request_id = terrain.value();
+        this->terrain_deletion_request_ids.erase(terrain);
+        // The body is the deleted file count.
+        bool count_valid = false;
+        const int deleted_count = QString::fromUtf8(data).trimmed().toInt(&count_valid);
+        emit signalTerrainCacheDeleted(request_id, count_valid ? deleted_count : -1);
+    });
+
     connect(this->rest, &RESTClient::requestFinishedDelete, this,
             [this](quint64 request_id)
     {
+        // Terrain ids were answered (and removed) by requestFinishedDeleteData.
+        if (request_id >= (quint64(1) << 63))
+            return;
         emit signalTilesDeleted(request_id);
     });
 
     connect(this->rest, &RESTClient::requestDeleteError, this,
             [this](quint64 request_id, const QString &error)
     {
+        const QHash<quint64, quint64>::iterator terrain =
+            this->terrain_deletion_request_ids.find(request_id);
+        if (terrain != this->terrain_deletion_request_ids.end())
+        {
+            const quint64 terrain_request_id = terrain.value();
+            this->terrain_deletion_request_ids.erase(terrain);
+            emit signalTerrainCacheDeletionFailed(terrain_request_id, error);
+            return;
+        }
         emit signalTileDeletionFailed(request_id, error);
     });
 }
@@ -223,6 +251,26 @@ void InterfaceServerMapREST::deleteTiles(quint64 request_id, const QString &prov
         .arg(tile_y_min)
         .arg(tile_y_max);
     this->rest->deleteResource(endpoint, request_id);
+}
+
+void InterfaceServerMapREST::deleteTerrainCache(quint64 request_id,
+                                                MapTerrainCacheDeletionScope scope,
+                                                const QString &dataset, int zoom,
+                                                int tile_x_min, int tile_x_max,
+                                                int tile_y_min, int tile_y_max)
+{
+    const QString endpoint = QStringLiteral("/terrain/v1/%1/%2/%3/%4/%5/%6/%7")
+        .arg(scope == MapTerrainCacheDeletionScope::SourceData
+                 ? QStringLiteral("source") : QStringLiteral("cache"))
+        .arg(dataset)
+        .arg(zoom)
+        .arg(tile_x_min)
+        .arg(tile_x_max)
+        .arg(tile_y_min)
+        .arg(tile_y_max);
+    const quint64 rest_id = this->next_terrain_deletion_rest_id++;
+    this->terrain_deletion_request_ids.insert(rest_id, request_id);
+    this->rest->deleteResource(endpoint, rest_id);
 }
 
 void InterfaceServerMapREST::requestMapTileUpstreamActivity()

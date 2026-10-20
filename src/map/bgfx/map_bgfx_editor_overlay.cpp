@@ -19,6 +19,44 @@ constexpr quint32 rgba(int red, int green, int blue, int alpha)
         | (quint32(green & 0xff) << 8) | quint32(blue & 0xff);
 }
 
+// The tile-cache selection's colours: map tiles in the editor's "borg"
+// green, terrain tiles in the same scheme in earth brown.
+struct TileSelectionPalette
+{
+    // Diagonal fill gradient (top-left, middle, bottom-right).
+    quint32 fill[3];
+    // Frame strokes: wide glow, inner glow, crisp line.
+    quint32 glow_wide;
+    quint32 glow_inner;
+    quint32 line;
+    quint32 grid;
+};
+
+TileSelectionPalette tileSelectionPalette(MapEditorTileSelectionKind kind)
+{
+    if (kind == MapEditorTileSelectionKind::Terrain)
+    {
+        return TileSelectionPalette{
+            {rgba(204, 146, 86, 64), rgba(156, 102, 54, 76), rgba(104, 64, 30, 88)},
+            rgba(184, 118, 58, 64), rgba(206, 140, 74, 132), rgba(240, 202, 150, 235),
+            rgba(222, 168, 108, 115)};
+    }
+    return TileSelectionPalette{
+        {rgba(92, 255, 82, 54), rgba(32, 224, 58, 66), rgba(8, 132, 38, 76)},
+        rgba(60, 255, 78, 54), rgba(92, 255, 96, 120), rgba(155, 255, 145, 230),
+        rgba(104, 255, 104, 105)};
+}
+
+// Colour of the selection's diagonal fill gradient at t (0 = top-left,
+// 1 = bottom-right).
+quint32 tileSelectionFillAt(const TileSelectionPalette &palette, double t)
+{
+    t = std::clamp(t, 0.0, 1.0);
+    return t <= 0.5
+        ? MapBgfxHudCanvas::interpolateArgb(palette.fill[0], palette.fill[1], t / 0.5)
+        : MapBgfxHudCanvas::interpolateArgb(palette.fill[1], palette.fill[2], (t - 0.5) / 0.5);
+}
+
 bool isPointEntity(InfrastructureEntity entity)
 {
     return InfrastructureEntityTraits::isHydraulicPointEntity(entity);
@@ -663,14 +701,11 @@ void MapBgfxEditorOverlay::tileSelection()
 
     // Diagonal fill gradient (top-left -> bottom-right), corner colours from
     // the gradient's projection.
-    QVector<double> positions = {0.0, 0.5, 1.0};
-    QVector<quint32> stops = {rgba(92, 255, 82, 54), rgba(32, 224, 58, 66), rgba(8, 132, 38, 76)};
+    const TileSelectionPalette palette = tileSelectionPalette(viewport.tile_selection_kind);
     const double length_squared = rect.width * rect.width + rect.height * rect.height;
     const std::function<quint32(double, double)> gradient_at = [&](double dx, double dy)
     {
-        const double t = std::clamp((dx * rect.width + dy * rect.height) / length_squared, 0.0, 1.0);
-        return t <= 0.5 ? MapBgfxHudCanvas::interpolateArgb(stops.at(0), stops.at(1), t / 0.5)
-                        : MapBgfxHudCanvas::interpolateArgb(stops.at(1), stops.at(2), (t - 0.5) / 0.5);
+        return tileSelectionFillAt(palette, (dx * rect.width + dy * rect.height) / length_squared);
     };
     QVector<MapBgfxHudPoint> corners = {
         {rect.x, rect.y}, {rect.right(), rect.y}, {rect.right(), rect.bottom()}, {rect.x, rect.bottom()}};
@@ -678,12 +713,12 @@ void MapBgfxEditorOverlay::tileSelection()
                                gradient_at(rect.width, rect.height), gradient_at(0.0, rect.height)};
     this->canvas->fillConvexPolygonArgb(corners, colors);
 
-    strokeRectCentered(rect, 0.0, 12.0, rgba(60, 255, 78, 54));
-    strokeRectCentered(rect, 0.0, 5.0, rgba(92, 255, 96, 120));
-    strokeRectCentered(rect, 0.0, 1.5, rgba(155, 255, 145, 230));
+    strokeRectCentered(rect, 0.0, 12.0, palette.glow_wide);
+    strokeRectCentered(rect, 0.0, 5.0, palette.glow_inner);
+    strokeRectCentered(rect, 0.0, 1.5, palette.line);
 
     // Tile grid inside the range, only where visible.
-    const quint32 grid = rgba(104, 255, 104, 105);
+    const quint32 grid = palette.grid;
     const double viewport_west = camera.center.x - camera.viewport_width * 0.5 / camera.world_pixels;
     const double viewport_east = camera.center.x + camera.viewport_width * 0.5 / camera.world_pixels;
     const int first_x = std::max(viewport.tile_x_min + 1,
@@ -703,6 +738,178 @@ void MapBgfxEditorOverlay::tileSelection()
         const double y = screen_y(double(tile_y) / tiles);
         this->canvas->line(rect.x, y, rect.right(), y, 1.0, grid);
     }
+}
+
+void MapBgfxEditorOverlay::buildGlobe(MapBgfxHudCanvas *canvas, MapBgfxHudTextCache *cache,
+                                      const MapEditorViewportRenderState &viewport_state,
+                                      const GlobeProjector &projector)
+{
+    canvas->clear();
+    if (!projector || !viewport_state.tile_selection_visible)
+        return;
+    cache->beginFrame();
+    canvas->setWhiteTexel(cache->whiteU(), cache->whiteV());
+    this->canvas = canvas;
+    this->cache = cache;
+    globeTileSelection(viewport_state, projector);
+    this->canvas = nullptr;
+    this->cache = nullptr;
+}
+
+void MapBgfxEditorOverlay::globeTileSelection(const MapEditorViewportRenderState &viewport,
+                                              const GlobeProjector &projector)
+{
+    // The 2D tileSelection() on the globe: fill, glowing frame and tile grid
+    // of the same tile range, laid on the drawn surface. Tile borders are
+    // straight in Web Mercator, so a lattice regular in tile units (per axis
+    // a whole number of cells per tile while the grid is drawn) puts every
+    // tile border on lattice lines; each lattice point is projected once and
+    // serves the fill, the frame and the grid.
+    if (!viewport.tile_selection_visible || viewport.tile_x_max < viewport.tile_x_min
+        || viewport.tile_y_max < viewport.tile_y_min || viewport.tile_selection_zoom < 0
+        || viewport.tile_selection_zoom > 30)
+        return;
+    const qint64 tile_count = qint64(1) << viewport.tile_selection_zoom;
+    const double tiles = double(tile_count);
+    const qint64 width_tiles = std::min<qint64>(
+        qint64(viewport.tile_x_max) - viewport.tile_x_min + 1, tile_count);
+    const qint64 height_tiles = qint64(viewport.tile_y_max) - viewport.tile_y_min + 1;
+    const double x_first = double(viewport.tile_x_min);
+    const double y_first = double(viewport.tile_y_min);
+
+    // Cells per tile while the tile grid fits the lattice, else a plain
+    // lattice without grid lines on that axis (more tile borders than
+    // cells: a solid wash at that zoom anyway).
+    const std::function<int(qint64)> cells_per_tile = [](qint64 span_tiles) -> int
+    {
+        if (span_tiles > GlobeSelectionMaximumCells)
+            return 0;
+        return std::clamp(int(GlobeSelectionMaximumCells / span_tiles), 1,
+                          GlobeSelectionMaximumCellsPerTile);
+    };
+    const int per_tile_x = cells_per_tile(width_tiles);
+    const int per_tile_y = cells_per_tile(height_tiles);
+    const int columns = per_tile_x > 0 ? int(width_tiles) * per_tile_x : GlobeSelectionMaximumCells;
+    const int rows = per_tile_y > 0 ? int(height_tiles) * per_tile_y : GlobeSelectionMaximumCells;
+    const double column_step = double(width_tiles) / double(columns);
+    const double row_step = double(height_tiles) / double(rows);
+
+    // Projected lattice, row-major; valid = in front of the camera and on
+    // the visible side of the globe.
+    const int lattice_width = columns + 1;
+    QVector<MapBgfxHudPoint> lattice(qsizetype(lattice_width) * (rows + 1));
+    QVector<bool> lattice_valid(lattice.size(), false);
+    for (int row = 0; row <= rows; ++row)
+    {
+        const double tile_y = y_first + double(row) * row_step;
+        const double mercator_y = MapBgfxHudCanvas::Pi * (1.0 - 2.0 * tile_y / tiles);
+        const double latitude_deg = std::atan(std::sinh(mercator_y)) * 180.0 / MapBgfxHudCanvas::Pi;
+        for (int column = 0; column <= columns; ++column)
+        {
+            const double tile_x = x_first + double(column) * column_step;
+            const double longitude_deg = normalizeLongitude(tile_x / tiles * 360.0 - 180.0);
+            QPointF projected;
+            const qsizetype index = qsizetype(row) * lattice_width + column;
+            if (projector(longitude_deg, latitude_deg, &projected))
+            {
+                lattice[index] = MapBgfxHudPoint{projected.x(), projected.y()};
+                lattice_valid[index] = true;
+            }
+        }
+    }
+    const std::function<qsizetype(int, int)> at = [lattice_width](int row, int column)
+    {
+        return qsizetype(row) * lattice_width + column;
+    };
+
+    // Fill: one quad per cell whose corners are all visible, coloured by the
+    // diagonal gradient in tile space.
+    const TileSelectionPalette palette = tileSelectionPalette(viewport.tile_selection_kind);
+    for (int row = 0; row < rows; ++row)
+    {
+        for (int column = 0; column < columns; ++column)
+        {
+            const qsizetype corner_indices[4] = {at(row, column), at(row, column + 1),
+                                                 at(row + 1, column + 1), at(row + 1, column)};
+            bool visible = true;
+            QVector<MapBgfxHudPoint> corners;
+            QVector<quint32> colors;
+            corners.reserve(4);
+            colors.reserve(4);
+            for (int corner = 0; corner < 4 && visible; ++corner)
+            {
+                const qsizetype index = corner_indices[corner];
+                visible = lattice_valid.at(index);
+                corners.append(lattice.at(index));
+                const int corner_row = int(index / lattice_width);
+                const int corner_column = int(index % lattice_width);
+                colors.append(tileSelectionFillAt(
+                    palette, 0.5 * (double(corner_column) / double(columns)
+                                    + double(corner_row) / double(rows))));
+            }
+            if (visible)
+                this->canvas->fillConvexPolygonArgb(corners, colors);
+        }
+    }
+
+    // A lattice line as runs of visible points (a run breaks where the line
+    // passes behind the horizon or the camera).
+    const std::function<void(const QVector<qsizetype> &, double, quint32)> stroke =
+        [this, &lattice, &lattice_valid](const QVector<qsizetype> &indices, double width,
+                                         quint32 argb)
+    {
+        for (qsizetype index = 1; index < indices.size(); ++index)
+        {
+            const qsizetype from = indices.at(index - 1);
+            const qsizetype to = indices.at(index);
+            if (!lattice_valid.at(from) || !lattice_valid.at(to))
+                continue;
+            // Plain segments, no round joins: the glows are translucent and
+            // overlapping join discs would bead along the densely sampled
+            // frame.
+            this->canvas->line(lattice.at(from).x, lattice.at(from).y,
+                               lattice.at(to).x, lattice.at(to).y, width, argb);
+        }
+    };
+
+    // Tile grid inside the range (thinner, under the frame).
+    if (per_tile_x > 0)
+    {
+        for (int tile = 1; tile < int(width_tiles); ++tile)
+        {
+            QVector<qsizetype> indices;
+            indices.reserve(rows + 1);
+            for (int row = 0; row <= rows; ++row)
+                indices.append(at(row, tile * per_tile_x));
+            stroke(indices, 1.0, palette.grid);
+        }
+    }
+    if (per_tile_y > 0)
+    {
+        for (int tile = 1; tile < int(height_tiles); ++tile)
+        {
+            QVector<qsizetype> indices;
+            indices.reserve(columns + 1);
+            for (int column = 0; column <= columns; ++column)
+                indices.append(at(tile * per_tile_y, column));
+            stroke(indices, 1.0, palette.grid);
+        }
+    }
+
+    // The frame: the lattice's border, clockwise from the north-west corner.
+    QVector<qsizetype> frame;
+    frame.reserve(2 * (columns + rows) + 1);
+    for (int column = 0; column <= columns; ++column)
+        frame.append(at(0, column));
+    for (int row = 1; row <= rows; ++row)
+        frame.append(at(row, columns));
+    for (int column = columns - 1; column >= 0; --column)
+        frame.append(at(rows, column));
+    for (int row = rows - 1; row >= 0; --row)
+        frame.append(at(row, 0));
+    stroke(frame, 12.0, palette.glow_wide);
+    stroke(frame, 5.0, palette.glow_inner);
+    stroke(frame, 1.5, palette.line);
 }
 
 void MapBgfxEditorOverlay::rectangleSelection()

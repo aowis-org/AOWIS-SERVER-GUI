@@ -6,10 +6,12 @@
 #include <QRect>
 #include <QSize>
 
+#include <functional>
 #include <optional>
 
 #include "common/_enums_structs.h"
 #include "map/core/map_models.h"
+#include "map/editor/map_editor_visual_state.h"
 
 class MapCanvasEntities;
 class MapModel;
@@ -40,8 +42,32 @@ public:
         int tile_y_max = -1;
     };
 
+    // The coordinate on the drawn surface under a screen position (the bgfx
+    // surface's terrain-aware pick in Globe mode); false over space.
+    using ScreenCoordinateResolver =
+        std::function<bool(const QPointF &screen_position, CoordinateWGS84 *coordinate)>;
+
     explicit MapEditorController(MapModel *map_model, MapCanvasEntities *map_canvas_entities,
                                  QObject *parent = nullptr);
+
+    // Globe mode (the editor's 3D view): only the tile-cache selections
+    // work there (right drag over the globe, the tiles between its two
+    // corners); network editing, hover and entity picking are 2D only.
+    // Without a resolver the ellipsoid is picked.
+    void setGlobeCoordinateResolver(ScreenCoordinateResolver resolver);
+    // What the tile selection is for (Tile Cache: map tiles, Terrain Cache:
+    // terrain tiles); the overlay draws it green or brown, and terrain
+    // selections are shown at a level of the terrain dataset's range.
+    void setTileSelectionKind(MapEditorTileSelectionKind kind);
+    MapEditorTileSelectionKind tileSelectionKind() const;
+    // The terrain dataset's normalized zoom range (MapTerrainDatasetInfo);
+    // invalid (minimum > maximum) while no dataset is known.
+    void setTerrainZoomRange(int minimum_zoom, int maximum_zoom);
+    // The imagery tile level the map draws now (2D: the continuous zoom
+    // rounded; 3D: the camera distance's 2D-equivalent level), and the
+    // level the selection is shown at (terrain: clamped to its range).
+    int imageryZoom(const QSize &viewport_size) const;
+    int tileSelectionDisplayZoom(const QSize &viewport_size) const;
 
     void startEntityPositioning(InfrastructureEntity tool);
     void stopEntityPositioning();
@@ -81,6 +107,19 @@ private:
 #endif
     void setCursorShape(std::optional<Qt::CursorShape> cursor_shape);
     bool clearTileSelectionOverlayState();
+    bool globeMode() const;
+    // Globe mode: the coordinate under a screen position (resolver, else the
+    // ellipsoid); false over space.
+    bool globeCoordinateAt(const QPointF &position, const QSize &viewport_size,
+                           CoordinateWGS84 *coordinate) const;
+    bool globeMousePress(const QPointF &position, Qt::MouseButton button,
+                         const QSize &viewport_size);
+    bool globeMouseMove(const QPointF &position, const QSize &viewport_size);
+    bool globeMouseRelease(const QPointF &position, Qt::MouseButton button,
+                           const QSize &viewport_size);
+    // The tiles (at the imagery level drawn now) between the drag's two
+    // corner coordinates, the shorter way round the antimeridian.
+    void updateTileSelectionOverlayFromCorners(const QSize &viewport_size);
     CoordinateWGS84Rect selectionRectWgs84(const QRect &selected_rect,
                                            const QSize &viewport_size) const;
     CoordinateWGS84Rect tileSelectionRectWgs84() const;
@@ -97,6 +136,14 @@ private:
     CoordinateWGS84 rectangle_start_wgs84;
     CoordinateWGS84 rectangle_current_wgs84;
     TileSelectionOverlay tile_selection_overlay;
+    MapEditorTileSelectionKind tile_selection_kind = MapEditorTileSelectionKind::MapTiles;
+    int terrain_minimum_zoom = 0;
+    int terrain_maximum_zoom = -1;
+    ScreenCoordinateResolver globe_coordinate_resolver;
+    // Globe drag: where it was pressed (a click without motion selects
+    // nothing, as an empty 2D rectangle).
+    QPointF globe_drag_press_position;
+    bool globe_drag_moved = false;
     std::optional<Qt::CursorShape> cursor_shape;
 #ifdef Q_OS_WASM
     QTimer *rectangle_selection_timer = nullptr;

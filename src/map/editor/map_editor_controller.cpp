@@ -6,10 +6,12 @@
 #include "geo/geo_web_mercator.h"
 #include "map/bgfx/map_bgfx_2d_imagery_layout.h"
 
+#include <QLineF>
 #ifdef Q_OS_WASM
 #include <QTimer>
 #endif
 
+#include <algorithm>
 #include <cmath>
 
 MapEditorController::MapEditorController(MapModel *map_model, MapCanvasEntities *map_canvas_entities,
@@ -20,6 +22,28 @@ MapEditorController::MapEditorController(MapModel *map_model, MapCanvasEntities 
     {
         connect(this->map_canvas_entities, &MapCanvasEntities::signalEntityMarkerSelected,
                 this, &MapEditorController::signalEntitySelectionChanged);
+    }
+
+    // A drag never spans a view mode switch (its corners were picked with
+    // the other camera); the selection itself is in tiles and stays. In 3D
+    // nothing is placed or hovered.
+    if (this->map_model)
+    {
+        connect(this->map_model, &MapModel::viewModeChanged, this, [this](MapViewMode view_mode)
+        {
+            if (view_mode == MapViewMode::Globe)
+                stopEntityPositioning();
+            if (this->rectangle_dragging)
+            {
+                this->rectangle_dragging = false;
+#ifdef Q_OS_WASM
+                this->rectangle_selection_timer->stop();
+                this->rectangle_selection_update_pending = false;
+#endif
+            }
+            this->cursor_shape.reset();
+            emit signalStateChanged();
+        });
     }
 
 #ifdef Q_OS_WASM
@@ -35,6 +59,56 @@ MapEditorController::MapEditorController(MapModel *map_model, MapCanvasEntities 
         this->rectangle_selection_timer->start();
     });
 #endif
+}
+
+void MapEditorController::setGlobeCoordinateResolver(ScreenCoordinateResolver resolver)
+{
+    this->globe_coordinate_resolver = std::move(resolver);
+}
+
+void MapEditorController::setTileSelectionKind(MapEditorTileSelectionKind kind)
+{
+    if (this->tile_selection_kind == kind)
+        return;
+    this->tile_selection_kind = kind;
+    emit signalStateChanged();
+}
+
+MapEditorTileSelectionKind MapEditorController::tileSelectionKind() const
+{
+    return this->tile_selection_kind;
+}
+
+void MapEditorController::setTerrainZoomRange(int minimum_zoom, int maximum_zoom)
+{
+    if (this->terrain_minimum_zoom == minimum_zoom && this->terrain_maximum_zoom == maximum_zoom)
+        return;
+    this->terrain_minimum_zoom = minimum_zoom;
+    this->terrain_maximum_zoom = maximum_zoom;
+    emit signalStateChanged();
+}
+
+int MapEditorController::imageryZoom(const QSize &viewport_size) const
+{
+    if (!this->map_model)
+        return MapModel::MinZoom;
+    const double zoom = globeMode()
+        ? this->map_model->viewGlobeZoomLevel(viewport_size)
+        : this->map_model->view2dContinuousZoom();
+    return MapBgfx2dImagery::imageryZoomFor(zoom, MapModel::MinZoom, MapModel::MaxZoom);
+}
+
+int MapEditorController::tileSelectionDisplayZoom(const QSize &viewport_size) const
+{
+    const int zoom = imageryZoom(viewport_size);
+    if (this->tile_selection_kind != MapEditorTileSelectionKind::Terrain
+        || this->terrain_minimum_zoom > this->terrain_maximum_zoom)
+    {
+        return zoom;
+    }
+    // The terrain tiles drawn around this view come from this range: finer
+    // imagery subdivides the dataset's finest tile, coarser has none.
+    return std::clamp(zoom, this->terrain_minimum_zoom, this->terrain_maximum_zoom);
 }
 
 void MapEditorController::startEntityPositioning(InfrastructureEntity tool)
@@ -118,7 +192,9 @@ bool MapEditorController::rectangleDragging() const
 
 QRect MapEditorController::currentSelectionRect(const QSize &viewport_size) const
 {
-    if (!this->map_model || viewport_size.isEmpty())
+    // Globe drags have no screen rectangle (the live tile selection is the
+    // feedback).
+    if (!this->map_model || viewport_size.isEmpty() || globeMode())
         return QRect();
 
     const QPoint rectangle_start_pos = this->map_model->screenFromWgs84(
@@ -182,6 +258,8 @@ bool MapEditorController::mousePress(const QPointF &position, const QPoint &glob
 {
     if (!this->map_model || !this->map_canvas_entities || viewport_size.isEmpty())
         return false;
+    if (globeMode())
+        return globeMousePress(position, button, viewport_size);
 
     const bool entity_interaction_enabled = !this->rectangle_selection_active ||
                                             this->rectangle_selection_interacts_with_entities;
@@ -237,6 +315,8 @@ bool MapEditorController::mouseMove(const QPointF &position, const QSize &viewpo
 {
     if (!this->map_model || !this->map_canvas_entities || viewport_size.isEmpty())
         return false;
+    if (globeMode())
+        return globeMouseMove(position, viewport_size);
 
     if (this->rectangle_selection_active && this->rectangle_dragging)
     {
@@ -295,6 +375,8 @@ bool MapEditorController::mouseMove(const QPointF &position, const QSize &viewpo
 bool MapEditorController::mouseRelease(const QPointF &position, Qt::MouseButton button,
                                        const QSize &viewport_size)
 {
+    if (this->map_model && this->map_canvas_entities && !viewport_size.isEmpty() && globeMode())
+        return globeMouseRelease(position, button, viewport_size);
     if (!this->map_model || !this->map_canvas_entities || viewport_size.isEmpty() ||
         button != Qt::RightButton || !this->rectangle_selection_active ||
         !this->rectangle_dragging)
@@ -381,6 +463,141 @@ void MapEditorController::setCursorShape(std::optional<Qt::CursorShape> cursor_s
 
     this->cursor_shape = cursor_shape;
     emit signalStateChanged();
+}
+
+bool MapEditorController::globeMode() const
+{
+    return this->map_model && this->map_model->viewMode() == MapViewMode::Globe;
+}
+
+bool MapEditorController::globeCoordinateAt(const QPointF &position, const QSize &viewport_size,
+                                            CoordinateWGS84 *coordinate) const
+{
+    if (this->globe_coordinate_resolver)
+        return this->globe_coordinate_resolver(position, coordinate);
+    return this->map_model->globeCoordinateAtScreen(position.toPoint(), viewport_size, coordinate);
+}
+
+bool MapEditorController::globeMousePress(const QPointF &position, Qt::MouseButton button,
+                                          const QSize &viewport_size)
+{
+    // Only the cache sections' tile selection; everything else (left drag
+    // pans, middle / Ctrl orbits) belongs to the globe navigation.
+    if (button != Qt::RightButton || !this->rectangle_selection_active
+        || this->rectangle_selection_interacts_with_entities)
+    {
+        return false;
+    }
+
+    CoordinateWGS84 coordinate;
+    if (!globeCoordinateAt(position, viewport_size, &coordinate))
+        return false;
+
+    clearTileSelectionOverlayState();
+    this->rectangle_start_wgs84 = coordinate;
+    this->rectangle_current_wgs84 = coordinate;
+    this->rectangle_dragging = true;
+    this->globe_drag_press_position = position;
+    this->globe_drag_moved = false;
+    this->cursor_shape = Qt::CrossCursor;
+    emit signalStateChanged();
+    return true;
+}
+
+bool MapEditorController::globeMouseMove(const QPointF &position, const QSize &viewport_size)
+{
+    if (!this->rectangle_selection_active || !this->rectangle_dragging)
+    {
+        // No hover, no placement on the globe.
+        setCursorShape(std::nullopt);
+        return false;
+    }
+
+    if (QLineF(position, this->globe_drag_press_position).length() > 3.0)
+        this->globe_drag_moved = true;
+    // Over space (past the globe's edge) the last corner on the globe holds.
+    CoordinateWGS84 coordinate;
+    if (globeCoordinateAt(position, viewport_size, &coordinate))
+        this->rectangle_current_wgs84 = coordinate;
+    if (this->globe_drag_moved)
+        updateTileSelectionOverlayFromCorners(viewport_size);
+
+    this->cursor_shape = Qt::CrossCursor;
+    emit signalStateChanged();
+    return true;
+}
+
+bool MapEditorController::globeMouseRelease(const QPointF &position, Qt::MouseButton button,
+                                            const QSize &viewport_size)
+{
+    if (button != Qt::RightButton || !this->rectangle_selection_active || !this->rectangle_dragging)
+        return false;
+
+    CoordinateWGS84 coordinate;
+    if (globeCoordinateAt(position, viewport_size, &coordinate))
+        this->rectangle_current_wgs84 = coordinate;
+    if (QLineF(position, this->globe_drag_press_position).length() > 3.0)
+        this->globe_drag_moved = true;
+
+    if (this->is_rectangle_selection_oneshot)
+        this->rectangle_selection_active = false;
+    this->rectangle_dragging = false;
+    this->cursor_shape.reset();
+
+    if (this->globe_drag_moved)
+        updateTileSelectionOverlayFromCorners(viewport_size);
+    if (this->globe_drag_moved && this->tile_selection_overlay.visible)
+    {
+        emit signalRectangleSelected(tileSelectionRectWgs84());
+    }
+    else
+    {
+        clearTileSelectionOverlayState();
+        emit signalRectangleSelectionCanceled();
+    }
+
+    emit signalStateChanged();
+    return true;
+}
+
+void MapEditorController::updateTileSelectionOverlayFromCorners(const QSize &viewport_size)
+{
+    // The tiles of the imagery level the globe draws around the view now,
+    // like the 2D selection's (the stored range scales to any level,
+    // tileSelectionRange()).
+    const int zoom = imageryZoom(viewport_size);
+    const int tile_count = 1 << zoom;
+    const double first_x = GeoWebMercator::lonToTileX(
+        GeoWebMercator::normalizeLongitude(this->rectangle_start_wgs84.longitude_deg), zoom);
+    double second_x = GeoWebMercator::lonToTileX(
+        GeoWebMercator::normalizeLongitude(this->rectangle_current_wgs84.longitude_deg), zoom);
+    // The shorter way round: a drag across the antimeridian selects the
+    // tiles on both sides of it, not the rest of the world (x may leave
+    // 0..tile_count-1, as in 2D).
+    const double half_world = double(tile_count) / 2.0;
+    if (second_x - first_x > half_world)
+        second_x -= double(tile_count);
+    else if (first_x - second_x > half_world)
+        second_x += double(tile_count);
+    const double first_y = GeoWebMercator::latToTileY(this->rectangle_start_wgs84.latitude_deg, zoom);
+    const double second_y = GeoWebMercator::latToTileY(this->rectangle_current_wgs84.latitude_deg, zoom);
+
+    const int tile_y_min = int(std::floor(qMin(first_y, second_y)));
+    const int tile_y_max = int(std::floor(qMax(first_y, second_y)));
+    if (tile_y_max < 0 || tile_y_min >= tile_count)
+    {
+        clearTileSelectionOverlayState();
+        return;
+    }
+
+    this->tile_selection_overlay.zoom = zoom;
+    this->tile_selection_overlay.tile_x_min = int(std::floor(qMin(first_x, second_x)));
+    this->tile_selection_overlay.tile_x_max = int(std::floor(qMax(first_x, second_x)));
+    this->tile_selection_overlay.tile_y_min = qBound(0, tile_y_min, tile_count - 1);
+    this->tile_selection_overlay.tile_y_max = qBound(0, tile_y_max, tile_count - 1);
+    this->tile_selection_overlay.visible =
+        this->tile_selection_overlay.tile_x_min <= this->tile_selection_overlay.tile_x_max &&
+        this->tile_selection_overlay.tile_y_min <= this->tile_selection_overlay.tile_y_max;
 }
 
 bool MapEditorController::clearTileSelectionOverlayState()

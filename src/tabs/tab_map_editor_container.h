@@ -25,6 +25,7 @@
 
 #include "map/core/map_model.h"
 #include "map/data/map_tile_repository.h"
+#include "map/data/map_terrain_repository.h"
 #include "map/core/map_widget.h"
 #include "map/core/map_navigation_widget.h"
 #include "map/editor/map_canvas_widget.h"
@@ -47,7 +48,13 @@
 // and the QRhi editor path are gone): imagery, the network, every editor
 // overlay, map labels and the HUD. Without bgfx in the build, or when it
 // cannot start, a status label takes the map's place.
+//
+// 3D: the HUD's 2D/3D switch shows the globe (terrain, the network in the
+// editor look, the globe HUD) once the bgfx globe initialized. Network
+// editing is 2D only; the cache sections (map tiles, terrain) select their
+// tiles on the globe as well.
 class MapBgfxSurface;
+class MapBgfxGlobeHudController;
 class QKeyEvent;
 class QShortcut;
 
@@ -56,7 +63,8 @@ class MapEditorMenuWidget : public QWidget
     Q_OBJECT
 public:
     explicit MapEditorMenuWidget(MapWidget *map, MapCanvasWidget *map_canvas,
-                                 MapEditorController *editor_controller, CanvasMode mode,
+                                 MapEditorController *editor_controller,
+                                 MapTerrainRepository *terrain_repository, CanvasMode mode,
                                  QWidget *parent = nullptr);
     
     MapNavigationWidget *mapNavigationWidget();
@@ -75,6 +83,7 @@ private:
     MapNavigationWidget *map_nav;
     MapCanvasWidget *map_canvas;
     MapEditorController *editor_controller;
+    MapTerrainRepository *terrain_repository;
     
     QSpinBox *spin_zoom_from;
     QSpinBox *spin_zoom_to;
@@ -82,15 +91,42 @@ private:
     QToolBox *toolbox;
     int toolbox_edit_index = -1;
     int toolbox_cache_index = -1;
+    int toolbox_terrain_index = -1;
     void createToolboxCache(QToolBox *tbx);
+    void createToolboxTerrain(QToolBox *tbx);
     void createToolboxEdit(QToolBox *tbx);
     void setToolboxMode(int index);
     void updateToolboxHeight(int index);
+    // Network editing is 2D only: in 3D the Edit Network tools are disabled
+    // (a hint says why); the cache sections work in both.
+    void applyViewMode(MapViewMode view_mode);
+    // The terrain dataset (zoom range for the spin boxes and the selection,
+    // availability) from the terrain service's catalog.
+    void applyTerrainDataset();
     
     QButtonGroup *button_group_tools = nullptr;
     QRadioButton *button_radio_select = nullptr;
     QToolButton *button_tiles_delete = nullptr;
     QCheckBox *checkbox_map_editor_guide = nullptr;
+    QWidget *edit_tools = nullptr;
+    QLabel *label_edit_globe_hint = nullptr;
+
+    // Terrain Cache section.
+    QLabel *label_terrain_dataset = nullptr;
+    QSpinBox *spin_terrain_zoom_from = nullptr;
+    QSpinBox *spin_terrain_zoom_to = nullptr;
+    QCheckBox *checkbox_terrain_source = nullptr;
+    QToolButton *button_terrain_delete = nullptr;
+    QLabel *label_terrain_result = nullptr;
+    // A region is selected in the Terrain Cache section.
+    bool terrain_selection_valid = false;
+    // A deleteCache() batch is running (no second one meanwhile), and
+    // whether it includes the source data (its result text).
+    bool terrain_deletion_running = false;
+    bool terrain_deletion_with_source = false;
+    // Delete Terrain is enabled with a selection, a known dataset and no
+    // deletion running.
+    void refreshTerrainDeleteButton();
 
 public slots:
     void setMapEditorGuideChecked(bool checked);
@@ -107,7 +143,10 @@ class MapEditorContainer : public QWidget
 {
     Q_OBJECT
 public:
-    explicit MapEditorContainer(MapModel *map_model, MapTileRepository *tile_repository, HydraulicData *hydraulic_data, GpsProvider *gps, EntityInspectorDock *map_inspector, QWidget *parent = nullptr);
+    explicit MapEditorContainer(MapModel *map_model, MapTileRepository *tile_repository,
+                                MapTerrainRepository *terrain_repository,
+                                HydraulicData *hydraulic_data, GpsProvider *gps,
+                                EntityInspectorDock *map_inspector, QWidget *parent = nullptr);
     ~MapEditorContainer() override;
     
     MapWidget *getMap();
@@ -129,6 +168,7 @@ private:
     
     MapModel *map_model;
     MapTileRepository *tile_repository;
+    MapTerrainRepository *terrain_repository;
     QWidget *map_stack;
     QStackedLayout *map_stack_layout;
     MapWidget *map;
@@ -139,6 +179,8 @@ private:
     void showRendererStatus(const QString &text);
     MapBgfxSurface *bgfx_surface = nullptr;
     bool bgfx_editor_active = false;
+    // The globe HUD's sliders and compass (the monitor's controller).
+    MapBgfxGlobeHudController *bgfx_globe_hud = nullptr;
     // The editor's visual state for the bgfx overlay, refreshed when the
     // canvas reports a change (MapCanvasWidget::signalRenderUpdateRequested)
     // instead of being rebuilt every frame.
@@ -154,8 +196,9 @@ private:
     QShortcut *bgfx_fullscreen_shortcut = nullptr;
     bool bgfx_fullscreen_active = false;
     void setupBgfxEditor();
-    // HUD clicks (queued from the surface): 2D/3D switch, fullscreen, zoom.
-    void handleBgfxHudAction(int action);
+    // HUD clicks (queued from the surface): 2D/3D switch, fullscreen, zoom,
+    // the globe toggles and underground mode (value).
+    void handleBgfxHudAction(int action, int value);
     void setBgfxFullscreen(bool fullscreen);
     void applyEditorCursor();
     // HUD first for pointer, wheel and Escape on the canvas (desktop: the

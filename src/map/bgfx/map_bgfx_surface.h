@@ -51,8 +51,9 @@ class QWindow;
 // map labels (entity IDs / values, map_bgfx_labels.h).
 // The map editor uses a second instance (Phase 2): hidden entities and the
 // network screen translation for its move preview, and an overlay pass
-// (setOverlayBuilder()) for its icons and interaction feedback. The Map
-// Monitor's instance also draws the globe (roadmap Phase 3).
+// (setOverlayBuilder()) for its icons and interaction feedback. Both
+// instances also draw the globe (roadmap Phase 3); the editor's adds a
+// globe overlay pass (setGlobeOverlayBuilder()) for its tile selections.
 //
 // One bgfx device per process: it belongs to the visible surface. Hiding a
 // surface (tab switch) shuts bgfx down; showing one starts it again, so the
@@ -218,6 +219,20 @@ public:
                                               const MapBgfx2d::Camera &camera,
                                               const QSizeF &viewport)>;
     void setOverlayBuilder(OverlayBuilder builder);
+    // Globe mode: where a WGS84 coordinate on the drawn surface (terrain
+    // relief where it is drawn, else the ellipsoid) lies on screen this
+    // frame, in logical px. False behind the camera or beyond the horizon
+    // (relief does not occlude: the overlay is drawn on top of the globe).
+    using GlobeProjector = std::function<bool(double longitude_deg, double latitude_deg,
+                                              QPointF *screen_position)>;
+    // Called every globe frame after the terrain and the network and before
+    // the HUD; draws into the overlay's canvas and atlas (the 2D builder's,
+    // the two never run in the same frame), submitted untranslated.
+    using GlobeOverlayBuilder = std::function<void(MapBgfxHudCanvas *canvas,
+                                                   MapBgfxHudTextCache *cache,
+                                                   const GlobeProjector &projector,
+                                                   const QSizeF &viewport)>;
+    void setGlobeOverlayBuilder(GlobeOverlayBuilder builder);
     // Desktop: keyboard focus stays on this widget instead of moving to the
     // embedded native window on a click (the editor canvas handles keys and
     // owns the editor's window shortcuts). nullptr: the native window takes
@@ -297,6 +312,8 @@ private:
     void renderOverlay(const QSizeF &logical, const MapBgfx2d::Camera &camera);
     // Globe mode: terrain surface with the frame's camera (slice 1).
     void renderGlobe(const QSizeF &logical);
+    // Draws the globe overlay (when a builder is set) after renderGlobe().
+    void renderGlobeOverlay(const QSizeF &logical);
     // The globe's viewport: logical pixels of the drawn surface, rounded.
     QSize globeViewportSize() const;
     // One camera-height step of the terrain follow while the bgfx globe is
@@ -406,6 +423,7 @@ private:
     // Editor overlay: builder, its atlas (icons with glows; larger than the
     // HUD's), draw list and bgfx objects.
     OverlayBuilder overlay_builder;
+    GlobeOverlayBuilder globe_overlay_builder;
     MapBgfxHudTextCache overlay_text_cache{2048};
     MapBgfxHudCanvas overlay_canvas;
     MapBgfxHudGpu overlay_gpu;

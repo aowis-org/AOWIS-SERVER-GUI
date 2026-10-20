@@ -34,6 +34,7 @@
 #include <QTimer>
 #include <QVBoxLayout>
 #include <QWheelEvent>
+#include <QVector4D>
 #include <QWindow>
 #include <QtMath>
 
@@ -607,6 +608,18 @@ void MapBgfxSurface::setTerrainRepository(MapTerrainRepository *terrain_reposito
     });
     connect(this->terrain_repository, &MapTerrainRepository::signalTerrainTileRetryReady, this,
             [this](const QString &) { requestRedraw(); });
+    // A terrain cache deletion dropped tiles (Map Editor). Nothing is torn
+    // down: the drawn meshes stay until their tiles arrive again - the next
+    // frame's requestMissingTerrainTiles() asks for them (the terrain
+    // service regenerates them) and each arrival rebuilds its mesh
+    // (notifyTerrainTileAvailable()), no flash, no full rebuild. The camera
+    // height follows the terrain under it once more.
+    connect(this->terrain_repository, &MapTerrainRepository::signalTerrainTilesDeleted, this,
+            [this]
+    {
+        syncGlobeCameraHeight(true);
+        requestRedraw();
+    });
     // The terrain catalog arrived (or was reset): the next frame's
     // preparation takes the dataset's zoom range and rebuilds the window.
     connect(this->terrain_repository, &MapTerrainRepository::signalTerrainDatasetChanged, this,
@@ -1021,6 +1034,12 @@ void MapBgfxSurface::setOverlayBuilder(OverlayBuilder builder)
     this->overlay_builder = std::move(builder);
 }
 
+void MapBgfxSurface::setGlobeOverlayBuilder(GlobeOverlayBuilder builder)
+{
+    requestRedraw();
+    this->globe_overlay_builder = std::move(builder);
+}
+
 void MapBgfxSurface::setLabelSettings(const MapLabelSettings &settings)
 {
     requestRedraw();
@@ -1308,6 +1327,118 @@ void MapBgfxSurface::renderGlobe(const QSizeF &logical)
             this->entity_style);
         this->network_frame_stats.draw_calls += network.draw_calls;
     }
+}
+
+void MapBgfxSurface::renderGlobeOverlay(const QSizeF &logical)
+{
+    if (!this->globe_overlay_builder || !this->overlay_gpu.ready())
+        return;
+#ifdef Q_OS_WASM
+    const qreal ratio = devicePixelRatioF();
+    const QScreen *overlay_screen = screen();
+#else
+    const qreal ratio = this->native_window->devicePixelRatio();
+    const QScreen *overlay_screen = this->native_window->screen();
+#endif
+    this->overlay_text_cache.setDevicePixelRatio(ratio);
+    if (overlay_screen != nullptr)
+        this->overlay_text_cache.setLogicalDpi(overlay_screen->logicalDotsPerInch());
+
+    // The camera renderGlobe() just drew with (its viewport and sticky
+    // render origin): canonical clip space as the globe network's picking
+    // projects (projectToScreen() there), NDC y up -> logical px y down.
+    const QSize viewport(std::max(1, qRound(logical.width())), std::max(1, qRound(logical.height())));
+    MapGlobeCameraBasis basis;
+    const QMatrix4x4 view_projection = this->globe_camera.viewProjectionMatrix(&basis);
+    const GeoWgs84Ellipsoid::EcefPositionD origin = this->globe_camera.renderOriginEcef();
+    const double eye_x = origin.x + double(basis.eye.x());
+    const double eye_y = origin.y + double(basis.eye.y());
+    const double eye_z = origin.z + double(basis.eye.z());
+    const MapGlobeSurfacePreparation &preparation = this->globe_surface->preparation();
+    // drawnSurfaceHeightAt()'s ray start, above any exaggerated relief (as
+    // MapGlobeTerrainNavigation::drawnSurfaceHeightAtCoordinate()).
+    const double ray_start_height_m = 9000.0 * MapModel::MaxView3dVerticalExaggeration + 1000.0;
+    const MapGlobeTerrainNavigation &navigation = this->terrain_navigation;
+    const double vertical_exaggeration = this->map_model->view3dVerticalExaggeration();
+    const GlobeProjector projector =
+        [&view_projection, &origin, &preparation, &navigation, ray_start_height_m,
+         vertical_exaggeration, eye_x, eye_y, eye_z, viewport](
+            double longitude_deg, double latitude_deg, QPointF *screen_position) -> bool
+    {
+        if (!std::isfinite(longitude_deg) || !std::isfinite(latitude_deg))
+            return false;
+        // Beyond the horizon: the eye lies below the point's tangent plane
+        // (geodetic up), so the globe hides it. Tested on the ellipsoid
+        // first, before any relief lookup (a peak just past the horizon is
+        // not worth one).
+        const double longitude_rad = qDegreesToRadians(longitude_deg);
+        const double latitude_rad = qDegreesToRadians(latitude_deg);
+        const double up_x = std::cos(latitude_rad) * std::cos(longitude_rad);
+        const double up_y = std::cos(latitude_rad) * std::sin(longitude_rad);
+        const double up_z = std::sin(latitude_rad);
+        GeoWgs84Ellipsoid::EcefPositionD point =
+            GeoWgs84Ellipsoid::geodeticToEcefD(longitude_deg, latitude_deg, 0.0);
+        if ((eye_x - point.x) * up_x + (eye_y - point.y) * up_y + (eye_z - point.z) * up_z < 0.0)
+            return false;
+        // On the surface as drawn: the relief (vertical exaggeration
+        // included) of the drawn tile under the coordinate, the ellipsoid
+        // where none is drawn (off screen, flat tiles).
+        //
+        // The mesh ray (drawnSurfaceHeightAt()) misses at many lattice points:
+        // the lattice is aligned with tile borders, so its points lie on the
+        // drawn meshes' cell edges, vertices and tile borders, where the
+        // ray-triangle test can slip through every adjacent triangle (and a
+        // tile border's neighbour tile is never tried). Those points fell to
+        // sea level (spikes down through the terrain). For them the DEM the
+        // drawn tile was built from gives the same height: its samples are
+        // the mesh's vertices (elevation x exaggeration, as
+        // MapGlobeVerticalTransform::terrainHeightM()), bilinear between.
+        // Not the navigation's all-tiles ray scan: far too slow for a
+        // lattice per frame.
+        CoordinateWGS84 coordinate;
+        coordinate.longitude_deg = longitude_deg;
+        coordinate.latitude_deg = latitude_deg;
+        double height_m = 0.0;
+        bool height_known =
+            preparation.drawnSurfaceHeightAt(coordinate, ray_start_height_m, &height_m)
+                == MapGlobeSurfacePreparation::DrawnSurfaceHeight::Relief
+            && std::isfinite(height_m);
+        int visible_terrain_zoom = -1;
+        double visible_cell_size_m = 0.0;
+        if (!height_known
+            && preparation.visibleTerrainSamplingAtCoordinate(
+                   coordinate, &visible_terrain_zoom, &visible_cell_size_m))
+        {
+            double elevation_m = 0.0;
+            double cell_size_m = 0.0;
+            if (navigation.terrainElevationAtCoordinate(coordinate, &elevation_m, &cell_size_m)
+                && std::isfinite(elevation_m))
+            {
+                height_m = elevation_m * vertical_exaggeration;
+                height_known = true;
+            }
+        }
+        if (height_known)
+            point = GeoWgs84Ellipsoid::geodeticToEcefD(longitude_deg, latitude_deg, height_m);
+        // Relative to the render origin before the float conversion
+        // (precision at Earth scale).
+        const QVector4D clip = view_projection * QVector4D(float(point.x - origin.x),
+                                                           float(point.y - origin.y),
+                                                           float(point.z - origin.z), 1.0f);
+        if (!(clip.w() > 1e-6f))
+            return false;
+        const double ndc_x = double(clip.x()) / double(clip.w());
+        const double ndc_y = double(clip.y()) / double(clip.w());
+        // Far off screen (grazing views): no use to a line, only float trouble.
+        if (!(std::abs(ndc_x) < 1.0e4) || !(std::abs(ndc_y) < 1.0e4))
+            return false;
+        *screen_position = QPointF((ndc_x + 1.0) * double(viewport.width()) / 2.0,
+                                   (1.0 - ndc_y) * double(viewport.height()) / 2.0);
+        return true;
+    };
+    this->globe_overlay_builder(&this->overlay_canvas, &this->overlay_text_cache, projector, logical);
+    this->overlay_gpu.uploadAtlas(&this->overlay_text_cache);
+    this->overlay_gpu.draw(kMapBgfxView, this->overlay_canvas, logical, QPointF());
 }
 
 void MapBgfxSurface::renderLabels(const QSizeF &logical, const MapBgfx2d::Camera &network_camera,
@@ -1991,7 +2122,10 @@ void MapBgfxSurface::renderFrameAt(double elapsed_seconds)
         // 2D imagery uploads are not pending while the 2D map is not drawn.
         this->imagery_uploads_pending = false;
         if (globe_shown)
+        {
             renderGlobe(logical);
+            renderGlobeOverlay(logical);
+        }
     }
     // The HUD is submitted last into the Sequential map view: always on top.
     renderHud(logical, MapBgfx2d::cameraFor(

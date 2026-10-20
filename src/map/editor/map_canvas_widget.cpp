@@ -38,6 +38,17 @@ MapCanvasWidget::MapCanvasWidget(MapModel *map_model, MapWidget *map,
             this->editor_controller->mouseMove(this->last_pointer_position, size(), false);
         emit signalCameraChanged();
     });
+    // Globe (3D) camera: a tile-selection drag follows the ground now under
+    // the pointer while the view moves. The globe overlay is built every
+    // globe frame, so no render update is needed beyond that.
+    connect(this->map_model, &MapModel::viewGlobeCameraChanged, this, [this]
+    {
+        if (this->map_model->viewMode() != MapViewMode::Globe)
+            return;
+        if (isVisible() && this->editor_controller && this->last_pointer_position_valid)
+            this->editor_controller->mouseMove(this->last_pointer_position, size(), false);
+        emit signalCameraChanged();
+    });
     if (this->hydraulic_data)
     {
         connect(this->hydraulic_data, &HydraulicData::signalNetworkLoaded, this, [this]
@@ -138,17 +149,18 @@ MapEditorViewportRenderState MapCanvasWidget::viewportRenderState() const
 
     const MapEditorController::TileSelectionOverlay &overlay =
         this->editor_controller->tileSelectionOverlay();
+    state.tile_selection_kind = this->editor_controller->tileSelectionKind();
     if (overlay.visible)
     {
-        // The selection in tiles of the imagery level drawn now.
-        const int imagery_zoom = MapBgfx2dImagery::imageryZoomFor(
-            this->map_model->view2dContinuousZoom(), MapModel::MinZoom, MapModel::MaxZoom);
+        // The selection in tiles of the level drawn now (2D or 3D; terrain:
+        // within the terrain dataset's range).
+        const int display_zoom = this->editor_controller->tileSelectionDisplayZoom(size());
         const MapEditorController::TileSelectionRange range =
-            this->editor_controller->tileSelectionRange(imagery_zoom);
+            this->editor_controller->tileSelectionRange(display_zoom);
         if (range.valid)
         {
             state.tile_selection_visible = true;
-            state.tile_selection_zoom = imagery_zoom;
+            state.tile_selection_zoom = display_zoom;
             state.tile_x_min = range.tile_x_min;
             state.tile_x_max = range.tile_x_max;
             state.tile_y_min = range.tile_y_min;
@@ -156,7 +168,10 @@ MapEditorViewportRenderState MapCanvasWidget::viewportRenderState() const
         }
     }
 
+    // The screen rubber band is 2D only (a globe drag selects the tiles
+    // between its two ground corners, shown live as the tile selection).
     state.rectangle_selection_visible =
+        this->map_model->viewMode() != MapViewMode::Globe &&
         this->editor_controller->rectangleSelectionActive() &&
         this->editor_controller->rectangleDragging();
     if (state.rectangle_selection_visible)

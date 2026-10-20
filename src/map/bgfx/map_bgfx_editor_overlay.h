@@ -23,8 +23,9 @@
 // MapBgfxHudCanvas from the editor's visual state and drawn with the HUD
 // program between the network and the HUD:
 //
-// - tile-cache selection (green tiles with glow and grid) and the rectangle
-//   selection (steel frame with blue glow and dashed inner frame);
+// - tile-cache selection (map tiles: green tiles with glow and grid; terrain
+//   tiles: the same in brown) and the rectangle selection (steel frame with
+//   blue glow and dashed inner frame);
 // - the full-colour entity icons (nodes bottom-anchored, device links
 //   centred) with the selected / error / stale glows, pipe vertex dots and
 //   demand-point attachment lines with their handles;
@@ -93,6 +94,21 @@ public:
     // Builds the overlay into canvas (cleared first); rebuilds once when the
     // atlas had to be cleared during the build.
     void build(MapBgfxHudCanvas *canvas, MapBgfxHudTextCache *cache, const Inputs &inputs);
+
+    // Globe mode (the editor's 3D view): only the tile-cache selection, laid
+    // on the drawn globe surface through projector (MapBgfxSurface's
+    // GlobeProjector: WGS84 -> logical px, false when hidden). Editing is
+    // 2D only, so nothing else of the editor is drawn on the globe.
+    using GlobeProjector = std::function<bool(double longitude_deg, double latitude_deg,
+                                              QPointF *screen_position)>;
+    void buildGlobe(MapBgfxHudCanvas *canvas, MapBgfxHudTextCache *cache,
+                    const MapEditorViewportRenderState &viewport_state,
+                    const GlobeProjector &projector);
+    // Globe tile selection lattice: at most this many cells per axis (each
+    // lattice point is one projection, relief lookup included), at most
+    // this many cells per tile (relief detail along the frame and grid).
+    static constexpr int GlobeSelectionMaximumCells = 48;
+    static constexpr int GlobeSelectionMaximumCellsPerTile = 16;
 
     // The former QPainter editor's sizes (logical px) and colours (0xAARRGGBB).
     static constexpr double MarkerDotRadiusPx = 5.0;
@@ -210,6 +226,8 @@ private:
     void drawIcon(double x, double y, const Icon &icon);
 
     void tileSelection();
+    void globeTileSelection(const MapEditorViewportRenderState &viewport_state,
+                            const GlobeProjector &projector);
     void rectangleSelection();
     void staticDetails(bool include_moving);
     void movingNetwork();

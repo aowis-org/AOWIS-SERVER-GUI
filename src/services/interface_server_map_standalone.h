@@ -23,6 +23,10 @@ public:
     void requestTerrainElevation(const QString &endpoint) override;
     void deleteTiles(quint64 request_id, const QString &provider, int zoom,
                      int tile_x_min, int tile_x_max, int tile_y_min, int tile_y_max) override;
+    void deleteTerrainCache(quint64 request_id, MapTerrainCacheDeletionScope scope,
+                            const QString &dataset, int zoom,
+                            int tile_x_min, int tile_x_max,
+                            int tile_y_min, int tile_y_max) override;
     void requestMapTileUpstreamActivity() override;
     void requestTerrainUpstreamActivity() override;
     void cancelMapTileUpstreamDownloads() override;

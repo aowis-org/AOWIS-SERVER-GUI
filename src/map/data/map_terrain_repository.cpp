@@ -8,6 +8,7 @@
 
 #include <QDateTime>
 #include <QDebug>
+#include <QStringList>
 #include <QTimer>
 #ifndef __EMSCRIPTEN__
 #include <QMetaObject>
@@ -23,6 +24,52 @@ constexpr qint64 TerrainRetryMaximumDelayMs = 30000;
 #ifndef __EMSCRIPTEN__
 constexpr int TerrainDecodeThreadCountMaximum = 4;
 #endif
+
+qint64 positiveModulo(qint64 value, qint64 divisor)
+{
+    const qint64 remainder = value % divisor;
+    return remainder < 0 ? remainder + divisor : remainder;
+}
+
+// The map-tile cache's column test (MapTileRepository): the range wraps
+// around the antimeridian, a range at least as wide as the zoom level covers
+// every column.
+bool terrainTileXInsideRange(qint64 tile_x, qint64 tile_count, qint64 tile_x_min, qint64 tile_x_max)
+{
+    const qint64 range_width = tile_x_max - tile_x_min + 1;
+    if (range_width >= tile_count)
+        return true;
+
+    const qint64 first_wrapped_x = positiveModulo(tile_x_min, tile_count);
+    const qint64 offset = positiveModulo(tile_x - first_wrapped_x, tile_count);
+    return offset < range_width;
+}
+
+// Whether a mapTerrainTileKey() ("terrain/v<version>/<dataset>/<z>/<x>/<y>")
+// names a tile of dataset inside range.
+bool terrainKeyInsideRange(const QString &key, const QString &dataset,
+                           const MapTerrainCacheDeletionRange &range)
+{
+    const QStringList parts = key.split(QLatin1Char('/'));
+    if (parts.size() != 6 || parts.at(0) != QStringLiteral("terrain") || parts.at(2) != dataset)
+        return false;
+
+    bool zoom_valid = false;
+    bool x_valid = false;
+    bool y_valid = false;
+    const int zoom = parts.at(3).toInt(&zoom_valid);
+    const qint64 tile_x = parts.at(4).toLongLong(&x_valid);
+    const qint64 tile_y = parts.at(5).toLongLong(&y_valid);
+    if (!zoom_valid || !x_valid || !y_valid || zoom != range.zoom
+        || zoom < 0 || zoom > MapTerrainTileMaximumZoom)
+    {
+        return false;
+    }
+
+    const qint64 tile_count = qint64(1) << zoom;
+    return tile_y >= range.tile_y_min && tile_y <= range.tile_y_max
+        && terrainTileXInsideRange(tile_x, tile_count, range.tile_x_min, range.tile_x_max);
+}
 }
 
 MapTerrainRepository::MapTerrainRepository(QObject *parent)
@@ -184,6 +231,217 @@ void MapTerrainRepository::cancelUpstreamDownloads()
         this->interface_map->cancelTerrainUpstreamDownloads();
 }
 
+void MapTerrainRepository::deleteCache(
+    const QString &dataset, const QVector<MapTerrainCacheDeletionRange> &tile_ranges,
+    const std::optional<MapTerrainCacheDeletionRange> &source_range)
+{
+    if (this->interface_map == nullptr || !isValidMapTerrainDatasetId(dataset))
+    {
+        emit signalTerrainCacheDeletionFinished(
+            0, 0, QStringLiteral("No terrain service is available"));
+        return;
+    }
+
+    const quint64 batch_id = this->next_terrain_deletion_batch_id++;
+    TerrainDeletionBatch batch;
+    batch.dataset = dataset;
+    batch.source_requested = source_range.has_value();
+
+    QVector<TerrainDeletionRequest> requests;
+    for (const MapTerrainCacheDeletionRange &range : tile_ranges)
+    {
+        if (range.zoom < 0 || range.zoom > MapTerrainTileMaximumZoom
+            || range.tile_x_min > range.tile_x_max || range.tile_y_min > range.tile_y_max)
+        {
+            continue;
+        }
+        TerrainDeletionRequest request;
+        request.batch_id = batch_id;
+        request.scope = MapTerrainCacheDeletionScope::NormalizedTiles;
+        request.range = range;
+        requests.append(request);
+    }
+    if (source_range.has_value())
+    {
+        TerrainDeletionRequest request;
+        request.batch_id = batch_id;
+        request.scope = MapTerrainCacheDeletionScope::SourceData;
+        request.range = source_range.value();
+        requests.append(request);
+    }
+    if (requests.isEmpty())
+    {
+        emit signalTerrainCacheDeletionFinished(0, 0, QString());
+        return;
+    }
+
+    batch.outstanding = int(requests.size());
+    // The source data goes first: a tile requested after its deletion but
+    // before the source's would be regenerated from the old source data.
+    QVector<TerrainDeletionRequest> send_now;
+    for (const TerrainDeletionRequest &request : requests)
+    {
+        if (batch.source_requested && request.scope == MapTerrainCacheDeletionScope::NormalizedTiles)
+            batch.deferred_tile_requests.append(request);
+        else
+            send_now.append(request);
+    }
+    this->terrain_deletion_batches.insert(batch_id, batch);
+
+    // The interface may answer synchronously (no service in this mode).
+    for (const TerrainDeletionRequest &request : send_now)
+        sendTerrainDeletionRequest(dataset, request);
+}
+
+void MapTerrainRepository::sendTerrainDeletionRequest(const QString &dataset,
+                                                      const TerrainDeletionRequest &request)
+{
+    if (this->interface_map == nullptr)
+        return;
+
+    // Tiles: drop what this GUI has of them at once. The renderers keep what
+    // they drew and request the tiles again; a request answered from before
+    // the service's deletion is dropped again when the deletion answers
+    // (finishTerrainDeletionRequest()).
+    if (request.scope == MapTerrainCacheDeletionScope::NormalizedTiles
+        && invalidateTiles(dataset, request.range))
+    {
+        emit signalTerrainTilesDeleted();
+    }
+
+    const quint64 request_id = this->next_terrain_deletion_request_id++;
+    this->terrain_deletion_requests.insert(request_id, request);
+    this->interface_map->deleteTerrainCache(
+        request_id, request.scope, dataset, request.range.zoom,
+        request.range.tile_x_min, request.range.tile_x_max,
+        request.range.tile_y_min, request.range.tile_y_max);
+}
+
+bool MapTerrainRepository::invalidateTiles(const QString &dataset,
+                                           const MapTerrainCacheDeletionRange &range)
+{
+    bool dropped_cached = false;
+    const QList<QString> cached_keys = this->cache.keys();
+    for (const QString &key : cached_keys)
+    {
+        if (!terrainKeyInsideRange(key, dataset, range))
+            continue;
+        this->cache.remove(key);
+        dropped_cached = true;
+    }
+
+    const QList<QString> failed_keys = this->terrain_failures.keys();
+    for (const QString &key : failed_keys)
+    {
+        if (terrainKeyInsideRange(key, dataset, range))
+            this->terrain_failures.remove(key);
+    }
+
+    // In flight: forget the request, its answer may predate the deletion
+    // (terrainDataReceived() only accepts pending keys); the next
+    // requestTile() asks again.
+    const QList<QString> pending_keys = this->terrain_pending.values();
+    for (const QString &key : pending_keys)
+    {
+        if (!terrainKeyInsideRange(key, dataset, range))
+            continue;
+        this->terrain_pending.remove(key);
+        this->terrain_requests_pending.remove(key);
+    }
+    return dropped_cached;
+}
+
+void MapTerrainRepository::terrainCacheDeleted(quint64 request_id, int deleted_count)
+{
+    finishTerrainDeletionRequest(request_id, deleted_count, QString());
+}
+
+void MapTerrainRepository::terrainCacheDeletionFailed(quint64 request_id, const QString &error)
+{
+    finishTerrainDeletionRequest(request_id, 0, error.isEmpty()
+        ? QStringLiteral("Terrain cache deletion failed") : error);
+}
+
+void MapTerrainRepository::finishTerrainDeletionRequest(quint64 request_id, int deleted_count,
+                                                        const QString &error)
+{
+    const QHash<quint64, TerrainDeletionRequest>::iterator request_iterator =
+        this->terrain_deletion_requests.find(request_id);
+    if (request_iterator == this->terrain_deletion_requests.end())
+        return;
+    const TerrainDeletionRequest request = request_iterator.value();
+    this->terrain_deletion_requests.erase(request_iterator);
+
+    const QHash<quint64, TerrainDeletionBatch>::iterator batch_iterator =
+        this->terrain_deletion_batches.find(request.batch_id);
+    if (batch_iterator == this->terrain_deletion_batches.end())
+        return;
+    TerrainDeletionBatch &batch = batch_iterator.value();
+
+    if (!error.isEmpty())
+    {
+        qWarning().noquote() << QStringLiteral("Terrain cache deletion failed: %1").arg(error);
+        if (batch.error.isEmpty())
+            batch.error = error;
+    }
+    if (request.scope == MapTerrainCacheDeletionScope::NormalizedTiles)
+    {
+        if (error.isEmpty() && deleted_count >= 0)
+            batch.deleted_tiles += deleted_count;
+        else if (error.isEmpty())
+            batch.tile_count_known = false;
+        // A tile answered between the first invalidation and the service's
+        // deletion carries the deleted data: drop it again, ask again.
+        if (error.isEmpty() && invalidateTiles(batch.dataset, request.range))
+            emit signalTerrainTilesDeleted();
+    }
+    else
+    {
+        if (error.isEmpty() && deleted_count >= 0)
+            batch.deleted_source_files += deleted_count;
+        else if (error.isEmpty())
+            batch.source_count_known = false;
+    }
+
+    --batch.outstanding;
+    if (request.scope == MapTerrainCacheDeletionScope::SourceData
+        && !batch.deferred_tile_requests.isEmpty())
+    {
+        // The source data is gone (or could not all be deleted: the tiles
+        // still go, as asked): now the tiles. Taken out of the batch first,
+        // the sends can answer synchronously and erase it.
+        const QVector<TerrainDeletionRequest> deferred = batch.deferred_tile_requests;
+        const QString dataset = batch.dataset;
+        batch.deferred_tile_requests.clear();
+        for (const TerrainDeletionRequest &tile_request : deferred)
+            sendTerrainDeletionRequest(dataset, tile_request);
+        return;
+    }
+    if (batch.outstanding > 0)
+        return;
+
+    const int deleted_tiles = batch.tile_count_known ? batch.deleted_tiles : -1;
+    const int deleted_source_files = batch.source_requested
+        ? (batch.source_count_known ? batch.deleted_source_files : -1) : 0;
+    const QString batch_error = batch.error;
+    this->terrain_deletion_batches.erase(batch_iterator);
+    emit signalTerrainCacheDeletionFinished(deleted_tiles, deleted_source_files, batch_error);
+}
+
+void MapTerrainRepository::abortTerrainDeletions(const QString &error)
+{
+    if (this->terrain_deletion_batches.isEmpty())
+    {
+        this->terrain_deletion_requests.clear();
+        return;
+    }
+    const QList<TerrainDeletionBatch> batches = this->terrain_deletion_batches.values();
+    this->terrain_deletion_batches.clear();
+    this->terrain_deletion_requests.clear();
+    for (const TerrainDeletionBatch &batch : batches)
+        emit signalTerrainCacheDeletionFinished(batch.deleted_tiles, batch.deleted_source_files, error);
+}
+
 void MapTerrainRepository::setMapServerMode(MapServerMode mode)
 {
     if (this->map_server_mode == mode)
@@ -202,6 +460,8 @@ void MapTerrainRepository::initServerMapInterface()
         this->interface_map = nullptr;
     }
 
+    abortTerrainDeletions(QStringLiteral("The map server connection changed before the "
+                                         "terrain cache deletion finished"));
     this->terrain_generation++;
     this->terrain_pending.clear();
     this->terrain_requests_pending.clear();
@@ -239,6 +499,10 @@ void MapTerrainRepository::initServerMapInterface()
             this, &MapTerrainRepository::datasetCatalogReceived);
     connect(this->interface_map, &InterfaceServerMap::signalTerrainDatasetsFailed,
             this, &MapTerrainRepository::datasetCatalogFailed);
+    connect(this->interface_map, &InterfaceServerMap::signalTerrainCacheDeleted,
+            this, &MapTerrainRepository::terrainCacheDeleted);
+    connect(this->interface_map, &InterfaceServerMap::signalTerrainCacheDeletionFailed,
+            this, &MapTerrainRepository::terrainCacheDeletionFailed);
 
     // Which dataset to draw and how fine it goes: nothing is requested from
     // the terrain service before this answer.

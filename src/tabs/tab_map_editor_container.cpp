@@ -6,6 +6,7 @@
 #include "map/bgfx/map_bgfx_2d_imagery_layout.h"
 #include "map/bgfx/map_bgfx_editor_icons.h"
 #include "map/bgfx/map_bgfx_editor_overlay.h"
+#include "map/bgfx/map_bgfx_globe_hud_controller.h"
 #include "map/bgfx/map_bgfx_pan_reuse.h"
 #include "map/bgfx/map_bgfx_surface.h"
 #include "map/render/map_entity_pixmap_renderer.h"
@@ -91,13 +92,17 @@ private:
 }
 
 
-MapEditorContainer::MapEditorContainer(MapModel *map_model, MapTileRepository *tile_repository, HydraulicData *hydraulic_data, GpsProvider *gps, EntityInspectorDock *map_inspector, QWidget *parent)
+MapEditorContainer::MapEditorContainer(MapModel *map_model, MapTileRepository *tile_repository,
+                                       MapTerrainRepository *terrain_repository,
+                                       HydraulicData *hydraulic_data, GpsProvider *gps,
+                                       EntityInspectorDock *map_inspector, QWidget *parent)
     : QWidget{parent},
     hydraulic_data( hydraulic_data ),
     gps( gps ),
     map_inspector( map_inspector ),
     map_model( map_model ),
     tile_repository( tile_repository ),
+    terrain_repository( terrain_repository ),
     map_stack( new QWidget(this) ),
     map_stack_layout( new QStackedLayout(this->map_stack) ),
     map( new MapWidget(this->map_model, this->tile_repository, this->gps, this->map_stack) ),
@@ -105,7 +110,7 @@ MapEditorContainer::MapEditorContainer(MapModel *map_model, MapTileRepository *t
     renderer_status( new QLabel(this->map_stack) ),
     editor_controller( new MapEditorController(this->map_model, this->map_canvas->mapCanvasEntities(), this) ),
     map_menu( new MapEditorMenuWidget(this->map, this->map_canvas, this->editor_controller,
-                                      CanvasMode::Edit, this) ),
+                                      this->terrain_repository, CanvasMode::Edit, this) ),
     layout( new QHBoxLayout(this) )
 {
     this->map_canvas->setEditorController(this->editor_controller);
@@ -166,6 +171,11 @@ MapEditorContainer::MapEditorContainer(MapModel *map_model, MapTileRepository *t
 
 MapEditorContainer::~MapEditorContainer()
 {
+    // The resolvers capture the bgfx surface (the monitor's destructor).
+    this->map->setRenderSurfaceScreenCoordinateResolver(MapWidget::ScreenCoordinateResolver());
+    this->map->setRenderSurfaceGlobeSurfacePointResolver(MapWidget::GlobeSurfacePointResolver());
+    this->map->setCachedTerrainElevationResolver(MapWidget::CachedTerrainElevationResolver());
+    this->editor_controller->setGlobeCoordinateResolver(MapEditorController::ScreenCoordinateResolver());
     // A fullscreen map stack is its own window: back into the tab, so it
     // goes with the container (the monitor's destructor).
     if (this->bgfx_fullscreen_active)
@@ -328,7 +338,9 @@ void MapEditorContainer::applyRenderSurfaceEditorSymbology()
         return;
 
     // The editor look: black pipes and node dots, brown device links, no
-    // GPU icons (the overlay draws the full-colour editor icons), no flow.
+    // GPU icons in 2D (the overlay draws the full-colour editor icons), no
+    // flow. 3D has no editor overlay: there the globe network draws its
+    // icons (re-applied on every view mode switch).
     MapNetworkRenderSymbology symbology;
     symbology.node_size_unit = NetworkSymbologySizeUnit::Pixels;
     symbology.node_size_px = 10;
@@ -337,7 +349,7 @@ void MapEditorContainer::applyRenderSurfaceEditorSymbology()
     symbology.icon_size_unit = NetworkSymbologySizeUnit::Pixels;
     symbology.icon_size_px = NetworkSymbologyDefaultIconSizePx;
     symbology.icon_size_m = NetworkSymbologyDefaultIconSizeM;
-    symbology.show_icons = false;
+    symbology.show_icons = this->map_model->viewMode() == MapViewMode::Globe;
     symbology.link_thickness_unit = NetworkSymbologySizeUnit::Pixels;
     symbology.link_thickness_px = NetworkSymbologyDefaultLinkThicknessPx;
     symbology.link_thickness_m = NetworkSymbologyDefaultLinkThicknessM;
@@ -360,20 +372,34 @@ void MapEditorContainer::setupBgfxEditor()
     // HUD; MapCanvasWidget stays the input owner (editor controller first,
     // then MapWidget navigation) and paints nothing.
     MapBgfxSurface *surface = new MapBgfxSurface(this->map_model, this->map_stack);
-    // The editor is 2D only: no globe GPU setup, no 3D in its HUD.
-    surface->setGlobeOffered(false);
+    // The globe is offered (MapBgfxSurface's default): 3D shows the terrain
+    // and the network; of the editor, only the cache sections' tile
+    // selection works there (see the class comment).
     surface->setObjectName(QStringLiteral("aowis-bgfx-editor-surface"));
     this->bgfx_surface = surface;
     // Editor HUD: crosshair, scale bar, the fullscreen button with the
-    // 2D/3D switch (3D is offered once the bgfx globe exists), the pan
-    // joystick and the zoom buttons.
+    // 2D/3D switch (3D is offered once the bgfx globe initialized), the pan
+    // joystick and the zoom buttons; in 3D the globe HUD (compass, camera
+    // sliders, terrain toggles) as in the monitor.
     surface->setHudViewSwitchVisible(true);
+    this->bgfx_globe_hud = new MapBgfxGlobeHudController(this->map_model, this);
     surface->setHudActionHandler([this](const MapBgfxHud::Command &command)
     {
-        if (command.action == MapBgfxHud::Action::JoystickDrag)
-            this->map->beginJoystickPan(command.position);
-        else
-            handleBgfxHudAction(static_cast<int>(command.action));
+        switch (command.action)
+        {
+            case MapBgfxHud::Action::GlobeSlider:
+            case MapBgfxHud::Action::GlobeSliderReset:
+            case MapBgfxHud::Action::CompassDrag:
+            case MapBgfxHud::Action::CompassWheel:
+                this->bgfx_globe_hud->handleCommand(command);
+                break;
+            case MapBgfxHud::Action::JoystickDrag:
+                this->map->beginJoystickPan(command.position);
+                break;
+            default:
+                handleBgfxHudAction(static_cast<int>(command.action), command.value);
+                break;
+        }
     });
     // The joystick's knob follows MapWidget's captured drag, its arrows also
     // the held keyboard pan keys.
@@ -414,6 +440,38 @@ void MapEditorContainer::setupBgfxEditor()
         [this](double elapsed_seconds) { this->map->advanceNavigationFrame(elapsed_seconds); });
 
     surface->setTileRepository(this->tile_repository);
+    // DEM tiles for the globe's relief, and terrain-aware navigation and
+    // picking as in the monitor: pointer coordinates with DEM altitude,
+    // globe pans on the drawn terrain, the tile selection's corners on it.
+    surface->setTerrainRepository(this->terrain_repository);
+    this->map->setRenderSurfaceScreenCoordinateResolver(
+        [surface](const QPointF &screen_position, CoordinateWGS84 *coordinate)
+    {
+        return surface->terrainCoordinateAtScreen(screen_position, coordinate, true);
+    });
+    this->map->setCachedTerrainElevationResolver(
+        [surface](const CoordinateWGS84 &coordinate, double *elevation_m)
+    {
+        return surface->cachedTerrainElevationAtCoordinate(coordinate, elevation_m);
+    });
+    this->map->setRenderSurfaceGlobeSurfacePointResolver(
+        [surface](const QPointF &screen_position, GeoWgs84Ellipsoid::EcefPositionD *point)
+    {
+        return surface->globeSurfacePointAtScreen(screen_position, point);
+    });
+    this->editor_controller->setGlobeCoordinateResolver(
+        [surface](const QPointF &screen_position, CoordinateWGS84 *coordinate)
+    {
+        return surface->terrainCoordinateAtScreen(screen_position, coordinate, true);
+    });
+    // GPU icons on the globe only (applyRenderSurfaceEditorSymbology()).
+    // The 2D and the globe overlay share the surface's overlay canvas: the
+    // 2D builder must not reuse (pan) a canvas the globe frames rebuilt.
+    connect(this->map_model, &MapModel::viewModeChanged, this, [this](MapViewMode)
+    {
+        applyRenderSurfaceEditorSymbology();
+        this->bgfx_visual_state_dirty = true;
+    });
     surface->setBackgroundOpacity(this->map_canvas->backgroundOpacity());
     connect(this->map_menu, &MapEditorMenuWidget::signalSlideOpacityChanged,
             surface, [surface](int opacity) { surface->setBackgroundOpacity(opacity); });
@@ -550,6 +608,16 @@ void MapEditorContainer::setupBgfxEditor()
             overlay_frame->pannable = pannable;
             overlay_frame->atlas_generation = cache->generation();
             return build.offset;
+        });
+    // Globe: the cache sections' tile selection on the drawn surface, built
+    // every globe frame (cheap: a bounded lattice, no network content).
+    surface->setGlobeOverlayBuilder(
+        [this, overlay](MapBgfxHudCanvas *canvas, MapBgfxHudTextCache *cache,
+                        const MapBgfxSurface::GlobeProjector &projector, const QSizeF &)
+        {
+            const MapEditorViewportRenderState viewport_state =
+                this->map_canvas->viewportRenderState();
+            overlay->buildGlobe(canvas, cache, viewport_state, projector);
         });
     connect(this->map_canvas, &MapCanvasWidget::signalRenderUpdateRequested, this, [this]()
     {
@@ -729,16 +797,37 @@ bool MapEditorContainer::routeBgfxHudEvent(QEvent *event)
     }
 }
 
-void MapEditorContainer::handleBgfxHudAction(int action)
+void MapEditorContainer::handleBgfxHudAction(int action, int value)
 {
     switch (static_cast<MapBgfxHud::Action>(action))
     {
         case MapBgfxHud::Action::ViewMode2d:
             if (this->map_model->viewMode() != MapViewMode::TwoD)
-                this->map_model->setViewMode(MapViewMode::TwoD);
+                this->map_model->setViewMode(MapViewMode::TwoD, this->map->size());
             break;
         case MapBgfxHud::Action::ViewMode3d:
-            // Offered (enabled) only once the bgfx globe exists (Phase 3).
+            // Offered (enabled) only when the globe surface initialized
+            // (MapBgfxSurface::globeAvailable()).
+            if (this->bgfx_surface != nullptr && this->bgfx_surface->globeAvailable()
+                && this->map_model->viewMode() != MapViewMode::Globe)
+                this->map_model->setViewMode(MapViewMode::Globe, this->map->size());
+            break;
+        // The globe HUD's toggles and underground combo (the monitor's).
+        case MapBgfxHud::Action::ToggleWireframe:
+            if (this->bgfx_surface != nullptr)
+                this->bgfx_surface->setTerrainWireframeVisible(!this->bgfx_surface->terrainWireframeVisible());
+            break;
+        case MapBgfxHud::Action::ToggleMapTiles:
+            if (this->bgfx_surface != nullptr)
+                this->bgfx_surface->setMapTilesVisible(!this->bgfx_surface->mapTilesVisible());
+            break;
+        case MapBgfxHud::Action::ToggleHillshade:
+            if (this->bgfx_surface != nullptr)
+                this->bgfx_surface->setTerrainHillshadeVisible(!this->bgfx_surface->terrainHillshadeVisible());
+            break;
+        case MapBgfxHud::Action::UndergroundMode:
+            if (this->bgfx_surface != nullptr)
+                this->bgfx_surface->setUndergroundMode(static_cast<MapUndergroundMode>(value));
             break;
         case MapBgfxHud::Action::ToggleFullscreen:
             setBgfxFullscreen(!this->bgfx_fullscreen_active);
@@ -862,7 +951,8 @@ void MapEditorContainer::setMapEditorGuideChecked(bool checked)
 }
 
 MapEditorMenuWidget::MapEditorMenuWidget(MapWidget *map, MapCanvasWidget *map_canvas,
-                                         MapEditorController *editor_controller, CanvasMode mode,
+                                         MapEditorController *editor_controller,
+                                         MapTerrainRepository *terrain_repository, CanvasMode mode,
                                          QWidget *parent)
     : QWidget{parent},
     mode( mode ),
@@ -871,6 +961,7 @@ MapEditorMenuWidget::MapEditorMenuWidget(MapWidget *map, MapCanvasWidget *map_ca
     map_nav( new MapNavigationWidget(this->map, this->mode, map_canvas, this) ),
     map_canvas( map_canvas ),
     editor_controller( editor_controller ),
+    terrain_repository( terrain_repository ),
     toolbox( new QToolBox(this) )
 {
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Minimum);
@@ -879,6 +970,7 @@ MapEditorMenuWidget::MapEditorMenuWidget(MapWidget *map, MapCanvasWidget *map_ca
     
     createToolboxEdit(this->toolbox);
     createToolboxCache(this->toolbox);
+    createToolboxTerrain(this->toolbox);
     
     this->layout->addWidget(this->map_nav);
     this->layout->addWidget(this->toolbox);
@@ -886,8 +978,78 @@ MapEditorMenuWidget::MapEditorMenuWidget(MapWidget *map, MapCanvasWidget *map_ca
     
     connect(this->toolbox, &QToolBox::currentChanged, this, &MapEditorMenuWidget::setToolboxMode);
     connect(this->map_nav, &MapNavigationWidget::signalSlideOpacityChanged, this, &MapEditorMenuWidget::signalSlideOpacityChanged);
+    connect(this->map->model(), &MapModel::viewModeChanged, this, &MapEditorMenuWidget::applyViewMode);
+    if (this->terrain_repository != nullptr)
+    {
+        connect(this->terrain_repository, &MapTerrainRepository::signalTerrainDatasetChanged,
+                this, &MapEditorMenuWidget::applyTerrainDataset);
+    }
     
     setToolboxMode(this->toolbox->currentIndex());
+    applyTerrainDataset();
+    applyViewMode(this->map->model()->viewMode());
+}
+
+void MapEditorMenuWidget::applyViewMode(MapViewMode view_mode)
+{
+    const bool globe = view_mode == MapViewMode::Globe;
+    // A tool in use ends with the switch (the controller stops placing):
+    // back to Select, so nothing looks armed when 2D returns.
+    if (globe && this->button_radio_select != nullptr)
+        this->button_radio_select->setChecked(true);
+    if (this->edit_tools != nullptr)
+        this->edit_tools->setEnabled(!globe);
+    if (this->label_edit_globe_hint != nullptr)
+        this->label_edit_globe_hint->setVisible(globe);
+    updateToolboxHeight(this->toolbox->currentIndex());
+}
+
+void MapEditorMenuWidget::applyTerrainDataset()
+{
+    const MapTerrainDatasetInfo *dataset =
+        this->terrain_repository != nullptr ? this->terrain_repository->activeDataset() : nullptr;
+    if (dataset == nullptr)
+    {
+        this->label_terrain_dataset->setText(
+            "<i>No terrain dataset yet:</i> terrain tiles can be deleted once the map "
+            "server's terrain service described its dataset.");
+        this->editor_controller->setTerrainZoomRange(0, -1);
+        this->spin_terrain_zoom_from->setEnabled(false);
+        this->spin_terrain_zoom_to->setEnabled(false);
+        this->checkbox_terrain_source->setEnabled(false);
+        refreshTerrainDeleteButton();
+        return;
+    }
+
+    this->spin_terrain_zoom_from->setEnabled(true);
+    this->spin_terrain_zoom_to->setEnabled(true);
+    this->checkbox_terrain_source->setEnabled(true);
+
+    this->label_terrain_dataset->setText(
+        QString("Dataset <b>%1</b> (%2, %3 m), terrain zoom levels %4 to %5.")
+            .arg(dataset->dataset.toHtmlEscaped(), dataset->provider.toHtmlEscaped())
+            .arg(dataset->nominal_resolution_m)
+            .arg(dataset->minimum_zoom)
+            .arg(dataset->maximum_zoom));
+    this->editor_controller->setTerrainZoomRange(dataset->minimum_zoom, dataset->maximum_zoom);
+    // "From" at the terrain level the map draws now, "to" at the dataset's
+    // native detail (QSpinBox clamps both into the new range).
+    this->spin_terrain_zoom_from->setRange(dataset->minimum_zoom, dataset->maximum_zoom);
+    this->spin_terrain_zoom_from->setValue(
+        this->editor_controller->imageryZoom(this->map_canvas->size()));
+    this->spin_terrain_zoom_to->setRange(this->spin_terrain_zoom_from->value(), dataset->maximum_zoom);
+    this->spin_terrain_zoom_to->setValue(dataset->maximum_zoom);
+    refreshTerrainDeleteButton();
+}
+
+void MapEditorMenuWidget::refreshTerrainDeleteButton()
+{
+    if (this->button_terrain_delete == nullptr)
+        return;
+    const bool dataset_known =
+        this->terrain_repository != nullptr && this->terrain_repository->activeDataset() != nullptr;
+    this->button_terrain_delete->setEnabled(
+        this->terrain_selection_valid && dataset_known && !this->terrain_deletion_running);
 }
 
 void MapEditorMenuWidget::updateToolboxHeight(int index)
@@ -970,7 +1132,7 @@ void MapEditorMenuWidget::createToolboxCache(QToolBox *tbx)
     QWidget *wgt = new QWidget(tbx);
     QGridLayout *grid = new QGridLayout(wgt);
     
-    QLabel *label_explanation_rectangle = new QLabel("<b>Select a region first:</b> right-click and drag on the map.", this);
+    QLabel *label_explanation_rectangle = new QLabel("<b>Select a region first:</b> right-click and drag on the map (2D or 3D).", this);
     label_explanation_rectangle->setWordWrap(true);
     
     QLabel *label_explanation_spinners = new QLabel("<b>Select the zoom level range</b> (from - to) for the tiles you want to delete:");
@@ -990,12 +1152,12 @@ void MapEditorMenuWidget::createToolboxCache(QToolBox *tbx)
         this->spin_zoom_to->setRange(zoom_from, 19);
     });
     // "From" follows the imagery level the map draws (the selection frame
-    // shows the tiles of that level).
+    // shows the tiles of that level). In 3D the zoom level is the camera
+    // distance's 2D equivalent (MapModel::viewGlobeZoomLevel()).
     connect(this->map, &MapWidget::signalZoomLevelChanged, this->spin_zoom_from, [this](double zoom)
     {
-        if (this->map->model()->viewMode() == MapViewMode::TwoD)
-            this->spin_zoom_from->setValue(
-                MapBgfx2dImagery::imageryZoomFor(zoom, MapModel::MinZoom, MapModel::MaxZoom));
+        this->spin_zoom_from->setValue(
+            MapBgfx2dImagery::imageryZoomFor(zoom, MapModel::MinZoom, MapModel::MaxZoom));
     });
     
     this->button_tiles_delete = new QToolButton(wgt);
@@ -1068,10 +1230,215 @@ void MapEditorMenuWidget::createToolboxCache(QToolBox *tbx)
 
     this->toolbox_cache_index = tbx->addItem(wgt, "Tile Cache");
 }
+
+void MapEditorMenuWidget::createToolboxTerrain(QToolBox *tbx)
+{
+    // The Tile Cache section for the terrain (DEM) tiles of the map server's
+    // terrain service: the same region selection (brown instead of green),
+    // terrain zoom levels of the dataset's range, and optionally the
+    // provider's downloaded source data, so the area is rebuilt from fresh
+    // downloads.
+    QWidget *wgt = new QWidget(tbx);
+    QGridLayout *grid = new QGridLayout(wgt);
+
+    QLabel *label_explanation_rectangle = new QLabel(
+        "<b>Select a region first:</b> right-click and drag on the map (2D or 3D).", wgt);
+    label_explanation_rectangle->setWordWrap(true);
+
+    this->label_terrain_dataset = new QLabel(wgt);
+    this->label_terrain_dataset->setWordWrap(true);
+
+    QLabel *label_explanation_spinners = new QLabel(
+        "<b>Select the terrain zoom level range</b> (from - to) for the terrain tiles you want to delete:", wgt);
+    label_explanation_spinners->setWordWrap(true);
+
+    this->spin_terrain_zoom_from = new QSpinBox(wgt);
+    this->spin_terrain_zoom_to = new QSpinBox(wgt);
+    connect(this->spin_terrain_zoom_from, &QSpinBox::valueChanged, this, [this](int zoom_from)
+    {
+        this->spin_terrain_zoom_to->setRange(zoom_from, this->spin_terrain_zoom_from->maximum());
+    });
+    // "From" follows the terrain level drawn around the view (the imagery
+    // level within the dataset's range; QSpinBox clamps), as the selection
+    // frame shows the terrain tiles of that level.
+    connect(this->map, &MapWidget::signalZoomLevelChanged, this->spin_terrain_zoom_from, [this](double zoom)
+    {
+        if (this->terrain_repository == nullptr || this->terrain_repository->activeDataset() == nullptr)
+            return;
+        this->spin_terrain_zoom_from->setValue(
+            MapBgfx2dImagery::imageryZoomFor(zoom, MapModel::MinZoom, MapModel::MaxZoom));
+    });
+
+    this->checkbox_terrain_source = new QCheckBox("Also delete source elevation data", wgt);
+    this->checkbox_terrain_source->setToolTip(
+        "Also delete the terrain provider's downloaded source data (for Copernicus GLO-30 the "
+        "1\u00b0 \u00d7 1\u00b0 GeoTIFF cells) covering the selected area, so its terrain is "
+        "rebuilt from freshly downloaded data. Source cells are large downloads and may also "
+        "cover terrain outside the selection.");
+
+    QLabel *label_explanation_actions = new QLabel(
+        "Then delete the cached terrain for the selected area and zoom levels:", wgt);
+    label_explanation_actions->setWordWrap(true);
+
+    this->button_terrain_delete = new QToolButton(wgt);
+    this->button_terrain_delete->setText("Delete Terrain");
+    this->button_terrain_delete->setEnabled(false);
+
+    this->label_terrain_result = new QLabel(wgt);
+    this->label_terrain_result->setWordWrap(true);
+    this->label_terrain_result->setVisible(false);
+
+    connect(this->editor_controller, &MapEditorController::signalRectangleSelectionCanceled, this, [this]
+    {
+        if (this->toolbox->currentIndex() != this->toolbox_terrain_index)
+            return;
+
+        this->terrain_selection_valid = false;
+        refreshTerrainDeleteButton();
+    });
+    connect(this->editor_controller, &MapEditorController::signalRectangleSelected, this, [this]
+    {
+        if (this->toolbox->currentIndex() != this->toolbox_terrain_index)
+            return;
+
+        this->terrain_selection_valid = true;
+        refreshTerrainDeleteButton();
+    });
+    connect(this->button_terrain_delete, &QToolButton::clicked, this, [this]
+    {
+        const MapTerrainDatasetInfo *dataset = this->terrain_repository != nullptr
+            ? this->terrain_repository->activeDataset() : nullptr;
+        if (dataset == nullptr || this->terrain_deletion_running)
+            return;
+
+        const QString dataset_id = dataset->dataset;
+        const int zoom_from = this->spin_terrain_zoom_from->value();
+        const int zoom_to = this->spin_terrain_zoom_to->value();
+        const bool with_source = this->checkbox_terrain_source->isChecked();
+
+        QMessageBox *box = new QMessageBox(this);
+        box->setAttribute(Qt::WA_DeleteOnClose);
+        box->setWindowTitle("Delete selected terrain?");
+        box->setIcon(QMessageBox::Warning);
+        QString text = QString("This will permanently delete all cached terrain tiles of dataset %1 "
+                               "in the selected area for terrain zoom levels %2 through %3.")
+            .arg(dataset_id.toHtmlEscaped())
+            .arg(zoom_from)
+            .arg(zoom_to);
+        if (with_source)
+            text += " The downloaded source elevation data covering the area is deleted as well.";
+        box->setText(text);
+        box->setInformativeText(with_source
+            ? "Only continue when the map server has an internet connection. The source data "
+              "has to be downloaded again (large files); without internet access the affected "
+              "area stays without terrain relief."
+            : "The terrain tiles are rebuilt from the map server's cached source data, or "
+              "downloaded again where it has none.");
+
+        QPushButton *delete_button = box->addButton("Delete Terrain", QMessageBox::DestructiveRole);
+        QPushButton *cancel_button = box->addButton(QMessageBox::Cancel);
+        box->setDefaultButton(cancel_button);
+        box->setEscapeButton(cancel_button);
+
+        connect(delete_button, &QPushButton::clicked, this,
+                [this, dataset_id, zoom_from, zoom_to, with_source]
+        {
+            // The selection scaled to every chosen terrain level (the frame
+            // shows one of them); the source data covering the finest one,
+            // the tightest area.
+            QVector<MapTerrainCacheDeletionRange> ranges;
+            for (int zoom = zoom_from; zoom <= zoom_to; ++zoom)
+            {
+                const MapEditorController::TileSelectionRange range =
+                    this->editor_controller->tileSelectionRange(zoom);
+                if (!range.valid)
+                    continue;
+
+                MapTerrainCacheDeletionRange deletion;
+                deletion.zoom = zoom;
+                deletion.tile_x_min = range.tile_x_min;
+                deletion.tile_x_max = range.tile_x_max;
+                deletion.tile_y_min = range.tile_y_min;
+                deletion.tile_y_max = range.tile_y_max;
+                ranges.append(deletion);
+            }
+            std::optional<MapTerrainCacheDeletionRange> source_range;
+            if (with_source && !ranges.isEmpty())
+                source_range = ranges.last();
+            if (ranges.isEmpty() || this->terrain_repository == nullptr)
+                return;
+
+            this->terrain_deletion_running = true;
+            this->terrain_deletion_with_source = with_source;
+            this->label_terrain_result->setText("Deleting the cached terrain\u2026");
+            this->label_terrain_result->setVisible(true);
+            this->editor_controller->clearTileSelectionOverlay();
+            this->terrain_selection_valid = false;
+            refreshTerrainDeleteButton();
+            updateToolboxHeight(this->toolbox->currentIndex());
+            this->terrain_repository->deleteCache(dataset_id, ranges, source_range);
+        });
+        box->open();
+    });
+    if (this->terrain_repository != nullptr)
+    {
+        connect(this->terrain_repository, &MapTerrainRepository::signalTerrainCacheDeletionFinished,
+                this, [this](int deleted_tiles, int deleted_source_files, const QString &error)
+        {
+            if (!this->terrain_deletion_running)
+                return;
+
+            this->terrain_deletion_running = false;
+            QString text = deleted_tiles >= 0
+                ? QString("Deleted %1 terrain tile(s)").arg(deleted_tiles)
+                : QString("Deleted the terrain tiles");
+            if (this->terrain_deletion_with_source)
+            {
+                text += deleted_source_files >= 0
+                    ? QString(" and %1 source data file(s)").arg(deleted_source_files)
+                    : QString(" and the source data");
+            }
+            text += ".";
+            if (!error.isEmpty())
+            {
+                text = QString("<b>Terrain deletion failed:</b> %1<br>Partially: %2")
+                    .arg(error.toHtmlEscaped(), text);
+            }
+            this->label_terrain_result->setText(text);
+            this->label_terrain_result->setVisible(true);
+            refreshTerrainDeleteButton();
+            updateToolboxHeight(this->toolbox->currentIndex());
+        });
+    }
+
+    grid->addWidget(label_explanation_rectangle, 0, 0, 1, 2);
+    grid->addWidget(this->label_terrain_dataset, 1, 0, 1, 2);
+    grid->addWidget(label_explanation_spinners, 2, 0, 1, 2);
+    grid->addWidget(this->spin_terrain_zoom_from, 3, 0);
+    grid->addWidget(this->spin_terrain_zoom_to, 3, 1);
+    grid->addWidget(this->checkbox_terrain_source, 4, 0, 1, 2);
+    grid->addWidget(label_explanation_actions, 5, 0, 1, 2);
+    grid->addWidget(this->button_terrain_delete, 6, 0, 1, 2);
+    grid->addWidget(this->label_terrain_result, 7, 0, 1, 2);
+
+    this->toolbox_terrain_index = tbx->addItem(wgt, "Terrain Cache");
+}
 void MapEditorMenuWidget::createToolboxEdit(QToolBox *tbx)
 {
     QWidget *wgt = new QWidget(tbx);
-    QVBoxLayout *lay = new QVBoxLayout(wgt);
+    QVBoxLayout *page_layout = new QVBoxLayout(wgt);
+    // 3D: the tools are disabled as a whole (their own enabled states are
+    // kept for 2D) and this hint says why.
+    this->label_edit_globe_hint = new QLabel(
+        "<b>Network editing works in 2D.</b> Switch the map to 2D with the 2D/3D button "
+        "to edit; the cache sections below work in 3D too.", wgt);
+    this->label_edit_globe_hint->setWordWrap(true);
+    this->label_edit_globe_hint->setVisible(false);
+    page_layout->addWidget(this->label_edit_globe_hint);
+    this->edit_tools = new QWidget(wgt);
+    QVBoxLayout *lay = new QVBoxLayout(this->edit_tools);
+    lay->setContentsMargins(0, 0, 0, 0);
+    page_layout->addWidget(this->edit_tools);
     
     this->button_group_tools = new QButtonGroup(this);
     this->button_radio_select = new QRadioButton(wgt);
@@ -1192,7 +1559,7 @@ void MapEditorMenuWidget::createToolboxEdit(QToolBox *tbx)
     this->checkbox_map_editor_guide = new QCheckBox("Map Editor Guide", wgt);
     this->checkbox_map_editor_guide->setChecked(true);
     this->checkbox_map_editor_guide->setToolTip("Show or hide the Map Editor Guide");
-    lay->addWidget(this->checkbox_map_editor_guide);
+    page_layout->addWidget(this->checkbox_map_editor_guide);
     connect(this->checkbox_map_editor_guide, &QCheckBox::toggled, this, &MapEditorMenuWidget::signalMapEditorGuideVisibilityChanged);
     
     connect(this->button_group_tools, &QButtonGroup::idToggled, this, [this]
@@ -1211,13 +1578,22 @@ void MapEditorMenuWidget::setToolboxMode(int index)
     this->editor_controller->clearTileSelectionOverlay();
     this->button_tiles_delete->setChecked(false);
     this->button_tiles_delete->setEnabled(false);
+    this->terrain_selection_valid = false;
+    refreshTerrainDeleteButton();
 
     if (index == this->toolbox_cache_index)
     {
+        this->editor_controller->setTileSelectionKind(MapEditorTileSelectionKind::MapTiles);
+        this->editor_controller->startRectangleSelection(false, false);
+    }
+    else if (index == this->toolbox_terrain_index)
+    {
+        this->editor_controller->setTileSelectionKind(MapEditorTileSelectionKind::Terrain);
         this->editor_controller->startRectangleSelection(false, false);
     }
     else if (index == this->toolbox_edit_index)
     {
+        this->editor_controller->setTileSelectionKind(MapEditorTileSelectionKind::MapTiles);
         this->button_radio_select->setChecked(true);
         this->editor_controller->startRectangleSelection(false, true);
     }

@@ -535,6 +535,53 @@ void InterfaceServerMapStandalone::finishTileDeletion(quint64 request_id, int de
 }
 #endif
 
+void InterfaceServerMapStandalone::deleteTerrainCache(quint64 request_id,
+                                                      MapTerrainCacheDeletionScope scope,
+                                                      const QString &dataset, int zoom,
+                                                      int tile_x_min, int tile_x_max,
+                                                      int tile_y_min, int tile_y_max)
+{
+    if (!this->terrain_data_initialized || this->terrain_data == nullptr)
+    {
+        const QString error = this->terrain_initialization_error.isEmpty()
+            ? QStringLiteral("Standalone terrain data is not initialized")
+            : this->terrain_initialization_error;
+        QTimer::singleShot(0, this, [this, request_id, error]
+        {
+            emit signalTerrainCacheDeletionFailed(request_id, error);
+        });
+        return;
+    }
+
+    // File work (and a brief wait for a source file being downloaded) off
+    // the GUI thread, on the pool that serves the terrain requests; the
+    // answer arrives from the event loop like a network reply.
+    Aowis::Map::TerrainData *terrain_data = this->terrain_data;
+    this->terrain_request_pool.start(QRunnable::create(
+        [this, terrain_data, request_id, scope, dataset, zoom,
+         tile_x_min, tile_x_max, tile_y_min, tile_y_max]
+    {
+        const Aowis::Map::TerrainCacheDeletionResult result =
+            scope == MapTerrainCacheDeletionScope::SourceData
+                ? terrain_data->deleteSourceData(
+                      dataset, zoom, tile_x_min, tile_x_max, tile_y_min, tile_y_max)
+                : terrain_data->deleteNormalizedTiles(
+                      dataset, zoom, tile_x_min, tile_x_max, tile_y_min, tile_y_max);
+        QMetaObject::invokeMethod(this, [this, request_id, result]
+        {
+            if (result.status != Aowis::Map::TerrainCacheDeletionStatus::Deleted)
+            {
+                emit signalTerrainCacheDeletionFailed(
+                    request_id, result.error_message.isEmpty()
+                        ? QStringLiteral("Terrain cache deletion failed: %1")
+                              .arg(Aowis::Map::terrainCacheDeletionStatusId(result.status))
+                        : result.error_message);
+                return;
+            }
+            emit signalTerrainCacheDeleted(request_id, result.deleted_count);
+        }, Qt::QueuedConnection);
+    }));
+}
 
 void InterfaceServerMapStandalone::requestMapTileUpstreamActivity()
 {

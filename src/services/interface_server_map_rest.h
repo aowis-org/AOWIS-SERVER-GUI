@@ -1,6 +1,7 @@
 #ifndef INTERFACE_SERVER_MAP_REST_H
 #define INTERFACE_SERVER_MAP_REST_H
 
+#include <QHash>
 #include <QSet>
 
 #include "services/interface_server_map.h"
@@ -19,6 +20,10 @@ public:
     void requestTerrainElevation(const QString &endpoint) override;
     void deleteTiles(quint64 request_id, const QString &provider, int zoom,
                      int tile_x_min, int tile_x_max, int tile_y_min, int tile_y_max) override;
+    void deleteTerrainCache(quint64 request_id, MapTerrainCacheDeletionScope scope,
+                            const QString &dataset, int zoom,
+                            int tile_x_min, int tile_x_max,
+                            int tile_y_min, int tile_y_max) override;
     void requestMapTileUpstreamActivity() override;
     void requestTerrainUpstreamActivity() override;
     void cancelMapTileUpstreamDownloads() override;
@@ -34,6 +39,11 @@ private:
     bool terrain_datasets_pending = false;
     bool map_upstream_activity_pending = false;
     bool terrain_upstream_activity_pending = false;
+    // Terrain cache DELETEs share RESTClient's delete path with the map-tile
+    // ones: their REST ids live in the upper half of the id space (map-tile
+    // ids count up from 1), mapped back to the caller's request ids.
+    QHash<quint64, quint64> terrain_deletion_request_ids;
+    quint64 next_terrain_deletion_rest_id = quint64(1) << 63;
 };
 
 #endif // INTERFACE_SERVER_MAP_REST_H

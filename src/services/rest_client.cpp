@@ -325,6 +325,7 @@ void RESTClient::handleReplyDelete(QNetworkReply *reply, quint64 request_id)
         return;
     }
 
+    emit requestFinishedDeleteData(request_id, reply->readAll());
     emit requestFinishedDelete(request_id);
     reply->deleteLater();
 }

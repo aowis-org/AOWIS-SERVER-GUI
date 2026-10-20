@@ -465,6 +465,82 @@ void testFramesAndAttachments()
     req(dashes >= 15 && dashes <= 30, "attachment line is dashed (pattern strip, ~22 dashes)");
 }
 
+// Terrain tile selections: the same frame in brown; in 3D the frame, fill
+// and grid laid on the globe through the surface's projector.
+void testTerrainAndGlobeTileSelection()
+{
+    Harness harness;
+    const MapBgfx2d::Camera view = camera();
+    const double tiles_per_axis = std::exp2(18.0);
+    const MapBgfx2d::WorldPoint center = MapBgfx2d::worldFromWgs84(9.0, 47.0);
+    Scene tiles = scene();
+    tiles.viewport.tile_selection_visible = true;
+    tiles.viewport.tile_selection_kind = MapEditorTileSelectionKind::Terrain;
+    tiles.viewport.tile_selection_zoom = 18;
+    tiles.viewport.tile_x_min = int(std::floor(center.x * tiles_per_axis));
+    tiles.viewport.tile_x_max = tiles.viewport.tile_x_min + 1;
+    tiles.viewport.tile_y_min = int(std::floor(center.y * tiles_per_axis));
+    tiles.viewport.tile_y_max = tiles.viewport.tile_y_min;
+    harness.build(tiles, view);
+    const double tile_left = ViewportWidth * 0.5
+        + (double(tiles.viewport.tile_x_min) / tiles_per_axis - center.x) * view.world_pixels;
+    const quint32 terrain_line = 0xebf0ca96u;
+    const quint32 terrain_grid = 0x73dea86cu;
+    req(hasColorNear(harness.canvas, terrain_line, tile_left, 300.0, 300.0),
+        "terrain tile selection border is drawn brown");
+    req(!hasColorNear(harness.canvas, 0xe69bff91u, tile_left, 300.0, 1000.0),
+        "terrain tile selection has no green border");
+    req(hasColorNear(harness.canvas, terrain_grid, tile_left + 256.0, 300.0, 300.0),
+        "terrain tile selection grid line between tiles");
+
+    // Globe: a flat stand-in projection around the camera (1e5 px per
+    // degree); the frame's west edge lies where the projector puts it.
+    const std::function<double(double)> screen_x = [](double longitude) { return 400.0 + (longitude - 9.0) * 1.0e5; };
+    const std::function<double(double)> screen_y = [](double latitude) { return 300.0 - (latitude - 47.0) * 1.0e5; };
+    const MapBgfxEditorOverlay::GlobeProjector flat =
+        [&screen_x, &screen_y](double longitude, double latitude, QPointF *screen)
+    {
+        *screen = QPointF(screen_x(longitude), screen_y(latitude));
+        return true;
+    };
+    const double west_longitude = double(tiles.viewport.tile_x_min) / tiles_per_axis * 360.0 - 180.0;
+    const double middle_longitude = double(tiles.viewport.tile_x_min + 1) / tiles_per_axis * 360.0 - 180.0;
+    harness.overlay.buildGlobe(&harness.canvas, &harness.cache, tiles.viewport, flat);
+    req(hasColorNear(harness.canvas, terrain_line, screen_x(west_longitude), 300.0, 400.0),
+        "globe terrain selection frame is drawn on the projected west edge");
+    req(hasColorNear(harness.canvas, terrain_grid, screen_x(middle_longitude), 300.0, 400.0),
+        "globe terrain selection grid line between tiles");
+    const qsizetype full_vertices = harness.canvas.vertices().size();
+
+    // Points beyond the horizon break the lines and drop their fill cells.
+    const MapBgfxEditorOverlay::GlobeProjector half =
+        [&flat, middle_longitude](double longitude, double latitude, QPointF *screen)
+    {
+        return longitude <= middle_longitude + 1e-9 && flat(longitude, latitude, screen);
+    };
+    harness.overlay.buildGlobe(&harness.canvas, &harness.cache, tiles.viewport, half);
+    req(harness.canvas.vertices().size() > 0 && harness.canvas.vertices().size() < full_vertices,
+        "globe selection drops what lies beyond the horizon");
+    for (const MapBgfxHudVertex &vertex : harness.canvas.vertices())
+    {
+        if (vertex.x > screen_x(middle_longitude) + 10.0)
+        {
+            req(false, "nothing is drawn east of the horizon");
+            break;
+        }
+    }
+
+    const MapBgfxEditorOverlay::GlobeProjector hidden = [](double, double, QPointF *) { return false; };
+    harness.overlay.buildGlobe(&harness.canvas, &harness.cache, tiles.viewport, hidden);
+    req(harness.canvas.vertices().isEmpty(), "a selection behind the globe draws nothing");
+
+    // Map tiles stay green on the globe.
+    tiles.viewport.tile_selection_kind = MapEditorTileSelectionKind::MapTiles;
+    harness.overlay.buildGlobe(&harness.canvas, &harness.cache, tiles.viewport, flat);
+    req(hasColorNear(harness.canvas, 0xe69bff91u, screen_x(west_longitude), 300.0, 400.0),
+        "globe map tile selection frame is green");
+}
+
 // Attachments run per frame for every demand point: culled, clipped, and
 // without handles where the line is too short to show one.
 void testAttachmentCost()
@@ -590,6 +666,7 @@ int main(int argc, char **argv)
     testMove();
     testDiagnostics();
     testFramesAndAttachments();
+    testTerrainAndGlobeTileSelection();
     testAttachmentCost();
     testPanReuse();
     testAntimeridian();

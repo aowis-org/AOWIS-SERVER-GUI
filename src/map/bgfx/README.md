@@ -414,8 +414,14 @@ LOD will remain independent from retained network geometry.
 
 Globe mode draws on bgfx; the QRhi globe it replaces was removed with the
 rest of QRhi. "QRhi" below names the behaviour that was ported. The HUD
-offers 3D in the Map Monitor once the globe surface initialized. The
-editor never offers it (`MapBgfxSurface::setGlobeOffered(false)`).
+offers 3D in the Map Monitor and the Map Editor once the globe surface
+initialized. In the editor, network editing stays 2D; its cache sections
+(Tile Cache, Terrain Cache) select tiles on the globe too: a right drag picks
+two ground corners (terrain-aware), the tile range between them is drawn on
+the drawn surface by the globe overlay pass (`setGlobeOverlayBuilder()`, a
+`GlobeProjector` per frame: WGS84 -> logical px on the drawn relief, hidden
+behind the camera and beyond the horizon), map tiles green, terrain tiles
+brown (`MapBgfxEditorOverlay::buildGlobe()`).
 
 Slice 1, the terrain surface (`map_bgfx_globe_surface.*`):
 

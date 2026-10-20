@@ -34,6 +34,10 @@ signals:
     void requestFinishedTile(const QByteArray &data, const QString &key);
     void requestFinishedTerrainTile(const QByteArray &data, const QString &key);
     void requestFinishedDelete(quint64 request_id);
+    // The same success with the response body (the terrain cache DELETEs
+    // answer the number of deleted files); emitted just before
+    // requestFinishedDelete().
+    void requestFinishedDeleteData(quint64 request_id, const QByteArray &data);
     void requestFinishedControl(const QString &request_key, const QByteArray &data);
     void requestError(const QString &error);
     void requestTileError(const QString &key, const QString &error);
