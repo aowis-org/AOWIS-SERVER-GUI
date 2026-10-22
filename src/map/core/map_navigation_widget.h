@@ -6,18 +6,18 @@
 #include <QGridLayout>
 
 #include <QPushButton>
-#include <QRadioButton>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QSlider>
 #include <QLabel>
 #include <QIcon>
-#include <QButtonGroup>
 #include <QAbstractButton>
 
 #include <QTimer>
 
 class QKeyEvent;
+class QKeySequence;
+class QShortcut;
 
 #include "map/core/map_widget.h"
 #include "common/_enums_structs.h"
@@ -39,10 +39,9 @@ public:
     // left when it is gone. Changes in between keep the user's position.
     void setNetworkPresent(bool present);
     static constexpr int NetworkOpacityPercent = 50;
-    // Map fullscreen hides this widget, and Qt ignores the shortcuts of
-    // hidden buttons: the map forwards its key presses here (true when a
-    // button of root - this widget's buttons included - matched and was
-    // clicked, as its shortcut would have done).
+    // When fullscreen hides the sidebar, Qt stops dispatching its keyboard
+    // shortcuts. The map forwards key presses here to trigger the provider
+    // shortcuts or a matching visible-on-page button.
     static bool triggerButtonShortcut(QWidget *root, const QKeyEvent *event);
     
 private:
@@ -51,13 +50,10 @@ private:
     MapWidget *map;
     QWidget *keyboard_focus_target;
     
-    QButtonGroup *button_group_map_select = nullptr;
     QComboBox *combo_provider = nullptr;
+    QShortcut *provider_shortcuts[4] = {nullptr, nullptr, nullptr, nullptr};
     void refreshProviderChoices();
-    QRadioButton* map_arcgissat = nullptr;
-    QRadioButton* map_opentopomap = nullptr;
-    QRadioButton* map_openstreetmap = nullptr;
-    QRadioButton* map_osmcyclo = nullptr;
+    bool triggerProviderShortcut(const QKeySequence &pressed);
     
     QCheckBox* check_map_sync = nullptr;
     QCheckBox *check_3d_icons = nullptr;

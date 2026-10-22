@@ -10,8 +10,26 @@
 
 #include <QKeyEvent>
 #include <QKeySequence>
+#include <QMenu>
+#include <QShortcut>
 #include <QSignalBlocker>
+#include <QStringList>
 #include <QtMath>
+
+#ifdef Q_OS_WASM
+#include "widgets/wasm_popup_menu.h"
+#endif
+
+namespace
+{
+constexpr GuiShortcutId ProviderShortcutIds[] = {
+    GuiShortcutId::MapProviderArcGisSat,
+    GuiShortcutId::MapProviderOpenStreetMap,
+    GuiShortcutId::MapProviderOpenTopoMap,
+    GuiShortcutId::MapProviderCycloOsm
+};
+constexpr int ProviderShortcutCount = sizeof(ProviderShortcutIds) / sizeof(ProviderShortcutIds[0]);
+}
 
 MapNavigationWidget::MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidget *keyboard_focus_target, QWidget *parent)
     : QWidget{parent},
@@ -20,41 +38,21 @@ MapNavigationWidget::MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidge
     map( map ),
     keyboard_focus_target( keyboard_focus_target != nullptr ? keyboard_focus_target : map )
 {
-    this->map_arcgissat = new QRadioButton(QStringLiteral("[%1] ArcGIS SAT").arg(guiShortcutPresentation(GuiShortcutId::MapProviderArcGisSat)));
-    this->map_arcgissat->setShortcut(guiShortcutRegistry().keySequence(GuiShortcutId::MapProviderArcGisSat));
-    
-    this->map_openstreetmap = new QRadioButton(QStringLiteral("[%1] OpenStreetMap").arg(guiShortcutPresentation(GuiShortcutId::MapProviderOpenStreetMap)));
-    this->map_openstreetmap->setShortcut(guiShortcutRegistry().keySequence(GuiShortcutId::MapProviderOpenStreetMap));
-    
-    this->map_opentopomap = new QRadioButton(QStringLiteral("[%1] OpenTopoMap").arg(guiShortcutPresentation(GuiShortcutId::MapProviderOpenTopoMap)));
-    this->map_opentopomap->setShortcut(guiShortcutRegistry().keySequence(GuiShortcutId::MapProviderOpenTopoMap));
-    
-    this->map_osmcyclo = new QRadioButton(QStringLiteral("[%1] CycloOSM").arg(guiShortcutPresentation(GuiShortcutId::MapProviderCycloOsm)));
-    this->map_osmcyclo->setShortcut(guiShortcutRegistry().keySequence(GuiShortcutId::MapProviderCycloOsm));
-    
-    map_arcgissat->setChecked(true);
-    
-    connect(this->map_arcgissat, &QRadioButton::clicked, this, [this]
+    // These shortcuts are independent of the provider selector: there are no
+    // longer any radio buttons, and the selected server layer may be custom.
+    // Qt handles them while the sidebar is visible; fullscreen key forwarding
+    // below handles them when the sidebar is hidden.
+    for (int index = 0; index < ProviderShortcutCount; ++index)
     {
-        this->activateMapProvider(MapProvider::ArcGISSat);
-    });
-    connect(this->map_openstreetmap, &QRadioButton::clicked, this, [this]
-    {
-        this->activateMapProvider(MapProvider::OpenStreetMap);
-    });
-    connect(this->map_opentopomap, &QRadioButton::clicked, this, [this]
-    {
-        this->activateMapProvider(MapProvider::OpenTopoMap);
-    });
-    connect(this->map_osmcyclo, &QRadioButton::clicked, this, [this]
-    {
-        this->activateMapProvider(MapProvider::OSMCyclo);
-    });
-
-    installShortcutEditContextMenu(this->map_arcgissat, GuiShortcutId::MapProviderArcGisSat);
-    installShortcutEditContextMenu(this->map_openstreetmap, GuiShortcutId::MapProviderOpenStreetMap);
-    installShortcutEditContextMenu(this->map_opentopomap, GuiShortcutId::MapProviderOpenTopoMap);
-    installShortcutEditContextMenu(this->map_osmcyclo, GuiShortcutId::MapProviderCycloOsm);
+        const MapProvider provider = static_cast<MapProvider>(index + 1);
+        QShortcut *shortcut = new QShortcut(this);
+        shortcut->setContext(Qt::WindowShortcut);
+        connect(shortcut, &QShortcut::activated, this, [this, provider]
+        {
+            activateMapProvider(provider);
+        });
+        this->provider_shortcuts[index] = shortcut;
+    }
     connect(&guiShortcutRegistry(), &GuiShortcutRegistry::shortcutChanged,
             this, [this](GuiShortcutId)
     {
@@ -173,7 +171,41 @@ MapNavigationWidget::MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidge
     
     // Pan and zoom live on the map's HUD (joystick, zoom buttons).
     this->combo_provider = new QComboBox(this);
-    this->combo_provider->setToolTip(QStringLiteral("Select a map layer advertised by the server"));
+    this->combo_provider->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(this->combo_provider, &QWidget::customContextMenuRequested,
+            this, [this](const QPoint &position)
+    {
+#ifdef Q_OS_WASM
+        WasmPopupMenu *menu = new WasmPopupMenu(this->combo_provider);
+        menu->setDeleteOnClose(true);
+#else
+        QMenu *menu = new QMenu(this->combo_provider);
+        menu->setAttribute(Qt::WA_DeleteOnClose);
+#endif
+        for (int index = 0; index < ProviderShortcutCount; ++index)
+        {
+            const GuiShortcutId shortcut_id = ProviderShortcutIds[index];
+            const QString provider_name = mapProviderCatalog().provider(
+                MapProviderCatalog::builtinId(index + 1)) == nullptr
+                ? QStringLiteral("Map provider %1").arg(index + 1)
+                : mapProviderCatalog().provider(MapProviderCatalog::builtinId(index + 1))->name;
+            const QString action_text = QStringLiteral("Edit %1 shortcut (%2)…").arg(
+                provider_name, guiShortcutPresentation(shortcut_id));
+#ifdef Q_OS_WASM
+            menu->addAction(action_text, [shortcut_id]
+            {
+                guiShortcutRegistry().requestEdit(shortcut_id);
+            });
+#else
+            QAction *action = menu->addAction(action_text);
+            connect(action, &QAction::triggered, this, [shortcut_id]
+            {
+                guiShortcutRegistry().requestEdit(shortcut_id);
+            });
+#endif
+        }
+        menu->popup(this->combo_provider->mapToGlobal(position));
+    });
     this->grid->addWidget(this->combo_provider, 0, 0, 1, 3);
     connect(this->combo_provider, &QComboBox::currentIndexChanged, this, [this](int index)
     {
@@ -185,18 +217,13 @@ MapNavigationWidget::MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidge
     connect(this->map->model(), &MapModel::providerIdChanged,
             this, [this](const QString &) {refreshProviderChoices();});
     refreshProviderChoices();
-    // Retain existing quick-access buttons and their F1..F4 shortcuts.
-    this->grid->addWidget(map_arcgissat, 1, 0, 1, 3);
-    this->grid->addWidget(map_openstreetmap, 2, 0, 1, 3);
-    this->grid->addWidget(map_opentopomap, 3, 0, 1, 3);
-    this->grid->addWidget(map_osmcyclo, 4, 0, 1, 3);
-    this->grid->addWidget(label_slider_map_visibility, 5, 0, 1, 3);
-    this->grid->addWidget(slider_map_visibility, 6, 0, 1, 3);
-    const int icon_label_row = this->check_3d_icons != nullptr ? 8 : 7;
+    this->grid->addWidget(label_slider_map_visibility, 1, 0, 1, 3);
+    this->grid->addWidget(slider_map_visibility, 2, 0, 1, 3);
+    const int icon_label_row = this->check_3d_icons != nullptr ? 4 : 3;
     const int icon_slider_row = icon_label_row + 1;
     const int map_sync_row = icon_slider_row + 1;
     if (this->check_3d_icons != nullptr)
-        this->grid->addWidget(this->check_3d_icons, 7, 0, 1, 3);
+        this->grid->addWidget(this->check_3d_icons, 3, 0, 1, 3);
     this->grid->addWidget(label_slider_icon_size, icon_label_row, 0, 1,
         this->mode == CanvasMode::Monitor ? 2 : 3);
     if (this->combo_icon_size_unit != nullptr)
@@ -204,12 +231,6 @@ MapNavigationWidget::MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidge
     this->grid->addWidget(this->slider_icon_size, icon_slider_row, 0, 1, 3);
     this->grid->addWidget(check_map_sync, map_sync_row, 0, 1, 3);
     this->grid->addWidget(createLabelControls(), map_sync_row + 1, 0, 1, 3);
-    
-    this->button_group_map_select = new QButtonGroup(this);
-    this->button_group_map_select->addButton(this->map_arcgissat, 1);
-    this->button_group_map_select->addButton(this->map_openstreetmap, 2);
-    this->button_group_map_select->addButton(this->map_opentopomap, 3);
-    this->button_group_map_select->addButton(this->map_osmcyclo, 4);
     
     if (this->mode == CanvasMode::Monitor)
     {
@@ -420,30 +441,30 @@ void MapNavigationWidget::activateMapProvider(MapProvider provider)
 
 void MapNavigationWidget::refreshShortcutPresentation()
 {
-    const MapProviderEntry *arcgis = mapProviderCatalog().provider(MapProviderCatalog::builtinId(1));
-    const MapProviderEntry *osm = mapProviderCatalog().provider(MapProviderCatalog::builtinId(2));
-    const MapProviderEntry *topo = mapProviderCatalog().provider(MapProviderCatalog::builtinId(3));
-    const MapProviderEntry *cyclo = mapProviderCatalog().provider(MapProviderCatalog::builtinId(4));
-    this->map_arcgissat->setText(QStringLiteral("[%1] %2").arg(
-        guiShortcutPresentation(GuiShortcutId::MapProviderArcGisSat),
-        arcgis == nullptr ? QStringLiteral("ArcGIS SAT") : arcgis->name));
-    this->map_arcgissat->setShortcut(guiShortcutRegistry().keySequence(
-        GuiShortcutId::MapProviderArcGisSat));
-    this->map_openstreetmap->setText(QStringLiteral("[%1] %2").arg(
-        guiShortcutPresentation(GuiShortcutId::MapProviderOpenStreetMap),
-        osm == nullptr ? QStringLiteral("OpenStreetMap") : osm->name));
-    this->map_openstreetmap->setShortcut(guiShortcutRegistry().keySequence(
-        GuiShortcutId::MapProviderOpenStreetMap));
-    this->map_opentopomap->setText(QStringLiteral("[%1] %2").arg(
-        guiShortcutPresentation(GuiShortcutId::MapProviderOpenTopoMap),
-        topo == nullptr ? QStringLiteral("OpenTopoMap") : topo->name));
-    this->map_opentopomap->setShortcut(guiShortcutRegistry().keySequence(
-        GuiShortcutId::MapProviderOpenTopoMap));
-    this->map_osmcyclo->setText(QStringLiteral("[%1] %2").arg(
-        guiShortcutPresentation(GuiShortcutId::MapProviderCycloOsm),
-        cyclo == nullptr ? QStringLiteral("CyclOSM") : cyclo->name));
-    this->map_osmcyclo->setShortcut(guiShortcutRegistry().keySequence(
-        GuiShortcutId::MapProviderCycloOsm));
+    QStringList shortcuts;
+    for (int provider_number = 1; provider_number <= ProviderShortcutCount; ++provider_number)
+    {
+        const int shortcut_index = provider_number - 1;
+        const GuiShortcutId shortcut_id = ProviderShortcutIds[shortcut_index];
+        QShortcut *shortcut = this->provider_shortcuts[shortcut_index];
+        shortcut->setKey(guiShortcutRegistry().keySequence(shortcut_id));
+
+        const QString provider_id = MapProviderCatalog::builtinId(provider_number);
+        const int combo_index = this->combo_provider->findData(provider_id);
+        shortcut->setEnabled(combo_index >= 0 && !shortcut->key().isEmpty());
+        if (combo_index < 0)
+            continue;
+
+        const QString name = this->combo_provider->itemText(combo_index);
+        const QString hotkey = guiShortcutPresentation(shortcut_id);
+        this->combo_provider->setItemData(combo_index,
+            QStringLiteral("%1\nKeyboard shortcut: %2").arg(name, hotkey), Qt::ToolTipRole);
+        shortcuts.append(QStringLiteral("%1: %2").arg(hotkey, name));
+    }
+
+    this->combo_provider->setToolTip(QStringLiteral("Select a map layer advertised by the server."
+        "\nKeyboard shortcuts:\n%1\nRight-click to edit shortcuts.").arg(
+        shortcuts.join(QLatin1Char('\n'))));
 }
 
 void MapNavigationWidget::refreshProviderChoices()
@@ -454,60 +475,36 @@ void MapNavigationWidget::refreshProviderChoices()
     for (const MapProviderEntry &entry : mapProviderCatalog().providers())
     {
         if (entry.enabled)
+        {
             this->combo_provider->addItem(entry.name, entry.id);
+            this->combo_provider->setItemData(this->combo_provider->count() - 1,
+                entry.name, Qt::ToolTipRole);
+        }
     }
-    const int index = this->combo_provider->findData(active_id);
-    this->combo_provider->setCurrentIndex(index);
-    this->map_arcgissat->setVisible(mapProviderCatalog().provider(
-        MapProviderCatalog::builtinId(1)) != nullptr &&
-        mapProviderCatalog().provider(MapProviderCatalog::builtinId(1))->enabled);
-    this->map_openstreetmap->setVisible(mapProviderCatalog().provider(
-        MapProviderCatalog::builtinId(2)) != nullptr &&
-        mapProviderCatalog().provider(MapProviderCatalog::builtinId(2))->enabled);
-    this->map_opentopomap->setVisible(mapProviderCatalog().provider(
-        MapProviderCatalog::builtinId(3)) != nullptr &&
-        mapProviderCatalog().provider(MapProviderCatalog::builtinId(3))->enabled);
-    this->map_osmcyclo->setVisible(mapProviderCatalog().provider(
-        MapProviderCatalog::builtinId(4)) != nullptr &&
-        mapProviderCatalog().provider(MapProviderCatalog::builtinId(4))->enabled);
+    this->combo_provider->setCurrentIndex(this->combo_provider->findData(active_id));
     refreshShortcutPresentation();
-    if (this->button_group_map_select != nullptr)
-        mapProviderChange(this->map->model()->provider());
 }
 
 void MapNavigationWidget::mapProviderChange(MapProvider provider)
 {
-    QAbstractButton *button = nullptr;
-    
-    switch (provider)
+    Q_UNUSED(provider)
+    refreshProviderChoices();
+}
+
+bool MapNavigationWidget::triggerProviderShortcut(const QKeySequence &pressed)
+{
+    if (!this->isEnabled())
+        return false;
+
+    for (int index = 0; index < ProviderShortcutCount; ++index)
     {
-    case MapProvider::ArcGISSat:
-        button = this->map_arcgissat;
-        break;
-    case MapProvider::OpenStreetMap:
-        button = this->map_openstreetmap;
-        break;
-    case MapProvider::OpenTopoMap:
-        button = this->map_opentopomap;
-        break;
-    case MapProvider::Custom:
-        break;
-    case MapProvider::OSMCyclo:
-        button = this->map_osmcyclo;
-        break;
+        const QShortcut *shortcut = this->provider_shortcuts[index];
+        if (!shortcut->isEnabled() || shortcut->key().matches(pressed) != QKeySequence::ExactMatch)
+            continue;
+        activateMapProvider(static_cast<MapProvider>(index + 1));
+        return true;
     }
-    
-    if (button == nullptr)
-    {
-        this->button_group_map_select->setExclusive(false);
-        this->map_arcgissat->setChecked(false);
-        this->map_openstreetmap->setChecked(false);
-        this->map_opentopomap->setChecked(false);
-        this->map_osmcyclo->setChecked(false);
-        this->button_group_map_select->setExclusive(true);
-        return;
-    }
-    button->setChecked(true);
+    return false;
 }
 
 void MapNavigationWidget::mapMovementSyncStateChange(bool sync)
@@ -531,6 +528,12 @@ bool MapNavigationWidget::triggerButtonShortcut(QWidget *root, const QKeyEvent *
     if (root == nullptr || event == nullptr || event->isAutoRepeat())
         return false;
     const QKeySequence pressed(event->keyCombination());
+    const QList<MapNavigationWidget *> navigation_widgets = root->findChildren<MapNavigationWidget *>();
+    for (MapNavigationWidget *navigation : navigation_widgets)
+    {
+        if (navigation->triggerProviderShortcut(pressed))
+            return true;
+    }
     const QList<QAbstractButton *> buttons = root->findChildren<QAbstractButton *>();
     for (QAbstractButton *button : buttons)
     {

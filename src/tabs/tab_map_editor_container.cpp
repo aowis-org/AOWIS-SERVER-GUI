@@ -1126,22 +1126,9 @@ bool MapEditorMenuWidget::isEditNetworkSectionActive() const
 
 bool MapEditorMenuWidget::triggerButtonShortcut(const QKeyEvent *event)
 {
-    if (event == nullptr || event->isAutoRepeat())
-        return false;
-    const QKeySequence pressed(event->keyCombination());
-    const QList<QAbstractButton *> buttons = findChildren<QAbstractButton *>();
-    for (QAbstractButton *button : buttons)
-    {
-        // What QShortcutMap would accept in the main window: an enabled
-        // button whose own page is shown.
-        if (!button->isEnabled() || !button->isVisibleTo(this) || button->shortcut().isEmpty())
-            continue;
-        if (button->shortcut().matches(pressed) != QKeySequence::ExactMatch)
-            continue;
-        button->click();
-        return true;
-    }
-    return false;
+    // Reuse the navigation helper for the map provider shortcuts as well as
+    // this menu's editor tool buttons while fullscreen hides the sidebar.
+    return MapNavigationWidget::triggerButtonShortcut(this, event);
 }
 
 void MapEditorMenuWidget::clearCacheSelections()
