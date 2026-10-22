@@ -606,7 +606,8 @@ void MapEditorContainer::setupBgfxEditor()
     // not the monitor's generic globe star sprites. Project the icons using
     // the drawn terrain's globe projector, retaining the GPU network mesh.
     this->editor_globe_overlay_builder = [this, overlay](MapBgfxHudCanvas *canvas, MapBgfxHudTextCache *cache,
-                        const MapBgfxSurface::GlobeProjector &projector, const QSizeF &viewport)
+                        const MapBgfxSurface::GlobeProjector &projector, const QSizeF &viewport,
+                        const MapBgfxGlobeIconIndex::Frustum &frustum)
         {
             const MapEditorViewportRenderState viewport_state =
                 this->map_canvas->viewportRenderState();
@@ -617,7 +618,7 @@ void MapEditorContainer::setupBgfxEditor()
             const NetworkRenderSnapshot *snapshot = this->map_menu->isEditNetworkSectionActive()
                 ? &this->hydraulic_data->networkRenderSnapshot() : nullptr;
             overlay->buildGlobe(canvas, cache, viewport_state, projector,
-                                snapshot, width, viewport);
+                                snapshot, width, viewport, frustum);
         };
     connect(this->map_canvas, &MapCanvasWidget::signalRenderUpdateRequested, this, [this]()
     {

@@ -37,6 +37,10 @@ enum class Counter : size_t
     BgfxDeviceStopped,     // owning device was shut down
     Bgfx2dScenePrepared,   // CPU display geometry actually re-prepared
     WorkspaceModeSwitch,   // synchronous mode-switch CPU duration
+    GlobeEditorIconIndexBuild,  // geometry-revision-only ECEF index creation
+    GlobeEditorIconAnchors,     // total anchors across 3D Editor icon frames
+    GlobeEditorIconCandidates,  // anchors surviving the cheap frustum query
+    GlobeEditorIconVisible,     // projected sprites inside the viewport
     Count
 };
 
@@ -44,7 +48,9 @@ inline constexpr std::array<const char *, static_cast<std::size_t>(Counter::Coun
     "zoom_change", "center_change", "frames",
     "demand_attachments_prepared", "globe_geometry_rebuilt", "globe_flow_rebuilt",
     "bgfx_device_started", "bgfx_device_stopped", "bgfx_2d_scene_prepared",
-    "workspace_mode_switch"
+    "workspace_mode_switch", "globe_editor_icon_index_build",
+    "globe_editor_icon_anchors", "globe_editor_icon_candidates",
+    "globe_editor_icon_visible"
 }};
 
 using Clock = std::chrono::steady_clock;

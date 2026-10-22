@@ -6,6 +6,7 @@
 #include "map/bgfx/map_bgfx_2d_imagery_gpu.h"
 #include "map/bgfx/map_bgfx_2d_symbology.h"
 #include "map/bgfx/map_bgfx_globe_network.h"
+#include "map/bgfx/map_bgfx_globe_icon_index.h"
 #include "map/bgfx/map_bgfx_globe_surface.h"
 #include "map/bgfx/map_bgfx_hud.h"
 #include "map/bgfx/map_bgfx_hud_canvas.h"
@@ -233,7 +234,8 @@ public:
     using GlobeOverlayBuilder = std::function<void(MapBgfxHudCanvas *canvas,
                                                    MapBgfxHudTextCache *cache,
                                                    const GlobeProjector &projector,
-                                                   const QSizeF &viewport)>;
+                                                   const QSizeF &viewport,
+                                                   const MapBgfxGlobeIconIndex::Frustum &frustum)>;
     void setGlobeOverlayBuilder(GlobeOverlayBuilder builder);
     // Desktop: keyboard focus stays on this widget instead of moving to the
     // embedded native window on a click (the editor canvas handles keys and

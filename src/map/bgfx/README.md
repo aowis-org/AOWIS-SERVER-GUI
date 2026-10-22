@@ -439,6 +439,36 @@ instead of the monitor's generic GPU star symbols. Only the editor's 3D
 presentation changes; its 2D icon path and the retained globe network geometry
 remain unchanged.
 
+### 3D Editor icon visibility and large networks
+
+The Editor overlay keeps a separate **CPU-only, retained ECEF kd-tree** of the
+node and device-link icon anchors (`map_bgfx_globe_icon_index.h`). It is rebuilt
+only when the network snapshot's geometry revision, identity, or node/link count
+changes; pan, zoom, rotation, terrain updates, and workspace changes do **not**
+rebuild it or the GPU geometry. Each 3D frame supplies four view-side clipping
+planes, with a pixel allowance for the Editor's largest icon and a deliberately
+conservative displacement allowance for exaggerated relief. Whole spatial
+branches are rejected before `GlobeProjector` performs any terrain-height
+lookup. The projector still checks horizon, drawn DEM height and final pixel
+bounds; retained icon depth ordering and the actual full-colour bitmaps are
+unchanged. If a network is fully visible or concentrated inside the relief
+allowance, the candidate set can still be large; this is not an icon density
+limit or GPU instancing mechanism.
+
+`aowis-map-bgfx-globe-icon-index` runs a deterministic 100,000-anchor spatial
+query regression/benchmark without Qt or GPU. It reports index-build time and
+200 query times. These measurements **do not** represent complete frame time,
+GPU load, or WASM performance; production acceptance additionally requires
+measuring the 3D Editor with realistic network density and visible DEM tiles.
+
+Set `AOWIS_MAP_RENDER_DIAGNOSTICS=1` to read cumulative counters
+`globe_editor_icon_index_build`, `globe_editor_icon_anchors`,
+`globe_editor_icon_candidates`, and `globe_editor_icon_visible`. Compare
+**deltas** between successive reports while moving the camera, not the raw
+cumulative values. The ratio of candidate delta to anchor delta indicates
+how many terrain projections spatial culling avoids. Dense networks where
+most anchors remain plausible candidates should be benchmarked separately.
+
 Slice 1, the terrain surface (`map_bgfx_globe_surface.*`):
 
 * CPU work is the backend-neutral `MapGlobeSurfacePreparation` the QRhi globe

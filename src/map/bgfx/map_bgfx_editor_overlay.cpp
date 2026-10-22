@@ -1,6 +1,8 @@
 #include "map/bgfx/map_bgfx_editor_overlay.h"
 
 #include "network/infrastructure_entity_traits.h"
+#include "geo/geo_wgs84_ellipsoid.h"
+#include "map/render/map_render_diagnostics.h"
 
 #include <QColor>
 #include <QImage>
@@ -747,7 +749,8 @@ void MapBgfxEditorOverlay::buildGlobe(MapBgfxHudCanvas *canvas, MapBgfxHudTextCa
                                       const MapEditorViewportRenderState &viewport_state,
                                       const GlobeProjector &projector,
                                       const NetworkRenderSnapshot *snapshot, int icon_width,
-                                      const QSizeF &viewport_size)
+                                      const QSizeF &viewport_size,
+                                      const MapBgfxGlobeIconIndex::Frustum &frustum)
 {
     canvas->clear();
     if (!projector || (!viewport_state.tile_selection_visible
@@ -757,13 +760,16 @@ void MapBgfxEditorOverlay::buildGlobe(MapBgfxHudCanvas *canvas, MapBgfxHudTextCa
     this->canvas = canvas;
     this->cache = cache;
     cache->beginFrame();
-    const auto build = [this, &viewport_state, &projector, snapshot, icon_width, &viewport_size]()
+    if (snapshot != nullptr && icon_width > 0 && this->icon_provider)
+        synchronizeGlobeIcons(*snapshot);
+    const std::function<void()> build = [this, &viewport_state, &projector, snapshot, icon_width,
+                                         &viewport_size, &frustum]()
     {
         this->canvas->setWhiteTexel(this->cache->whiteU(), this->cache->whiteV());
         if (viewport_state.tile_selection_visible)
             globeTileSelection(viewport_state, projector);
         if (snapshot != nullptr && icon_width > 0 && this->icon_provider)
-            globeNetworkIcons(*snapshot, projector, icon_width, viewport_size);
+            globeNetworkIcons(*snapshot, projector, icon_width, viewport_size, frustum);
     };
     build();
     // The atlas may evict while the first icon sizes are created. As with
@@ -778,13 +784,65 @@ void MapBgfxEditorOverlay::buildGlobe(MapBgfxHudCanvas *canvas, MapBgfxHudTextCa
     this->cache = nullptr;
 }
 
+void MapBgfxEditorOverlay::synchronizeGlobeIcons(const NetworkRenderSnapshot &snapshot)
+{
+    if (this->globe_icons_snapshot == &snapshot
+        && this->globe_icons_revision == snapshot.geometry_revision
+        && this->globe_icons_node_count == snapshot.nodes.size()
+        && this->globe_icons_link_count == snapshot.links.size())
+        return;
+
+    // Store only drawable icon anchors. The ECEF kd-tree is geometry state,
+    // not a screen-space cache; its lifetime is independent of camera motion,
+    // 2D/3D switching, terrain arrivals, and HUD icon-size changes.
+    QVector<GlobeIconAnchor> anchors;
+    std::vector<MapBgfxGlobeIconIndex::Position> positions;
+    anchors.reserve(snapshot.nodes.size() + snapshot.links.size());
+    positions.reserve(std::size_t(snapshot.nodes.size() + snapshot.links.size()));
+    const std::function<void(const CoordinateWGS84 &, InfrastructureEntity, bool)> append =
+        [&anchors, &positions](const CoordinateWGS84 &coordinate,
+                               InfrastructureEntity entity, bool bottom)
+    {
+        if (!finite(coordinate) || coordinate.latitude_deg < -90.0
+            || coordinate.latitude_deg > 90.0)
+            return;
+        const GeoWgs84Ellipsoid::EcefPositionD ecef =
+            GeoWgs84Ellipsoid::geodeticToEcefD(coordinate.longitude_deg,
+                                                coordinate.latitude_deg, 0.0);
+        anchors.append(GlobeIconAnchor{coordinate, entity, bottom});
+        positions.push_back({ecef.x, ecef.y, ecef.z});
+    };
+    for (const NetworkRenderNode &node : snapshot.nodes)
+    {
+        if (node.entity_type != InfrastructureEntity::Junction
+            && isPointEntity(node.entity_type))
+            append(node.coordinate_wgs84, node.entity_type, true);
+    }
+    for (const NetworkRenderLink &link : snapshot.links)
+    {
+        if (isDeviceLink(link.entity_type) && link.vertices_wgs84.size() >= 2)
+            append(deviceLinkCenter(link.vertices_wgs84), link.entity_type, false);
+    }
+    this->globe_icon_index.rebuild(positions);
+    MapRenderDiagnostics::add(MapRenderDiagnostics::Counter::GlobeEditorIconIndexBuild);
+    this->globe_icon_anchors = std::move(anchors);
+    this->globe_icons_revision = snapshot.geometry_revision;
+    this->globe_icons_node_count = snapshot.nodes.size();
+    this->globe_icons_link_count = snapshot.links.size();
+    this->globe_icons_snapshot = &snapshot;
+}
+
 void MapBgfxEditorOverlay::globeNetworkIcons(const NetworkRenderSnapshot &snapshot,
                                              const GlobeProjector &projector, int icon_width,
-                                             const QSizeF &viewport_size)
+                                             const QSizeF &viewport_size,
+                                             const MapBgfxGlobeIconIndex::Frustum &frustum)
 {
-    // The 3D editor uses a 2D translucent HUD overlay rather than a depth
-    // buffer. Draw far entities first so near symbols cover them, independent
-    // of snapshot insertion order. Keep the same icons and anchors as in 2D.
+    // The camera frustum prunes kd-tree branches *before* the terrain-aware
+    // projector would query an expensive drawn-surface height. A worst-case
+    // elevation bound prevents a visible relief-draped sprite from being
+    // culled merely because its sea-level anchor is outside the viewport.
+    // The final projection and actual pixel cull remain authoritative.
+    (void)snapshot;
     struct VisibleIcon
     {
         QPointF point;
@@ -792,39 +850,34 @@ void MapBgfxEditorOverlay::globeNetworkIcons(const NetworkRenderSnapshot &snapsh
         double distance_m = 0.0;
         bool bottom_anchored = false;
     };
+    std::vector<std::size_t> candidates;
+    this->globe_icon_index.query(frustum, &candidates);
+    MapRenderDiagnostics::add(MapRenderDiagnostics::Counter::GlobeEditorIconAnchors,
+                              quint64(this->globe_icon_anchors.size()));
+    MapRenderDiagnostics::add(MapRenderDiagnostics::Counter::GlobeEditorIconCandidates,
+                              quint64(candidates.size()));
     QVector<VisibleIcon> icons;
-    icons.reserve(snapshot.nodes.size() + snapshot.links.size());
+    icons.reserve(qsizetype(candidates.size()));
     const double margin = 2.0 * double(icon_width) + 24.0;
-    const auto visible = [&viewport_size, margin](const QPointF &point)
+    const std::function<bool(const QPointF &)> visible =
+        [&viewport_size, margin](const QPointF &point)
     {
         return point.x() >= -margin && point.y() >= -margin
             && point.x() <= viewport_size.width() + margin
             && point.y() <= viewport_size.height() + margin;
     };
-    for (const NetworkRenderNode &node : snapshot.nodes)
+    for (std::size_t index : candidates)
     {
-        if (node.entity_type == InfrastructureEntity::Junction
-            || !isPointEntity(node.entity_type))
-            continue;
+        const GlobeIconAnchor &anchor = this->globe_icon_anchors.at(qsizetype(index));
         QPointF point;
         double distance_m = 0.0;
-        if (!projector(node.coordinate_wgs84.longitude_deg,
-                       node.coordinate_wgs84.latitude_deg, &point, &distance_m) || !visible(point))
+        if (!projector(anchor.coordinate.longitude_deg, anchor.coordinate.latitude_deg,
+                       &point, &distance_m) || !visible(point))
             continue;
-        icons.append({point, node.entity_type, distance_m, true});
+        icons.append({point, anchor.entity, distance_m, anchor.bottom_anchored});
     }
-    for (const NetworkRenderLink &link : snapshot.links)
-    {
-        if (!isDeviceLink(link.entity_type) || link.vertices_wgs84.size() < 2)
-            continue;
-        const CoordinateWGS84 center = deviceLinkCenter(link.vertices_wgs84);
-        QPointF point;
-        double distance_m = 0.0;
-        if (!projector(center.longitude_deg, center.latitude_deg, &point, &distance_m)
-            || !visible(point))
-            continue;
-        icons.append({point, link.entity_type, distance_m, false});
-    }
+    MapRenderDiagnostics::add(MapRenderDiagnostics::Counter::GlobeEditorIconVisible,
+                              quint64(icons.size()));
     std::stable_sort(icons.begin(), icons.end(), [](const VisibleIcon &a, const VisibleIcon &b)
     {
         return a.distance_m > b.distance_m;

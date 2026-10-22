@@ -487,6 +487,7 @@ target_sources(aowis-server-gui PRIVATE
     src/map/bgfx/map_bgfx_hud_gpu.cpp
     src/map/bgfx/map_bgfx_legend_content.h
     src/map/bgfx/map_bgfx_legend_content.cpp
+    src/map/bgfx/map_bgfx_globe_icon_index.h
     src/map/bgfx/map_bgfx_editor_overlay.h
     src/map/bgfx/map_bgfx_editor_overlay.cpp
     src/map/bgfx/map_bgfx_labels.h
@@ -726,15 +727,27 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
     # draws for each editor state, positioned with the continuous camera.
     add_executable(aowis-bgfx-editor-overlay-tests tests/bgfx_editor_overlay_test.cpp
         src/map/bgfx/map_bgfx_editor_overlay.cpp
-        src/map/bgfx/map_bgfx_hud_text_cache.cpp)
+        src/map/bgfx/map_bgfx_hud_text_cache.cpp
+        src/geo/geo_wgs84_ellipsoid.cpp)
     target_include_directories(aowis-bgfx-editor-overlay-tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
         ${CMAKE_CURRENT_SOURCE_DIR}/external/AOWIS-SERVER-MODEL/include)
     target_link_libraries(aowis-bgfx-editor-overlay-tests PRIVATE
-        Qt6::Core Qt6::Gui AOWIS::ServerModel)
+        Qt6::Core Qt6::Gui AOWIS::ServerModel GeographicLib_STATIC)
     add_test(NAME aowis-bgfx-editor-overlay COMMAND aowis-bgfx-editor-overlay-tests)
     set_tests_properties(aowis-bgfx-editor-overlay PROPERTIES
         LABELS "aowis" ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+    # Stage 9: 100k-anchor ECEF spatial visibility benchmark and regression.
+    # Uses only the standard library, so it also compiles in standalone CI.
+    add_executable(aowis-map-bgfx-globe-icon-index-tests
+        tests/map_bgfx_globe_icon_index_test.cpp)
+    target_include_directories(aowis-map-bgfx-globe-icon-index-tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    add_test(NAME aowis-map-bgfx-globe-icon-index
+        COMMAND aowis-map-bgfx-globe-icon-index-tests)
+    set_tests_properties(aowis-map-bgfx-globe-icon-index PROPERTIES
+        LABELS "aowis;performance")
 
     # Map labels on the bgfx 2D map without a GPU: decluttered placement,
     # priorities, values, viewport edges, rasterization budget, stability.
@@ -899,7 +912,9 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
     # Group benchmark executables independently of the full regression suite.
     # Add future performance targets here and label their CTest tests "performance".
     add_custom_target(aowis-benchmarks
-        DEPENDS aowis-unit-presentation-benchmark)
+        DEPENDS
+            aowis-unit-presentation-benchmark
+            aowis-map-bgfx-globe-icon-index-tests)
 
     # Step 2: camera changes and imagery LOD do not invalidate the retained
     # network scene. These are fast deterministic policy checks, not timings.
@@ -1213,6 +1228,7 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
             aowis-bgfx-2d-picking-tests
             aowis-bgfx-hud-tests
             aowis-bgfx-editor-overlay-tests
+            aowis-map-bgfx-globe-icon-index-tests
             aowis-bgfx-labels-tests
             aowis-unit-cross-surface-acceptance-tests
             aowis-valve-setting-sort-policy-tests

@@ -2,6 +2,7 @@
 #include "map/bgfx/map_bgfx_hud_canvas.h"
 #include "map/bgfx/map_bgfx_hud_text_cache.h"
 #include "map/bgfx/map_bgfx_pan_reuse.h"
+#include "geo/geo_wgs84_ellipsoid.h"
 
 #include <QGuiApplication>
 #include <QImage>
@@ -744,6 +745,44 @@ void testGlobeEditorIcons()
                                QSizeF(ViewportWidth, ViewportHeight));
     req(harness.probe.calls.isEmpty() && harness.canvas.vertices().isEmpty(),
         "off-viewport globe icons are culled before atlas allocation");
+
+    // A far-away sprite can be in the same snapshot but outside the camera
+    // frustum. The spatial index must reject it *before* the costly projector.
+    NetworkRenderNode far_node = demand;
+    far_node.uuid = QUuid::createUuid();
+    far_node.coordinate_wgs84 = coordinate(120.0, 47.0);
+    s.snapshot.nodes.append(far_node);
+    ++s.snapshot.geometry_revision;
+    const GeoWgs84Ellipsoid::EcefPositionD near_ecef =
+        GeoWgs84Ellipsoid::geodeticToEcefD(9.0, 47.0, 0.0);
+    MapBgfxGlobeIconIndex::Frustum frustum;
+    frustum.valid = true;
+    frustum.sides = {{{1.0, 0.0, 0.0, -near_ecef.x + 5000.0},
+                      {-1.0, 0.0, 0.0, near_ecef.x + 5000.0},
+                      {0.0, 1.0, 0.0, 10000000.0},
+                      {0.0, -1.0, 0.0, 10000000.0}}};
+    int projection_count = 0;
+    const MapBgfxEditorOverlay::GlobeProjector counting =
+        [&projection_count](double, double, QPointF *point, double *distance_m)
+    {
+        ++projection_count;
+        *point = QPointF(400.0, 300.0);
+        if (distance_m != nullptr)
+            *distance_m = 100.0;
+        return true;
+    };
+    harness.probe.calls.clear();
+    harness.overlay.buildGlobe(&harness.canvas, &harness.cache, s.viewport,
+                               counting, &s.snapshot, EntityWidth,
+                               QSizeF(ViewportWidth, ViewportHeight), frustum);
+    req(projection_count == 2 && harness.probe.calls.size() == 2,
+        "frustum rejects distant anchors before terrain-aware projection");
+    projection_count = 0;
+    harness.overlay.buildGlobe(&harness.canvas, &harness.cache, s.viewport,
+                               counting, &s.snapshot, EntityWidth,
+                               QSizeF(ViewportWidth, ViewportHeight), frustum);
+    req(projection_count == 2,
+        "camera-stable icon geometry reuses the retained spatial index");
 }
 
 // Attachments run per frame for every demand point: culled, clipped, and

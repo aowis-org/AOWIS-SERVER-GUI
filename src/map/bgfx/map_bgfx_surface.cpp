@@ -1481,7 +1481,40 @@ void MapBgfxSurface::renderGlobeOverlay(const QSizeF &logical)
         }
         return true;
     };
-    this->globe_overlay_builder(&this->overlay_canvas, &this->overlay_text_cache, projector, logical);
+    // Query retained ECEF icon anchors against the view before consulting
+    // terrain. Use only side planes: near/far clipping can differ between
+    // Vulkan/GL/WebGL, whereas these four side inequalities are universal.
+    // The same margin used by the Editor pixel cull keeps edge sprites.
+    const double logical_margin = 2.0 * 240.0 + 24.0; // maximum editor icon width (40 px * 600%)
+    const double x_extension = 1.0 + 2.0 * logical_margin / double(viewport.width());
+    const double y_extension = 1.0 + 2.0 * logical_margin / double(viewport.height());
+    MapBgfxGlobeIconIndex::Frustum frustum;
+    frustum.valid = true;
+    // The ray's start uses the *maximum possible* exaggeration, but the
+    // index can bound the actually drawn height at the current exaggeration.
+    // A conservative 9000 m DEM elevation cap plus 1000 m covers negative
+    // elevations and leaves headroom for displaced terrain.
+    frustum.relief_allowance_m = 9000.0 * vertical_exaggeration + 1000.0;
+    const int side_axis[4] = {0, 0, 1, 1};
+    const double side_sign[4] = {1.0, -1.0, 1.0, -1.0};
+    for (int side = 0; side < 4; ++side)
+    {
+        const int row = side_axis[side];
+        const double sign = side_sign[side];
+        const double expansion = row == 0 ? x_extension : y_extension;
+        MapBgfxGlobeIconIndex::Plane &plane = frustum.sides[std::size_t(side)];
+        plane.x = expansion * double(view_projection(3, 0))
+                  + sign * double(view_projection(row, 0));
+        plane.y = expansion * double(view_projection(3, 1))
+                  + sign * double(view_projection(row, 1));
+        plane.z = expansion * double(view_projection(3, 2))
+                  + sign * double(view_projection(row, 2));
+        plane.offset = expansion * double(view_projection(3, 3))
+                     + sign * double(view_projection(row, 3))
+                     - plane.x * origin.x - plane.y * origin.y - plane.z * origin.z;
+    }
+    this->globe_overlay_builder(&this->overlay_canvas, &this->overlay_text_cache,
+                                projector, logical, frustum);
     this->overlay_gpu.uploadAtlas(&this->overlay_text_cache);
     this->overlay_gpu.draw(kMapBgfxView, this->overlay_canvas, logical, QPointF());
 }

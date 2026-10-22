@@ -3,6 +3,7 @@
 
 #include "map/bgfx/map_bgfx_2d_projection.h"
 #include "map/bgfx/map_bgfx_hud_canvas.h"
+#include "map/bgfx/map_bgfx_globe_icon_index.h"
 #include "map/bgfx/map_bgfx_hud_text_cache.h"
 #include "map/editor/map_editor_visual_state.h"
 #include "network/network_render_snapshot.h"
@@ -109,7 +110,8 @@ public:
                     const MapEditorViewportRenderState &viewport_state,
                     const GlobeProjector &projector,
                     const NetworkRenderSnapshot *snapshot = nullptr,
-                    int icon_width = 0, const QSizeF &viewport_size = QSizeF());
+                    int icon_width = 0, const QSizeF &viewport_size = QSizeF(),
+                    const MapBgfxGlobeIconIndex::Frustum &frustum = {});
     // Globe tile selection lattice: at most this many cells per axis (each
     // lattice point is one projection, relief lookup included), at most
     // this many cells per tile (relief detail along the frame and grid).
@@ -234,9 +236,24 @@ private:
     void tileSelection();
     void globeTileSelection(const MapEditorViewportRenderState &viewport_state,
                             const GlobeProjector &projector);
+    struct GlobeIconAnchor
+    {
+        CoordinateWGS84 coordinate;
+        InfrastructureEntity entity = InfrastructureEntity::Unknown;
+        bool bottom_anchored = false;
+    };
+    // Built on a network geometry revision only; never on camera movement.
+    void synchronizeGlobeIcons(const NetworkRenderSnapshot &snapshot);
     void globeNetworkIcons(const NetworkRenderSnapshot &snapshot,
                            const GlobeProjector &projector, int icon_width,
-                           const QSizeF &viewport_size);
+                           const QSizeF &viewport_size,
+                           const MapBgfxGlobeIconIndex::Frustum &frustum);
+    MapBgfxGlobeIconIndex globe_icon_index;
+    QVector<GlobeIconAnchor> globe_icon_anchors;
+    quint64 globe_icons_revision = 0;
+    qsizetype globe_icons_node_count = -1;
+    qsizetype globe_icons_link_count = -1;
+    const NetworkRenderSnapshot *globe_icons_snapshot = nullptr;
     void rectangleSelection();
     void staticDetails(bool include_moving);
     void movingNetwork();

@@ -29,6 +29,10 @@ int main()
         const Scope switch_duration(Counter::WorkspaceModeSwitch);
     }
     add(Counter::BgfxDeviceStopped);
+    add(Counter::GlobeEditorIconIndexBuild);
+    add(Counter::GlobeEditorIconAnchors, 100000);
+    add(Counter::GlobeEditorIconCandidates, 740);
+    add(Counter::GlobeEditorIconVisible, 350);
 
     const QJsonObject result = snapshot();
     const QJsonObject counts = result.value(QStringLiteral("counts")).toObject();
@@ -41,6 +45,14 @@ int main()
                     "mode switch JSON key mismatch")
         || !require(counts.value(QStringLiteral("bgfx_device_started")).toDouble() == 1.0,
                     "device start JSON key mismatch")
+        || !require(counts.value(QStringLiteral("globe_editor_icon_index_build")).toDouble() == 1.0,
+                    "icon spatial-index creation not reported")
+        || !require(counts.value(QStringLiteral("globe_editor_icon_anchors")).toDouble() == 100000.0,
+                    "icon anchor population not reported")
+        || !require(counts.value(QStringLiteral("globe_editor_icon_candidates")).toDouble() == 740.0,
+                    "icon spatial-culling candidates not reported")
+        || !require(counts.value(QStringLiteral("globe_editor_icon_visible")).toDouble() == 350.0,
+                    "actual projected icons not reported")
         || !require(totals.contains(QStringLiteral("workspace_mode_switch")),
                     "mode switch timing not reported"))
         return 1;
