@@ -1,4 +1,5 @@
 #include "map/bgfx/map_bgfx_2d_scene.h"
+#include "map/bgfx/map_bgfx_2d_scene_variants.h"
 #include "map/bgfx/map_bgfx_2d_mesh.h"
 
 #include <algorithm>
@@ -145,6 +146,61 @@ int main()
         || !check(prepared.preparationCount() == 2, "unexpected geometry preparation count")
         || !check(mesh.prepare(prepared, no_icons), "geometry revision did not rebuild GPU mesh")
         || !check(mesh.preparationCount() == 2, "GPU mesh revision count"))
+        return 1;
+
+    // Workspace monitor/editor modes use decluttered / exact node positions.
+    // Both derived presentations must be prepared at most once per geometry
+    // revision, and returning to a mode must preserve its preparation id.
+    MapBgfx2dSceneVariants variants;
+    NetworkRenderNode coincident;
+    coincident.render_id = 13;
+    coincident.coordinate_wgs84 = snapshot.nodes.first().coordinate_wgs84;
+    snapshot.nodes.append(coincident);
+    snapshot.geometry_revision = 3;
+    if (!check(retained.setSnapshot(snapshot).geometry_changed, "new variant geometry revision")
+        || !check(variants.prepare(retained), "monitor variant was not prepared")
+        || !check(variants.active().declutteringEnabled(), "monitor decluttering disabled"))
+        return 1;
+    const quint64 monitor_preparation_id = variants.active().preparationId();
+    if (!check(variants.active().networkNodes().size() == 2, "monitor node count")
+        || !check(variants.active().networkNodes()[0].position.x
+                      != variants.active().networkNodes()[1].position.x
+                  || variants.active().networkNodes()[0].position.y
+                      != variants.active().networkNodes()[1].position.y,
+                  "monitor failed to separate coincident nodes")
+        || !check(variants.setDeclutteringEnabled(false, retained), "editor variant not prepared")
+        || !check(!variants.active().declutteringEnabled(), "editor decluttering still enabled"))
+        return 1;
+    const quint64 editor_preparation_id = variants.active().preparationId();
+    if (!check(variants.active().networkNodes()[0].position.x
+                   == variants.active().networkNodes()[1].position.x
+               && variants.active().networkNodes()[0].position.y
+                   == variants.active().networkNodes()[1].position.y,
+               "editor changed exact coincident coordinates"))
+        return 1;
+    for (int iteration = 0; iteration < 100; ++iteration)
+    {
+        const bool monitor_mode = iteration % 2 == 0;
+        if (!check(!variants.setDeclutteringEnabled(monitor_mode, retained),
+                   "mode switch recalculated cached geometry")
+            || !check(variants.active().preparationId()
+                          == (monitor_mode ? monitor_preparation_id : editor_preparation_id),
+                       "mode switch lost cached variant identity")
+            || !check(!variants.prepare(retained), "same revision regenerated geometry"))
+            return 1;
+    }
+    // New geometry discards both old presentations. Only the active one is
+    // prepared eagerly; the other follows lazily on its next activation.
+    snapshot.geometry_revision = 4;
+    snapshot.nodes[0].coordinate_wgs84 = coordinate(19.0, 13.0);
+    if (!check(retained.setSnapshot(snapshot).geometry_changed, "variant geometry update")
+        || !check(variants.prepare(retained), "active variant did not refresh")
+        || !check(variants.active().preparationId() != editor_preparation_id,
+                  "active variant retained obsolete geometry")
+        || !check(variants.setDeclutteringEnabled(true, retained),
+                  "stale monitor variant was not refreshed")
+        || !check(variants.active().preparationId() != monitor_preparation_id,
+                  "stale monitor variant identity was reused"))
         return 1;
 
     std::puts("Retained bgfx 2D geometry staging and zoom invariants passed");

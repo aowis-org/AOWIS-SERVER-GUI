@@ -612,60 +612,43 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
                 this->bgfx_fullscreen_shortcut->setEnabled(this->bgfx_render_surface_active && !this->editor_mode && !active);
         });
 
-        // Selection from anywhere (map click, tables, inspector) is drawn as
-        // the selection highlight.
-        connect(this->hydraulic_data, &HydraulicData::signalSelectedTank, surface,
-                [surface](const HydraulicNodeTank &tank)
-        {
-            surface->setSelectedEntity(InfrastructureEntity::Tank, tank.uuid);
-        });
-        connect(this->hydraulic_data, &HydraulicData::signalSelectedReservoir, surface,
-                [surface](const HydraulicNodeReservoir &reservoir)
-        {
-            surface->setSelectedEntity(InfrastructureEntity::Reservoir, reservoir.uuid);
-        });
-        connect(this->hydraulic_data, &HydraulicData::signalSelectedJunction, surface,
-                [surface](const HydraulicNodeJunction &junction)
-        {
-            surface->setSelectedEntity(InfrastructureEntity::Junction, junction.uuid);
-        });
-        connect(this->hydraulic_data, &HydraulicData::signalSelectedPipe, surface,
-                [surface](const HydraulicLinkPipe &pipe)
-        {
-            surface->setSelectedEntity(InfrastructureEntity::Pipe, pipe.uuid);
-        });
-        connect(this->hydraulic_data, &HydraulicData::signalSelectedPump, surface,
-                [surface](const HydraulicLinkPump &pump)
-        {
-            surface->setSelectedEntity(InfrastructureEntity::Pump, pump.uuid);
-        });
-        connect(this->hydraulic_data, &HydraulicData::signalSelectedValve, surface,
-                [surface](const HydraulicLinkValve &valve)
-        {
-            surface->setSelectedEntity(InfrastructureEntity::Valve, valve.uuid);
-        });
+        // Model/inspector selection can change while the editor is active.
+        // Track it, but only the monitor profile owns the GPU highlight.
+        connect(this->hydraulic_data, &HydraulicData::signalSelectedTank, this,
+                [this](const HydraulicNodeTank &tank)
+        { rememberMonitorSelection(InfrastructureEntity::Tank, tank.uuid); });
+        connect(this->hydraulic_data, &HydraulicData::signalSelectedReservoir, this,
+                [this](const HydraulicNodeReservoir &reservoir)
+        { rememberMonitorSelection(InfrastructureEntity::Reservoir, reservoir.uuid); });
+        connect(this->hydraulic_data, &HydraulicData::signalSelectedJunction, this,
+                [this](const HydraulicNodeJunction &junction)
+        { rememberMonitorSelection(InfrastructureEntity::Junction, junction.uuid); });
+        connect(this->hydraulic_data, &HydraulicData::signalSelectedPipe, this,
+                [this](const HydraulicLinkPipe &pipe)
+        { rememberMonitorSelection(InfrastructureEntity::Pipe, pipe.uuid); });
+        connect(this->hydraulic_data, &HydraulicData::signalSelectedPump, this,
+                [this](const HydraulicLinkPump &pump)
+        { rememberMonitorSelection(InfrastructureEntity::Pump, pump.uuid); });
+        connect(this->hydraulic_data, &HydraulicData::signalSelectedValve, this,
+                [this](const HydraulicLinkValve &valve)
+        { rememberMonitorSelection(InfrastructureEntity::Valve, valve.uuid); });
+        connect(this->hydraulic_data, &HydraulicData::signalSelectedDemandPoint, this,
+                [this](const HydraulicDemandPoint &point)
+        { rememberMonitorSelection(InfrastructureEntity::DemandPoint, point.uuid); });
 
-        // Simulation error / stale-result highlights. The surface ignores
-        // unchanged sets, so redundant calls cost nothing on the GPU.
-        const std::function<void()> apply_bgfx_highlights = [this, surface]()
-        {
-            surface->setSimulationErrorEntities(
-                this->hydraulic_data->simulationErrorEntities(),
-                this->hydraulic_data->simulationStaleDiagnosticEntityUuids());
-        };
+        // Simulation errors are monitor-only visual state. Keep accepting
+        // model updates in the editor without overwriting the editor HUD.
         connect(this->hydraulic_data, &HydraulicData::signalNetworkLoaded,
-                surface, apply_bgfx_highlights);
+                this, [this]() { applyMonitorDiagnostics(); });
         connect(this->hydraulic_data, &HydraulicData::signalNetworkGeometryChanged,
-                surface, [apply_bgfx_highlights](quint64) { apply_bgfx_highlights(); });
-        connect(this->hydraulic_data, &HydraulicData::signalNodeChanged, surface,
-                [apply_bgfx_highlights](InfrastructureEntity, const QUuid &)
-                { apply_bgfx_highlights(); });
-        connect(this->hydraulic_data, &HydraulicData::signalLinkChanged, surface,
-                [apply_bgfx_highlights](InfrastructureEntity, const QUuid &)
-                { apply_bgfx_highlights(); });
+                this, [this](quint64) { applyMonitorDiagnostics(); });
+        connect(this->hydraulic_data, &HydraulicData::signalNodeChanged, this,
+                [this](InfrastructureEntity, const QUuid &) { applyMonitorDiagnostics(); });
+        connect(this->hydraulic_data, &HydraulicData::signalLinkChanged, this,
+                [this](InfrastructureEntity, const QUuid &) { applyMonitorDiagnostics(); });
         connect(this->hydraulic_data, &HydraulicData::signalSimulationResultTimelineChanged,
-                surface, [apply_bgfx_highlights](bool) { apply_bgfx_highlights(); });
-        apply_bgfx_highlights();
+                this, [this](bool) { applyMonitorDiagnostics(); });
+        applyMonitorDiagnostics();
 
         const std::function<void()> request_bgfx_symbology = [this]()
         {
@@ -1100,7 +1083,7 @@ bool MapMonitorContainer::selectBgfxNetworkEntityAt(const QPointF &position)
         this->bgfx_surface->setSelectedEntity(hit.entity_type, hit.uuid);
         return true;
     }
-    this->bgfx_surface->setSelectedEntity(InfrastructureEntity::Unknown, QUuid());
+    rememberMonitorSelection(InfrastructureEntity::Unknown, QUuid());
     return false;
 }
 
@@ -1520,6 +1503,24 @@ bool MapMonitorContainer::surfaceReady() const
     return this->bgfx_render_surface_active;
 }
 
+void MapMonitorContainer::rememberMonitorSelection(InfrastructureEntity entity_type,
+                                                   const QUuid &uuid)
+{
+    this->monitor_selected_type = entity_type;
+    this->monitor_selected_uuid = uuid;
+    if (!this->editor_mode && this->bgfx_surface != nullptr)
+        this->bgfx_surface->setSelectedEntity(entity_type, uuid);
+}
+
+void MapMonitorContainer::applyMonitorDiagnostics()
+{
+    if (this->editor_mode || this->bgfx_surface == nullptr || this->hydraulic_data == nullptr)
+        return;
+    this->bgfx_surface->setSimulationErrorEntities(
+        this->hydraulic_data->simulationErrorEntities(),
+        this->hydraulic_data->simulationStaleDiagnosticEntityUuids());
+}
+
 void MapMonitorContainer::setEditorInputCanvas(QWidget *canvas)
 {
     this->editor_input_canvas = canvas;
@@ -1595,6 +1596,8 @@ void MapMonitorContainer::activateMonitorSurface()
     surface->setLabelSettings(this->map_menu->mapNavigationWidget()->labelSettings());
     surface->setNetworkScreenTranslation(QPointF());
     surface->setHiddenEntityUuids(QSet<QUuid>());
+    surface->setSelectedEntity(this->monitor_selected_type, this->monitor_selected_uuid);
+    applyMonitorDiagnostics();
     surface->setHudFullscreen(this->bgfx_fullscreen_active);
     applySymbology();
     refreshBgfxLegend();

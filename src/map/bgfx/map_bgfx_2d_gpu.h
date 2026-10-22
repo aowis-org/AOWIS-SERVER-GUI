@@ -11,8 +11,10 @@
 
 // The bgfx resource owner lives inside MapBgfxSurface. CPU staging is
 // immutable across camera movements; GPU geometry buffers are replaced only
-// when MapBgfx2dScene's geometry revision advances. Per frame only uniforms
-// change, and chunks outside the view issue no draw calls at all. There are
+// when the active MapBgfx2dScene preparation identity changes (real network
+// geometry edits or selection of a different decluttering presentation).
+// Per camera frame only uniforms change, and chunks outside the view issue
+// no draw calls at all. There are
 // no colour streams: the shaders colour every primitive from the entity
 // data of MapBgfxEntityStyle, which every draw binds.
 class MapBgfx2dGpu

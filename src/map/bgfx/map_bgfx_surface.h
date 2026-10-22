@@ -1,7 +1,7 @@
 #ifndef MAP_BGFX_SURFACE_H
 #define MAP_BGFX_SURFACE_H
 
-#include "map/bgfx/map_bgfx_2d_scene.h"
+#include "map/bgfx/map_bgfx_2d_scene_variants.h"
 #include "map/bgfx/map_bgfx_2d_gpu.h"
 #include "map/bgfx/map_bgfx_2d_imagery_gpu.h"
 #include "map/bgfx/map_bgfx_2d_symbology.h"
@@ -351,7 +351,7 @@ private:
     NavigationMouseHandler navigation_mouse_move;
     MapModel *map_model = nullptr;
     MapRetainedNetworkScene retained_scene;
-    MapBgfx2dScene prepared_2d_scene;
+    MapBgfx2dSceneVariants prepared_2d_scenes;
     MapBgfx2dGpu gpu_2d_scene;
     MapBgfx2dGpu::FrameStats network_frame_stats;
     // Resolved values and sizes; the GPU colours the network from them.

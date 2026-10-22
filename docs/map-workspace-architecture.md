@@ -20,7 +20,7 @@ networks or run distribution editing.
 
 ## Ownership and boundaries
 
-**Current implementation (Stage 4):** `MapWorkspaceWidget` owns the single
+**Current implementation (Stage 5):** `MapWorkspaceWidget` owns the single
 Distribution `MapModel` and hosts the persistent `MapWidget` and
 `MapBgfxSurface` in `MapWorkspaceViewportPage`. The renderer is constructed
 by the monitor controller once; the editor receives non-owning pointers to
@@ -41,9 +41,23 @@ controller before the monitor's renderer to avoid dangling captured pointers.
 The two drainage modes remain blank pages for now (Stage 7). Switching from
 a distribution mode to a drainage placeholder can therefore hide and stop
 the viewport; this is not a distribution editor/monitor mode restart.
-Node decluttering currently changes derived 2D display geometry when
-switching Monitor ↔ Editor; its preparation/reuse optimization belongs to
-Stage 5, not the Stage 4 device-lifecycle change.
+Node decluttering uses two cached camera-independent 2D scene presentations:
+monitor may separate coincident nodes while editor displays exact coordinates.
+The variants share one retained geometry revision and each is prepared once
+per revision (editor's variant is lazy). Mode switches reuse their preparation
+IDs without recomputing positions. The inactive variant is discarded when
+actual network geometry changes to avoid retaining stale large networks.
+The current GPU mesh still follows the selected variant's preparation ID and
+may upload on mode changes; this cache eliminates CPU derived geometry
+preparation, not all presentation-dependent GPU work. 3D decluttering and
+symbol-size changes can also require appropriate derived globe stream updates.
+
+Each mode owns its visualization profile. Entering editor activates its
+symbology, overlays, input handlers and blank monitoring legend/diagnostic
+highlights. The monitor's model-selection and simulation-diagnostic signals
+may change while editing, but cannot overwrite the editor's GPU state; the
+latest selected entity and diagnostics are restored when returning to monitor.
+The monitor reinstates its own HUD action handlers, labels and symbology.
 
 `MainWindow` has only one distribution `MapModel`. Camera movement and
 provider changes are inherently shared across distribution modes; the old
@@ -91,10 +105,10 @@ renderers:
   require an explicit bgfx device restart. Merely switching modes must not.
 
 The tool-panel extraction (Stage 2), monitor viewport ownership transfer
-(Stage 3), and single-surface distribution renderer migration (Stage 4) are
-complete in the source architecture. Further work isolates profile settings
-(Stage 5), removes legacy sync and fullscreen paths (Stage 6), and integrates
-drainage modes (Stage 7).
+(Stage 3), single-surface distribution renderer migration (Stage 4), and
+presentation isolation plus 2D variant caching (Stage 5) are complete in the
+source architecture. Further work removes legacy sync and fullscreen paths
+(Stage 6) and integrates drainage modes (Stage 7).
 Fullscreen and WASM input must remain working at every intermediate stage.
 
 ## Diagnostics and regression baseline
@@ -124,8 +138,10 @@ cumulative process-wide counters, including both legacy bgfx surfaces.
 In Stage 4 the distribution viewport is shared: ordinary Monitor ↔ Editor
 mode switches should increment `workspace_mode_switch` **without incrementing**
 `bgfx_device_started` or `bgfx_device_stopped`. The derived
-`bgfx_2d_scene_prepared` count may still increase when node decluttering
-switches presentation modes; Stage 5 will isolate/cache these variants.
+`bgfx_2d_scene_prepared` can increase once for a previously unprepared
+node-declutter presentation. Subsequent editor/monitor switches on the same
+network must not increase it. Real network geometry revisions prepare the
+current presentation and invalidate the other one.
 Initial startup, true network changes, switching to a blank drainage page,
 and native surface loss can legitimately change renderer lifecycle counters.
 
@@ -151,23 +167,31 @@ invalidation and retained-network-scene tests cover zoom/LOD and geometry
 revision independence. A real GPU/window lifecycle check additionally
 requires interactive validation on the target system.
 
-Manual Stage 4 acceptance checks:
+Manual Stage 5 acceptance checks:
 
 1. Open Distribution Monitor; pan and zoom continuously, change basemap and
    2D/3D view; observe one consistent camera and no geometry rebuild during
    pure camera movement.
 2. Switch to Distribution Editor; exercise entity selection, editing overlays,
-   and fullscreen, and switch back. Compare device start/stop counters and
-   geometry-preparation counters with the initial snapshot.
+   and fullscreen, and switch back. There must be no device restart. The
+   second decluttering presentation can prepare once on the first switch;
+   subsequent switches must not increment `bgfx_2d_scene_prepared` until the
+   actual network geometry changes.
 3. Repeat rapid monitor/editor switching, including with a large network.
    Check the HUD, editor tools, native-window focus, configurable F1–F4
    provider shortcuts and any camera synchronization setting currently used.
+   Change the selected entity and simulation timeline while the editor is
+   active: its overlays and blank monitor legend must persist, while the
+   latest monitor selection/diagnostics reappear on switching back.
 4. Open both drainage placeholders: neither may enter a distribution editing
    mode. Returning to Distribution Monitor must restore its controls.
 5. Repeat on Linux desktop, Windows and WASM during each relevant migration.
    A unit test without a GPU cannot prove native-window behavior.
 
-The distribution modes now share **one persistent GPU renderer and camera**.
+The distribution modes now share **one persistent GPU renderer and camera**,
+with separate editor/monitor presentation settings and cached 2D display
+geometries. A renderer shutdown while opening blank drainage placeholders is
+still expected until the drainage modes use the same viewport (Stage 7).
 The full four-mode shared-map end state is still pending Stage 7's drainage
 integration. No CPU-era zoom buckets or geometry rebuilds tied to fractional
 zoom are permitted.

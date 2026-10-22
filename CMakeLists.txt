@@ -463,6 +463,7 @@ aowis_bgfx_add_shaders(aowis-server-gui)
 target_sources(aowis-server-gui PRIVATE
     src/map/bgfx/map_bgfx_2d_projection.h
     src/map/bgfx/map_bgfx_2d_scene.h
+    src/map/bgfx/map_bgfx_2d_scene_variants.h
     src/map/bgfx/map_bgfx_2d_mesh.h
     src/map/bgfx/map_bgfx_2d_gpu.h
     src/map/bgfx/map_bgfx_2d_gpu.cpp

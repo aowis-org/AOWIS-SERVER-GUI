@@ -13,9 +13,9 @@ class MapModel;
 class QStackedWidget;
 class QTabBar;
 
-// One main-navigation map page. Stage 3 hosts the monitor's map stack and
-// navigation model in this workspace. The editor retains its legacy viewport
-// until its interaction controller is migrated in Stage 4.
+// One main-navigation Maps page. Distribution Monitor and Editor share
+// the same persistent viewport and map model; only their tools, input
+// handlers and rendering profiles switch. Drainage tools remain placeholders.
 class MapWorkspaceWidget final : public QWidget
 {
     Q_OBJECT

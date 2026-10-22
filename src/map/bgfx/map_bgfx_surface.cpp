@@ -788,15 +788,15 @@ void MapBgfxSurface::setNetworkSnapshot(const NetworkRenderSnapshot &snapshot)
         syncGlobeCameraHeight(true);
         this->globe_surface->requestTerrainForCurrentView(globeViewportSize());
     }
-    if (update.geometry_changed && this->prepared_2d_scene.prepare(this->retained_scene))
+    if (update.geometry_changed && this->prepared_2d_scenes.prepare(this->retained_scene))
     {
         MapRenderDiagnostics::add(MapRenderDiagnostics::Counter::Bgfx2dScenePrepared);
         qInfo() << "bgfx retained geometry prepared" << snapshot.geometry_revision
-                << "links" << this->prepared_2d_scene.linkPolylines().size()
-                << "link segments" << this->prepared_2d_scene.linkSegmentCount()
+                << "links" << this->prepared_2d_scenes.active().linkPolylines().size()
+                << "link segments" << this->prepared_2d_scenes.active().linkSegmentCount()
                 // Demand points are snapshot nodes (entity DemandPoint).
-                << "nodes incl. demand points" << this->prepared_2d_scene.networkNodes().size()
-                << "attachments" << this->prepared_2d_scene.attachments().size();
+                << "nodes incl. demand points" << this->prepared_2d_scenes.active().networkNodes().size()
+                << "attachments" << this->prepared_2d_scenes.active().attachments().size();
     }
     // The heatmap's markers sit on the nodes.
     if (update.geometry_changed)
@@ -805,15 +805,14 @@ void MapBgfxSurface::setNetworkSnapshot(const NetworkRenderSnapshot &snapshot)
 
 void MapBgfxSurface::setNodeDeclutteringEnabled(bool enabled)
 {
+    if (this->prepared_2d_scenes.active().declutteringEnabled() == enabled)
+        return;
     requestRedraw();
-    // Positions change without a geometry revision: re-prepare now; the GPU
-    // mesh and the highlights follow MapBgfx2dScene::preparationId().
-    this->prepared_2d_scene.setDeclutteringEnabled(enabled);
-    if (this->retained_scene.hasSnapshot()
-        && this->prepared_2d_scene.prepare(this->retained_scene))
-    {
+    // Editor and monitor share one retained geometry revision but need two
+    // node placements. Cache both derived scenes; revisiting an unchanged
+    // variant must not perform another CPU geometry preparation.
+    if (this->prepared_2d_scenes.setDeclutteringEnabled(enabled, this->retained_scene))
         MapRenderDiagnostics::add(MapRenderDiagnostics::Counter::Bgfx2dScenePrepared);
-    }
     this->globe_network.setNodeDeclutteringEnabled(enabled);
 }
 
@@ -847,7 +846,7 @@ void MapBgfxSurface::setSimulationErrorEntities(
 MapRenderHit MapBgfxSurface::hitTest(const QPointF &screen_position) const
 {
     MapRenderHit no_hit;
-    if (this->map_model == nullptr || !this->prepared_2d_scene.isPrepared())
+    if (this->map_model == nullptr || !this->prepared_2d_scenes.active().isPrepared())
         return no_hit;
     const QSizeF logical = logicalSize();
     if (!std::isfinite(screen_position.x()) || !std::isfinite(screen_position.y())
@@ -883,7 +882,7 @@ MapRenderHit MapBgfxSurface::hitTest(const QPointF &screen_position) const
     options.show_junctions = this->symbology.show_junctions;
     options.has_icon = [](InfrastructureEntity entity_type) { return mapHasIcon(entity_type); };
     const MapBgfx2dPicking::Hit hit = MapBgfx2dPicking::pick(
-        this->prepared_2d_scene, camera, {screen_position.x(), screen_position.y()}, options);
+        this->prepared_2d_scenes.active(), camera, {screen_position.x(), screen_position.y()}, options);
     if (!hit.isValid())
         return no_hit;
     MapRenderHit result;
@@ -896,10 +895,10 @@ MapRenderHit MapBgfxSurface::hitTest(const QPointF &screen_position) const
 
 void MapBgfxSurface::synchronizeHighlights()
 {
-    if (!this->prepared_2d_scene.isPrepared())
+    if (!this->prepared_2d_scenes.active().isPrepared())
         return;
     if (!this->highlights_dirty
-        && this->highlight_preparation_id == this->prepared_2d_scene.preparationId()
+        && this->highlight_preparation_id == this->prepared_2d_scenes.active().preparationId()
         && this->highlight_show_junctions == this->symbology.show_junctions)
         return;
 
@@ -940,11 +939,11 @@ void MapBgfxSurface::synchronizeHighlights()
     }
 
     const bool show_junctions = this->symbology.show_junctions;
-    if (!this->gpu_2d_scene.setHighlights(this->prepared_2d_scene.filtered(selected_keys), selected_has_error,
-                                          this->prepared_2d_scene.filtered(diagnostic_keys)))
+    if (!this->gpu_2d_scene.setHighlights(this->prepared_2d_scenes.active().filtered(selected_keys), selected_has_error,
+                                          this->prepared_2d_scenes.active().filtered(diagnostic_keys)))
         qWarning() << "bgfx selection/error highlight upload failed";
     this->highlights_dirty = false;
-    this->highlight_preparation_id = this->prepared_2d_scene.preparationId();
+    this->highlight_preparation_id = this->prepared_2d_scenes.active().preparationId();
     this->highlight_show_junctions = show_junctions;
 }
 
@@ -1480,7 +1479,7 @@ void MapBgfxSurface::renderLabels(const QSizeF &logical, const MapBgfx2d::Camera
                                   const MapBgfx2dSymbology::Sizes &sizes)
 {
     if (!this->label_settings.anyEnabled() || !this->label_gpu.ready()
-        || !this->retained_scene.hasSnapshot() || !this->prepared_2d_scene.isPrepared())
+        || !this->retained_scene.hasSnapshot() || !this->prepared_2d_scenes.active().isPrepared())
     {
         return;
     }
@@ -1505,7 +1504,7 @@ void MapBgfxSurface::renderLabels(const QSizeF &logical, const MapBgfx2d::Camera
     key.node_half_px = sizes.node_half_px;
     key.icon_size_px = sizes.icon_size_px;
     key.device_pixel_ratio = ratio;
-    key.preparation_id = this->prepared_2d_scene.preparationId();
+    key.preparation_id = this->prepared_2d_scenes.active().preparationId();
     key.atlas_generation = cache->generation();
     // Unchanged content and zoom: a pure pan draws the last build translated
     // (it was built with a margin around the viewport, map_bgfx_pan_reuse.h).
@@ -1567,7 +1566,7 @@ void MapBgfxSurface::renderLabels(const QSizeF &logical, const MapBgfx2d::Camera
         MapBgfxLabels::Inputs inputs;
         inputs.viewport = build.viewport;
         inputs.camera = build.camera;
-        inputs.scene = &this->prepared_2d_scene;
+        inputs.scene = &this->prepared_2d_scenes.active();
         inputs.snapshot = &this->retained_scene.snapshot();
         inputs.settings = this->label_settings;
         inputs.node_values = &this->symbology.node_values;
@@ -2111,7 +2110,7 @@ void MapBgfxSurface::renderFrameAt(double elapsed_seconds)
             sprite.half_height_ratio = float(entry.height_ratio * 0.5);
             return sprite;
         };
-        if (!this->gpu_2d_scene.synchronize(this->prepared_2d_scene, icon_lookup)) {
+        if (!this->gpu_2d_scene.synchronize(this->prepared_2d_scenes.active(), icon_lookup)) {
             fail(QStringLiteral("bgfx network vertex-buffer upload failed"));
             return;
         }
@@ -2199,13 +2198,13 @@ void MapBgfxSurface::renderDebugOverlay()
         bgfx::dbgTextPrintf(2, 8, 0x0f, "Globe distance %.2f m", this->camera_state.globe_distance_m);
     // Nodes include demand points (snapshot nodes of entity DemandPoint).
     bgfx::dbgTextPrintf(2, 10, 0x0f, "Links %lld (%lld segments) Nodes %lld Attachments %lld",
-                        static_cast<long long>(this->prepared_2d_scene.linkPolylines().size()),
-                        static_cast<long long>(this->prepared_2d_scene.linkSegmentCount()),
-                        static_cast<long long>(this->prepared_2d_scene.networkNodes().size()),
-                        static_cast<long long>(this->prepared_2d_scene.attachments().size()));
+                        static_cast<long long>(this->prepared_2d_scenes.active().linkPolylines().size()),
+                        static_cast<long long>(this->prepared_2d_scenes.active().linkSegmentCount()),
+                        static_cast<long long>(this->prepared_2d_scenes.active().networkNodes().size()),
+                        static_cast<long long>(this->prepared_2d_scenes.active().attachments().size()));
     bgfx::dbgTextPrintf(2, 11, 0x0f,
                         "Preparations %llu GPU uploads %llu (%llu bytes) Frames %llu",
-                        static_cast<unsigned long long>(this->prepared_2d_scene.preparationCount()),
+                        static_cast<unsigned long long>(this->prepared_2d_scenes.active().preparationCount()),
                         static_cast<unsigned long long>(this->gpu_2d_scene.uploadCount()),
                         static_cast<unsigned long long>(this->gpu_2d_scene.uploadedBytes()),
                         static_cast<unsigned long long>(this->frame_count));

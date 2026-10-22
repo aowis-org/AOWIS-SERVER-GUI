@@ -736,6 +736,7 @@ void MapEditorContainer::activateSharedSurface(bool active)
     surface->setOverlayBuilder(this->editor_overlay_builder);
     surface->setGlobeOverlayBuilder(this->editor_globe_overlay_builder);
     surface->setSelectedEntity(InfrastructureEntity::Unknown, QUuid());
+    surface->setSimulationErrorEntities({}, {});
     surface->setHudLegend(MapBgfxHud::Legend());
     surface->setLabelValueFormats(MapBgfxLabelValueFormat(), MapBgfxLabelValueFormat());
     surface->setHudFullscreen(this->bgfx_fullscreen_active);

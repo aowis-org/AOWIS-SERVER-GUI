@@ -174,6 +174,11 @@ private:
     MapBgfxSurface *bgfx_surface = nullptr;
     QWidget *editor_input_canvas = nullptr;
     bool editor_mode = false;
+    // The logical selection belongs to monitoring even when its GPU
+    // highlight is temporarily hidden in the editor profile.
+    InfrastructureEntity monitor_selected_type = InfrastructureEntity::Unknown;
+    QUuid monitor_selected_uuid;
+
     bool monitor_node_decluttering = true;
     bool monitor_globe_3d_icons = true;
     // The surface presents frames: picking and hover only run against a
@@ -215,6 +220,8 @@ private:
     // Map legend on the bgfx HUD (slice 6b): rebuilt from the symbology
     // settings and their canonical ranges whenever the symbology is
     // resolved, the unit profile changes or the surface becomes active.
+    void rememberMonitorSelection(InfrastructureEntity entity_type, const QUuid &uuid);
+    void applyMonitorDiagnostics();
     void pushBgfxLegend(const NetworkSymbologyRanges &ranges);
     void refreshBgfxLegend();
     void refreshBgfxDownloadActivity();

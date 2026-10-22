@@ -133,9 +133,13 @@ editor) was removed.
   `MapBgfx2dScene::filtered()` (exact drawn positions), rebuilt only when the
   selection, the error set, the prepared geometry or the junction visibility
   changes.
-* **Node declutter toggle**: `setNodeDeclutteringEnabled()` re-prepares the
-  scene; the GPU mesh, highlights and picking follow
-  `MapBgfx2dScene::preparationId()` (no geometry revision needed).
+* **Node declutter toggle**: `MapBgfx2dSceneVariants` caches both the
+  decluttered monitor and exact-position editor scenes per geometry revision.
+  Each is prepared once; revisiting an unchanged variant reuses its
+  `MapBgfx2dScene::preparationId()`. The GPU mesh, highlights and picking
+  follow the selected variant and can still require a GPU mesh upload on
+  switching, but do not recompute derived CPU geometry. On a true geometry
+  revision, the unused presentation is evicted and prepared lazily again.
 
 ## On-demand rendering
 
