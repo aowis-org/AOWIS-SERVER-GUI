@@ -1,4 +1,5 @@
 #include "app/main_window.h"
+#include "tabs/tab_map_workspace.h"
 #include "config/gui_configuration.h"
 #include "config/unit_profile_manager.h"
 #include "config/shortcut_registry.h"
@@ -42,6 +43,8 @@ MainWindow::MainWindow(QWidget *parent)
     simulation_manager( new SimulationManager(hydraulic_data, this) )
 {
     this->main_navigation = new MainNavigationWidget(this);
+    this->map_workspace = new MapWorkspaceWidget(this->map_editor, this->map_monitor,
+                                                this->main_navigation);
 
     #ifdef AOWIS_STANDALONE
     setWindowTitle("AOWIS Controller [Standalone]");
@@ -114,21 +117,27 @@ MainWindow::MainWindow(QWidget *parent)
     scheduleRightDockResize();
     connect(this->map_monitor, &MapMonitorContainer::signalShowMapLegendLink, this, [this](VisualLink visual_link)
     {
-        if (visual_link != VisualLink::None && this->right_dock_area_hidden && this->main_navigation->currentWidget() == this->map_monitor)
+        if (visual_link != VisualLink::None && this->right_dock_area_hidden
+            && this->main_navigation->currentWidget() == this->map_workspace
+            && this->map_workspace->isDistributionMonitorActive())
             toggleRightDockArea();
 
         this->dock_entity_map_legend->showMapLegendLink(visual_link);
     });
     connect(this->map_monitor, &MapMonitorContainer::signalShowMapLegendNode, this, [this](VisualNode visual_node)
     {
-        if (visual_node != VisualNode::None && this->right_dock_area_hidden && this->main_navigation->currentWidget() == this->map_monitor)
+        if (visual_node != VisualNode::None && this->right_dock_area_hidden
+            && this->main_navigation->currentWidget() == this->map_workspace
+            && this->map_workspace->isDistributionMonitorActive())
             toggleRightDockArea();
 
         this->dock_entity_map_legend->showMapLegendNode(visual_node);
     });
     connect(this->map_monitor, &MapMonitorContainer::signalShowMapLegendHeatmap, this, [this](VisualHeatmap visual_heatmap)
     {
-        if (visual_heatmap != VisualHeatmap::None && this->right_dock_area_hidden && this->main_navigation->currentWidget() == this->map_monitor)
+        if (visual_heatmap != VisualHeatmap::None && this->right_dock_area_hidden
+            && this->main_navigation->currentWidget() == this->map_workspace
+            && this->map_workspace->isDistributionMonitorActive())
             toggleRightDockArea();
 
         this->dock_entity_map_legend->showMapLegendHeatmap(visual_heatmap);
@@ -195,12 +204,9 @@ MainWindow::MainWindow(QWidget *parent)
     //                              QIcon(":/icon/dashboard.png"),
     //                              "Site Dashboard");
 
-    this->main_navigation->addPage(this->map_editor,
-                                  QIcon(":/icon/map_edit.png"),
-                                  "Map Editor");
-    this->main_navigation->addPage(this->map_monitor,
-                                  QIcon(":/icon/map_monitor.png"),
-                                  "Map Monitor");
+    this->main_navigation->addPage(this->map_workspace,
+                                  QIcon(":/icon/map.png"),
+                                  "Map");
     this->main_navigation->addPage(this->energy,
                                   QIcon(":/icon/energy.png"),
                                   "Energy");
@@ -261,7 +267,7 @@ MainWindow::MainWindow(QWidget *parent)
         this->settings->focusUnits();
     });
 
-    this->main_navigation->setCurrentIndex(2);
+    this->main_navigation->setCurrentIndex(1);
 
     // Map fullscreen: requested by the map pages' HUD button / shortcut;
     // another page (shortcut) ends it.
@@ -274,11 +280,15 @@ MainWindow::MainWindow(QWidget *parent)
         if (this->map_fullscreen_active)
             setMapFullscreen(false);
         updateMapEdgePanning();
-        this->dock_entity_map_legend->setMapMonitorActive(this->main_navigation->currentWidget() == this->map_monitor);
-        this->dock_map_editor_guide->setMapEditorActive(this->main_navigation->currentWidget() == this->map_editor);
+        updateActiveMapPanels();
     });
-    this->dock_entity_map_legend->setMapMonitorActive(this->main_navigation->currentWidget() == this->map_monitor);
-    this->dock_map_editor_guide->setMapEditorActive(this->main_navigation->currentWidget() == this->map_editor);
+    connect(this->map_workspace, &MapWorkspaceWidget::currentModeChanged,
+            this, [this](int)
+    {
+        updateActiveMapPanels();
+        updateMapEdgePanning();
+    });
+    updateActiveMapPanels();
     
     connect(this->map_mon, &MapWidget::signalZoomLevelChanged, this->footer, &FooterStatusBar::setMapZoom);
     connect(this->map_mon, &MapWidget::signalCoordsChangedWgs84, this->footer, &FooterStatusBar::setMapCoordinatesWGS84);
@@ -290,12 +300,14 @@ MainWindow::MainWindow(QWidget *parent)
     connect(this->map_edit, &MapWidget::signalCoordsChangedUTM, this->footer, &FooterStatusBar::setMapCoordinatesUTM);
     connect(this->map_edit, &MapWidget::signalCoordsUnavailable, this->footer, &FooterStatusBar::clearMapCoordinates);
 
-    // Writes a footer zoom edit back to whichever tab is currently active
-    // (both tabs have a Globe view; this checks the active model's own view
-    // mode).
+    // Writes a footer zoom edit only to the currently visible distribution map.
+    // Empty drainage modes and other main-navigation pages have no active map.
     connect(this->footer, &FooterStatusBar::zoomEdited, this, [this](double zoom)
     {
-        const bool editor_active = this->main_navigation->currentWidget() == this->map_editor;
+        if (this->main_navigation->currentWidget() != this->map_workspace
+            || this->map_workspace->currentMode() > MapWorkspaceWidget::DistributionMonitor)
+            return;
+        const bool editor_active = this->map_workspace->isDistributionEditorActive();
         MapWidget *active_widget = editor_active ? this->map_edit : this->map_mon;
         MapModel *active_model = editor_active ? this->map_model_editor : this->map_model_monitor;
         if (active_model->viewMode() == MapViewMode::Globe)
@@ -1092,6 +1104,15 @@ EM_BOOL MainWindow::fullScreenChangeCallback(int event_type, const EmscriptenFul
 }
 #endif
 
+void MainWindow::updateActiveMapPanels()
+{
+    const bool map_visible = this->main_navigation->currentWidget() == this->map_workspace;
+    this->dock_entity_map_legend->setMapMonitorActive(
+        map_visible && this->map_workspace->isDistributionMonitorActive());
+    this->dock_map_editor_guide->setMapEditorActive(
+        map_visible && this->map_workspace->isDistributionEditorActive());
+}
+
 void MainWindow::updateMapEdgePanning()
 {
     if (!this->map_mon || !this->map_edit || !this->main_navigation)
@@ -1103,6 +1124,9 @@ void MainWindow::updateMapEdgePanning()
     const bool fullscreen = isFullScreen() || this->map_fullscreen_active;
 #endif
 
-    this->map_edit->setEdgePanningEnabled(fullscreen && this->main_navigation->currentWidget() == this->map_editor);
-    this->map_mon->setEdgePanningEnabled(fullscreen && this->main_navigation->currentWidget() == this->map_monitor);
+    const bool map_visible = this->main_navigation->currentWidget() == this->map_workspace;
+    this->map_edit->setEdgePanningEnabled(
+        fullscreen && map_visible && this->map_workspace->isDistributionEditorActive());
+    this->map_mon->setEdgePanningEnabled(
+        fullscreen && map_visible && this->map_workspace->isDistributionMonitorActive());
 }

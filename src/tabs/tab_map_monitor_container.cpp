@@ -791,7 +791,13 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
         });
     }
 
-    this->layout->addWidget(scroll_controls);
+    this->sidebar_panel = new QWidget(this);
+    this->sidebar_panel->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
+    this->sidebar_layout = new QVBoxLayout(this->sidebar_panel);
+    this->sidebar_layout->setContentsMargins(0, 0, 0, 0);
+    this->sidebar_layout->setSpacing(0);
+    this->sidebar_layout->addWidget(scroll_controls);
+    this->layout->addWidget(this->sidebar_panel);
     this->layout->addWidget(this->map_stack);
     
     connect(this->map_menu, &MapMonitorMenuWidget::signalNodeVisualClicked, this,
@@ -1380,8 +1386,8 @@ void MapMonitorContainer::applyMapFullscreen(bool fullscreen)
         return;
 
     this->bgfx_fullscreen_active = fullscreen;
-    if (this->map_menu_scroll != nullptr)
-        this->map_menu_scroll->setVisible(!fullscreen);
+    if (this->sidebar_panel != nullptr)
+        this->sidebar_panel->setVisible(!fullscreen);
     if (this->bgfx_surface != nullptr)
     {
         this->bgfx_surface->setHudFullscreen(fullscreen);
@@ -1494,6 +1500,12 @@ MapWidget *MapMonitorContainer::getMap()
 {
     return this->map;
 }
+void MapMonitorContainer::setModeSelector(QWidget *selector)
+{
+    if (selector != nullptr && this->sidebar_layout != nullptr)
+        this->sidebar_layout->insertWidget(0, selector);
+}
+
 MapNavigationWidget *MapMonitorContainer::mapNavigationWidget()
 {
     return this->map_menu->mapNavigationWidget();

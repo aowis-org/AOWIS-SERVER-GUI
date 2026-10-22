@@ -154,6 +154,8 @@ public:
     
     MapWidget *getMap();
     
+    // Inserts the map-workspace mode tabs above the existing controls.
+    void setModeSelector(QWidget *selector);
     MapNavigationWidget *mapNavigationWidget();
     bool isEditNetworkSectionActive() const;
 
@@ -227,6 +229,8 @@ private:
     MapEditorController *editor_controller;
     MapEditorMenuWidget *map_menu;
     // The left menu's scroll area (hidden in map fullscreen).
+    QWidget *sidebar_panel = nullptr;
+    QVBoxLayout *sidebar_layout = nullptr;
     QScrollArea *map_menu_scroll = nullptr;
     
     QHBoxLayout *layout;

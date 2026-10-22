@@ -216,6 +216,8 @@ qt_add_executable(aowis-server-gui
     src/tabs/tab_junctions_widget.h
     src/tabs/tab_logs_widget.cpp
     src/tabs/tab_logs_widget.h
+    src/tabs/tab_map_workspace.cpp
+    src/tabs/tab_map_workspace.h
     src/tabs/tab_map_editor_container.cpp
     src/tabs/tab_map_editor_container.h
     src/tabs/tab_map_monitor_container.cpp

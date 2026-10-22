@@ -70,6 +70,7 @@
 #endif
 
 class QShortcut;
+class MapWorkspaceWidget;
 
 class MainWindow : public QMainWindow
 {
@@ -153,6 +154,8 @@ private:
     SettingsWidget *settings;
     int settings_page_index = -1;
     QShortcut *shortcut_toggle_right_docks = nullptr;
+    MapWorkspaceWidget *map_workspace = nullptr;
+    void updateActiveMapPanels();
     MapMonitorContainer *map_monitor;
     MapEditorContainer *map_editor;
     EnergyWidget *energy;
