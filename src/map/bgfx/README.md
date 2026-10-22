@@ -239,20 +239,24 @@ consumed together with its moves and release and never reaches navigation,
 picking or hover (the joystick's press only: its drag is navigation). Wheel events over a HUD panel scroll an open list or are
 swallowed (`handleHudWheelEvent()`), never zooming the map underneath.
 Button and legend actions are delivered queued as `MapBgfxHud::Command`
-(`setHudActionHandler()`), outside the native window's event dispatch,
-because fullscreen reparents the map. Desktop cursors (pointing hand, cross
+(`setHudActionHandler()`), outside the native window's event dispatch
+(a handler may change the layout around the map, e.g. fullscreen). Desktop cursors (pointing hand, cross
 over ramps) are set on the embedded native window (`setMapCursor()`), the
 only cursor visible there.
 
-Fullscreen reparents `map_stack` into its own full-screen window (WASM:
-over the page's whole Qt screen; the bgfx canvas follows the surface's
-geometry), but shuts bgfx down first (`suspendForNativeWindowChange()`) and
-restarts it once the native window is exposed (WASM: shown) again
-(`resumeAfterNativeWindowChange()`). Qt Wayland
-destroys the embedded window's wl_surface on reparent without a
-`QPlatformSurfaceEvent`; a Vulkan swapchain still alive on it ends the whole
-Wayland connection ("wp_linux_drm_syncobj_surface_v1: Surface got destroyed
-already"). `QPlatformSurfaceEvent` handling remains as the fallback for
+Fullscreen is in place (`MainWindow::setMapFullscreen()`): the main window
+goes full screen (WASM: the browser page, where the browser allows it) and
+hides everything but the current page's map (toolbar, status bar,
+navigation bar, right docks, the page's left menu). The map stack is never
+reparented, so bgfx keeps running: no shutdown, no re-upload, only a
+resize. The former reparenting to a top-level window had to shut bgfx down
+first (`suspendForNativeWindowChange()`, still available for planned native
+window changes: Qt Wayland destroys the embedded window's wl_surface on
+reparent without a `QPlatformSurfaceEvent`, and a Vulkan swapchain alive on
+it ends the Wayland connection), restarting rebuilt every GPU resource, and
+in the browser the full-screen Qt window was stacked above the bgfx canvas
+(aowis-bgfx-map.js ranks windows by area; two full-screen windows tie):
+an empty page. `QPlatformSurfaceEvent` handling remains as the fallback for
 unplanned native-window recreation.
 
 bgfx's statistics text overlay would cover the HUD; it is shown only with
@@ -371,10 +375,9 @@ as in the monitor.
   over the tool's cursor.
 * Fullscreen: the HUD button and the map fullscreen shortcut
   (`MapMonitorFullscreen`, parented to each map stack, so only the visible
-  map's fires) reparent the editor's map stack exactly like the monitor
-  (suspend bgfx, top-level window, `showFullScreen()`, resume). The left
-  menu is then in another window, so its buttons' window shortcuts cannot
-  fire; the canvas' key presses try them first
+  map's fires) enter map fullscreen exactly like the monitor (in place,
+  see above). The left menu is then hidden, so its buttons' shortcuts
+  cannot fire; the canvas' key presses try them first
   (`MapEditorMenuWidget::triggerButtonShortcut()`), as the shortcut map would
   have.
 
@@ -400,7 +403,12 @@ only the owner positions or hides it.
   (normally a single draw call for all imagery). The globe shares the atlas.
 * Requests go to the shared `MapTileRepository` only when the visible tile set
   changes or a failed tile becomes retryable. Provider switches and deleted
-  tiles clear the texture cache.
+  tiles clear the texture cache. A provider switch also supersedes the old
+  provider's requests (`MapTileRepository::supersedeTileSources()`: queued
+  ones dropped, those in flight no longer hold request slots), so the new
+  provider's tiles go out at once; the globe refreshes its window tiles'
+  imagery keys (`MapGlobeSurfacePreparation::refreshImageryKeys()`) and
+  starts a new request batch per window.
 * The "slide opacity" fades the imagery towards the background colour in the
   imagery shader.
 A single scene-local origin is sufficient for regional water networks, but is

@@ -157,7 +157,8 @@ public:
     // setup and offer no 3D. Call before the surface is first shown.
     void setGlobeOffered(bool offered) { this->globe_offered = offered; }
 
-    // Planned native-window changes (fullscreen reparenting, desktop): shut
+    // Planned native-window changes (reparenting, desktop; map fullscreen
+    // no longer reparents, MainWindow::setMapFullscreen()): shut
     // bgfx down while the old native surface still exists, restart once the
     // window is exposed again. Qt Wayland destroys the wl_surface on reparent
     // without a QPlatformSurfaceEvent, so this must not rely on events.

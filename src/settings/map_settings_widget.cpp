@@ -1,11 +1,21 @@
 #include "settings/map_settings_widget.h"
 
 #include "config/gui_configuration.h"
+#include "map/core/map_provider_catalog.h"
 #include "config/map_server_client_configuration.h"
 #include "map/render/map_globe_terrain_levels.h"
 #include "widgets/slider_number_control.h"
 
+#include <QApplication>
 #include <QColor>
+#include <QComboBox>
+#include <QHeaderView>
+#include <QHBoxLayout>
+#include <QHash>
+#include <QSpinBox>
+#include <QTableWidget>
+#include <QUuid>
+#include <QSignalBlocker>
 #include <QFont>
 #include <QFormLayout>
 #include <QFrame>
@@ -230,8 +240,8 @@ void MapSettingsWidget::buildServerSection(QWidget *parent_widget)
         group));
 #else
     group_layout->addWidget(helpLabel(
-        QStringLiteral("Stored in %1. Changing these requires restarting the application to take "
-                       "effect.").arg(guiConfigurationFilePath()),
+        QStringLiteral("Connection changes are saved when you finish editing a field. "
+                       "Restart AOWIS for them to take effect."),
         group));
 #endif
 
@@ -260,20 +270,334 @@ void MapSettingsWidget::buildServerSection(QWidget *parent_widget)
     this->server_status->setWordWrap(true);
     group_layout->addWidget(this->server_status);
 
-    this->server_save_button = new QPushButton(QStringLiteral("Save"), group);
-    group_layout->addWidget(this->server_save_button, 0, Qt::AlignLeft);
-
-    connect(this->server_save_button, &QPushButton::clicked,
-            this, &MapSettingsWidget::saveServerSettings);
+    for (QLineEdit *field : {this->server_base_url_edit, this->server_api_key_edit,
+                             this->server_delete_api_key_edit})
+        connect(field, &QLineEdit::editingFinished,
+                this, &MapSettingsWidget::saveServerSettings);
 
 #ifdef __EMSCRIPTEN__
     this->server_base_url_edit->setEnabled(false);
     this->server_api_key_edit->setEnabled(false);
     this->server_delete_api_key_edit->setEnabled(false);
-    this->server_save_button->setEnabled(false);
 #endif
 
     static_cast<QVBoxLayout *>(parent_widget->layout())->addWidget(group);
+
+    QGroupBox *providers_group = new QGroupBox(QStringLiteral("2D Map Providers"), parent_widget);
+    QVBoxLayout *providers_layout = new QVBoxLayout(providers_group);
+    providers_layout->addWidget(helpLabel(QStringLiteral(
+        "Provider changes are saved automatically. Each provider can fall back to another "
+        "when you zoom beyond its maximum level. Fallbacks can form a chain: "
+        "A → B → C, as long as each source offers more detail. "
+        "Your fallback choices are personal; they don't change the server's providers. "
+        "With no further fallback, the highest-resolution tiles are smoothly enlarged."), providers_group));
+    this->provider_table = new QTableWidget(0, 6, providers_group);
+    this->provider_table->setHorizontalHeaderLabels({QStringLiteral("On"),
+        QStringLiteral("Display name"), QStringLiteral("Tile URL"),
+        QStringLiteral("Min"), QStringLiteral("Max"), QStringLiteral("My fallback")});
+    this->provider_table->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+    this->provider_table->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Stretch);
+    this->provider_table->setMinimumHeight(220);
+    providers_layout->addWidget(this->provider_table);
+    QHBoxLayout *buttons = new QHBoxLayout();
+    QPushButton *add = new QPushButton(QStringLiteral("Add provider"), providers_group);
+    QPushButton *remove = new QPushButton(QStringLiteral("Remove selected"), providers_group);
+    QPushButton *reload = new QPushButton(QStringLiteral("Reload from server"), providers_group);
+    buttons->addWidget(add);
+    buttons->addWidget(remove);
+    buttons->addWidget(reload);
+    providers_layout->addLayout(buttons);
+    this->provider_status = new QLabel(providers_group);
+    this->provider_status->setWordWrap(true);
+    providers_layout->addWidget(this->provider_status);
+    connect(add, &QPushButton::clicked, this, [this]
+    {
+        this->loading_provider_table = true;
+        addProviderRow(QUuid::createUuid().toString(QUuid::WithoutBraces),
+                       QStringLiteral("New map provider"),
+                       QString(), 0, 19, true);
+        const int added_row = this->provider_table->rowCount() - 1;
+        this->provider_table->item(added_row, 2)->setToolTip(
+            QStringLiteral("Enter an XYZ tile URL template such as "
+                           "https://tiles.example.org/{z}/{x}/{y}.png"));
+        this->loading_provider_table = false;
+        refreshFallbackChoices();
+        this->provider_table->setCurrentCell(added_row, 2);
+        this->provider_table->editItem(this->provider_table->item(added_row, 2));
+        this->provider_status->setText(QStringLiteral(
+            "Enter the new provider's tile URL. Changes save when the row is complete."));
+    });
+    connect(remove, &QPushButton::clicked, this, [this]
+    {
+        const int row = this->provider_table->currentRow();
+        if (row >= 0)
+        {
+            const QString uuid = this->provider_table->item(row, 1)->data(Qt::UserRole).toString();
+            this->pending_fallback_choices.remove(uuid);
+            this->loading_provider_table = true;
+            this->provider_table->removeRow(row);
+            this->loading_provider_table = false;
+            refreshFallbackChoices();
+            scheduleProviderSave();
+        }
+    });
+    this->provider_save_debounce = new QTimer(this);
+    this->provider_save_debounce->setSingleShot(true);
+    this->provider_save_debounce->setInterval(650);
+    connect(this->provider_save_debounce, &QTimer::timeout,
+            this, &MapSettingsWidget::saveProviderEdits);
+    connect(this->provider_table, &QTableWidget::itemChanged, this,
+            [this](QTableWidgetItem *)
+    {
+        if (this->loading_provider_table) return;
+        refreshFallbackChoices();
+        scheduleProviderSave();
+    });
+    connect(reload, &QPushButton::clicked, this, [this]
+    {
+        // Reload is an explicit request to discard uncommitted table edits.
+        this->provider_save_debounce->stop();
+        this->provider_edits_pending = false;
+        mapProviderCatalog().refresh();
+    });
+    connect(&mapProviderCatalog(), &MapProviderCatalog::catalogChanged, this, [this, add, remove]
+    {
+        this->provider_save_in_flight = false;
+        // New provider UUIDs and preferences made while zoom limits were being
+        // edited can only be committed after the server confirms the catalog.
+        for (QHash<QString, QString>::iterator iterator =
+                 this->pending_fallback_choices.begin();
+             iterator != this->pending_fallback_choices.end(); )
+        {
+            if (mapProviderCatalog().setFallback(iterator.key(), iterator.value()))
+                iterator = this->pending_fallback_choices.erase(iterator);
+            else
+                ++iterator;
+        }
+        if (this->provider_edits_pending)
+            this->provider_save_debounce->start();
+        else
+        {
+            // A server response must not destroy an active cell editor with
+            // uncommitted text (which QTableWidget has not emitted yet).
+            const QWidget *focused = QApplication::focusWidget();
+            if (focused == nullptr || !this->provider_table->isAncestorOf(focused))
+                refreshProviderTable();
+        }
+        this->provider_table->setEnabled(true);
+        add->setEnabled(true);
+        remove->setEnabled(true);
+    });
+    connect(&mapProviderCatalog(), &MapProviderCatalog::errorOccurred, this,
+            [this](const QString &message)
+    {
+        if (this->provider_save_in_flight)
+        {
+            this->provider_save_in_flight = false;
+            this->provider_edits_pending = true;
+        }
+        this->provider_status->setText(message);
+    });
+    connect(&mapProviderCatalog(), &MapProviderCatalog::providersSaved, this, [this]
+    {
+        this->provider_status->setText(QStringLiteral("Provider changes saved."));
+    });
+    refreshProviderTable();
+    this->provider_table->setEnabled(mapProviderCatalog().serverLoaded());
+    add->setEnabled(mapProviderCatalog().serverLoaded());
+    remove->setEnabled(mapProviderCatalog().serverLoaded());
+#ifdef AOWIS_STANDALONE
+    providers_group->setEnabled(false);
+    this->provider_status->setText(QStringLiteral("Server provider editing requires a REST map server."));
+#endif
+#ifdef __EMSCRIPTEN__
+    this->provider_status->setText(QStringLiteral(
+        "Provider edits affect the server; per-user fallback persistence is supported in native GUI builds."));
+#endif
+    static_cast<QVBoxLayout *>(parent_widget->layout())->addWidget(providers_group);
+}
+
+void MapSettingsWidget::addProviderRow(const QString &uuid, const QString &name,
+                                      const QString &url, int minimum_zoom,
+                                      int maximum_zoom, bool enabled,
+                                      const QString &fallback_id)
+{
+    const int row = this->provider_table->rowCount();
+    this->provider_table->insertRow(row);
+    QTableWidgetItem *enabled_item = new QTableWidgetItem();
+    enabled_item->setFlags(Qt::ItemIsEnabled | Qt::ItemIsUserCheckable | Qt::ItemIsSelectable);
+    enabled_item->setCheckState(enabled ? Qt::Checked : Qt::Unchecked);
+    this->provider_table->setItem(row, 0, enabled_item);
+    QTableWidgetItem *name_item = new QTableWidgetItem(name);
+    name_item->setData(Qt::UserRole, uuid);
+    name_item->setToolTip(QStringLiteral("Provider UUID: %1").arg(uuid));
+    this->provider_table->setItem(row, 1, name_item);
+    this->provider_table->setItem(row, 2, new QTableWidgetItem(url));
+    QSpinBox *minimum = new QSpinBox(this->provider_table);
+    minimum->setRange(0, 30);
+    minimum->setValue(minimum_zoom);
+    this->provider_table->setCellWidget(row, 3, minimum);
+    QSpinBox *maximum = new QSpinBox(this->provider_table);
+    maximum->setRange(0, 30);
+    maximum->setValue(maximum_zoom);
+    this->provider_table->setCellWidget(row, 4, maximum);
+    QComboBox *fallback = new QComboBox(this->provider_table);
+    fallback->addItem(QStringLiteral("None (enlarge available tiles)"), QString());
+    for (const MapProviderEntry &entry : mapProviderCatalog().providers())
+    {
+        if (entry.enabled && entry.id != uuid && entry.maximum_zoom > maximum_zoom &&
+            entry.minimum_zoom <= maximum_zoom + 1)
+            fallback->addItem(entry.name, entry.id);
+    }
+    const int chosen = fallback->findData(fallback_id);
+    if (chosen >= 0) fallback->setCurrentIndex(chosen);
+    this->provider_table->setCellWidget(row, 5, fallback);
+    connect(maximum, &QSpinBox::valueChanged, this,
+            [this](int)
+    {
+        if (this->loading_provider_table) return;
+        refreshFallbackChoices();
+        scheduleProviderSave();
+    });
+    connect(fallback, &QComboBox::currentIndexChanged, this, [this, fallback, uuid](int)
+    {
+        if (this->loading_provider_table) return;
+        for (int row_index = 0; row_index < this->provider_table->rowCount(); ++row_index)
+        {
+            const QTableWidgetItem *item = this->provider_table->item(row_index, 1);
+            if (item != nullptr && item->data(Qt::UserRole).toString() == uuid &&
+                this->provider_table->cellWidget(row_index, 5) == fallback)
+            {
+                rememberFallbackChange(row_index);
+                return;
+            }
+        }
+    });
+    connect(minimum, &QSpinBox::valueChanged, this,
+            [this](int)
+    {
+        if (this->loading_provider_table) return;
+        refreshFallbackChoices();
+        scheduleProviderSave();
+    });
+}
+
+void MapSettingsWidget::refreshProviderTable()
+{
+    this->loading_provider_table = true;
+    this->provider_table->setRowCount(0);
+    for (const MapProviderEntry &entry : mapProviderCatalog().providers())
+        addProviderRow(entry.id, entry.name, entry.url,
+                       entry.minimum_zoom, entry.maximum_zoom,
+                       entry.enabled, mapProviderCatalog().fallback(entry.id));
+    refreshFallbackChoices();
+    this->loading_provider_table = false;
+}
+
+void MapSettingsWidget::refreshFallbackChoices()
+{
+    struct AvailableProvider
+    {
+        QString id;
+        QString name;
+        int minimum_zoom = 0;
+        int maximum_zoom = 0;
+        bool enabled = false;
+    };
+    QVector<AvailableProvider> choices;
+    for (int row = 0; row < this->provider_table->rowCount(); ++row)
+    {
+        QTableWidgetItem *name = this->provider_table->item(row, 1);
+        QTableWidgetItem *enabled = this->provider_table->item(row, 0);
+        QSpinBox *min = static_cast<QSpinBox *>(this->provider_table->cellWidget(row, 3));
+        QSpinBox *max = static_cast<QSpinBox *>(this->provider_table->cellWidget(row, 4));
+        if (name == nullptr || enabled == nullptr || min == nullptr || max == nullptr)
+            continue;
+        choices.append({name->data(Qt::UserRole).toString(), name->text(),
+                        min->value(), max->value(), enabled->checkState() == Qt::Checked});
+    }
+    for (int row = 0; row < this->provider_table->rowCount(); ++row)
+    {
+        QComboBox *fallback = static_cast<QComboBox *>(this->provider_table->cellWidget(row, 5));
+        if (fallback == nullptr || row >= choices.size()) continue;
+        const AvailableProvider &selected = choices.at(row);
+        const QString wanted = fallback->currentData().toString();
+        const QSignalBlocker blocker(fallback);
+        fallback->clear();
+        fallback->addItem(QStringLiteral("None (enlarge available tiles)"), QString());
+        for (const AvailableProvider &alternative : choices)
+        {
+            if (alternative.enabled && alternative.id != selected.id &&
+                alternative.maximum_zoom > selected.maximum_zoom &&
+                alternative.minimum_zoom <= selected.maximum_zoom + 1)
+                fallback->addItem(alternative.name, alternative.id);
+        }
+        const int index = fallback->findData(wanted);
+        fallback->setCurrentIndex(index < 0 ? 0 : index);
+        if (index < 0 && !wanted.isEmpty() && !this->loading_provider_table)
+            rememberFallbackChange(row);
+    }
+}
+
+void MapSettingsWidget::rememberFallbackChange(int row)
+{
+    const QString uuid = this->provider_table->item(row, 1)->data(Qt::UserRole).toString();
+    const QString chosen = static_cast<QComboBox *>(
+        this->provider_table->cellWidget(row, 5))->currentData().toString();
+    // Personal preferences are immediate when the provider exists. If a row
+    // was just added or its zoom limits are still awaiting confirmation, apply
+    // the preference as soon as the updated catalog arrives.
+    if (mapProviderCatalog().setFallback(uuid, chosen))
+        this->pending_fallback_choices.remove(uuid);
+    else
+        this->pending_fallback_choices.insert(uuid, chosen);
+}
+
+void MapSettingsWidget::scheduleProviderSave()
+{
+    if (this->loading_provider_table) return;
+    this->provider_edits_pending = true;
+    this->provider_save_debounce->start();
+}
+
+void MapSettingsWidget::saveProviderEdits()
+{
+    if (!this->provider_edits_pending || this->provider_save_in_flight) return;
+    if (!mapProviderCatalog().serverLoaded())
+    {
+        this->provider_status->setText(QStringLiteral(
+            "Cannot edit providers until the server catalog has loaded. Check the map server connection and click Reload."));
+        return;
+    }
+    QVector<MapProviderEntry> proposed;
+    for (int row = 0; row < this->provider_table->rowCount(); ++row)
+    {
+        MapProviderEntry entry;
+        entry.id = this->provider_table->item(row, 1)->data(Qt::UserRole).toString();
+        entry.name = this->provider_table->item(row, 1)->text().trimmed();
+        entry.url = this->provider_table->item(row, 2)->text().trimmed();
+        entry.enabled = this->provider_table->item(row, 0)->checkState() == Qt::Checked;
+        entry.minimum_zoom = static_cast<QSpinBox *>(this->provider_table->cellWidget(row, 3))->value();
+        entry.maximum_zoom = static_cast<QSpinBox *>(this->provider_table->cellWidget(row, 4))->value();
+        const MapProviderEntry *previous = mapProviderCatalog().provider(entry.id);
+        if (previous != nullptr)
+        {
+            entry.coverage = previous->coverage;
+            entry.remote_fetch_enabled = previous->remote_fetch_enabled;
+        }
+        if (entry.name.isEmpty() || entry.url.isEmpty() ||
+            entry.minimum_zoom > entry.maximum_zoom)
+        {
+            this->provider_status->setText(QStringLiteral(
+                "Enter a provider name and tile URL, and check its zoom limits."));
+            return;
+        }
+        proposed.append(entry);
+    }
+    this->provider_edits_pending = false;
+    this->provider_save_in_flight = true;
+    this->provider_status->setText(QStringLiteral("Updating map providers..."));
+    mapProviderCatalog().saveProviders(proposed);
 }
 
 void MapSettingsWidget::scheduleNavigationSave()
@@ -326,8 +650,7 @@ void MapSettingsWidget::saveServerSettings()
     if (saveMapServerClientConfiguration(configuration))
     {
         showServerStatus(
-            QStringLiteral("Saved. Restart the application for the new map server "
-                           "settings to take effect."),
+            QStringLiteral("Connection preferences saved. Restart AOWIS to use them."),
             false);
     }
     else

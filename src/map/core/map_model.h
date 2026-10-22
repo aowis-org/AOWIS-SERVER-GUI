@@ -30,7 +30,7 @@ public:
 
     static constexpr int TileSize = GeoWebMercator::TileSize;
     static constexpr int MinZoom = 1;
-    static constexpr int MaxZoom = 19;
+    static constexpr int MaxZoom = 20;
     static constexpr double MinView3dNetworkGroundOffsetM = 0.0;
     static constexpr double MaxView3dNetworkGroundOffsetM = 50.0;
     static constexpr double MinView3dVerticalExaggeration = 0.5;
@@ -127,6 +127,9 @@ public:
         double distance_m, double latitude_deg, int viewport_height_px);
 
     MapProvider provider() const;
+    QString providerId() const;
+    int imageryMaximumZoom() const;
+    int imageryTileZoom(int requested_zoom) const;
     MapViewMode viewMode() const;
     double view3dNetworkGroundOffsetM() const;
     double view3dVerticalExaggeration() const;
@@ -183,6 +186,7 @@ public:
     void panByPixelsGlobeKeyboard(const QPoint &delta, const QSize &viewport);
 
     void setProvider(MapProvider provider);
+    void setProviderId(const QString &provider_id);
     void setViewMode(MapViewMode view_mode, const QSize &viewport = QSize());
     void setView3dNetworkGroundOffsetM(double offset_m);
     void setView3dVerticalExaggeration(double exaggeration);
@@ -228,6 +232,7 @@ signals:
     void centerChangedWGS84(CoordinateWGS84 wgs);
     void centerChangedUTM(CoordinateUTM utm);
     void providerChanged(MapProvider provider);
+    void providerIdChanged(const QString &provider_id);
     void viewModeChanged(MapViewMode view_mode);
     void view3dVerticalExaggerationChanged(double exaggeration);
     void view3dNavigationStateChanged(MapView3dNavigationState state);
@@ -268,6 +273,7 @@ private:
     double m_centerLat = 11.98119;
 
     MapProvider m_provider = MapProvider::ArcGISSat;
+    QString m_provider_id = QStringLiteral("a0d790c2-f231-55fd-b95e-23c9bd6cb3fc");
     MapViewMode m_view_mode = MapViewMode::TwoD;
     double m_view_3d_network_ground_offset_m = 0.0;
     double m_view_3d_vertical_exaggeration = DefaultView3dVerticalExaggeration;

@@ -32,9 +32,19 @@ public:
     quint64 beginTileRequestBatch(const void *owner, const QString &layout_key);
     void requestTile(const QString &endpoint, const QString &key, int x, int y,
                      int priority, quint64 request_batch, bool foreground = true);
+    // Map provider switch: only these tile sources (the first key segment,
+    // MapModel::tileSourcePath()) are wanted from now on. Queued requests of
+    // other sources are dropped, and their requests in flight stop counting
+    // against the in-flight limit, so the new provider's tiles are requested
+    // at once instead of waiting for up to MaximumTileRequestsInFlight
+    // superseded transfers (slow upstream fills on the map server). Those
+    // still answer and are cached (a switch back finds them).
+    void supersedeTileSources(const QSet<QString> &wanted_sources);
     void deleteTiles(const QString &provider, int zoom,
                      int tile_x_min, int tile_x_max, int tile_y_min, int tile_y_max);
     void setMapServerMode(MapServerMode mode);
+    // Server provider URLs may change while UUIDs remain stable.
+    void invalidateProviderCatalog();
     void requestUpstreamActivity();
     void cancelUpstreamDownloads();
 

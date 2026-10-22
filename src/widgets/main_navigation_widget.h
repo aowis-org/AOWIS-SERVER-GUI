@@ -29,6 +29,9 @@ public:
     int currentIndex() const;
     QWidget *currentWidget() const;
     void setCurrentIndex(int index);
+    // Map fullscreen (MainWindow::setMapFullscreen()): the page alone, without
+    // the navigation bar.
+    void setNavigationBarVisible(bool visible);
 
 signals:
     void currentChanged(int index);

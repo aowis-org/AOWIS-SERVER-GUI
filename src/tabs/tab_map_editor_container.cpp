@@ -19,6 +19,8 @@
 #include <QDebug>
 #include <QKeyEvent>
 #include <QMessageBox>
+#include <QHideEvent>
+#include <functional>
 #include <QMouseEvent>
 #include <QShortcut>
 #include <QWheelEvent>
@@ -120,6 +122,7 @@ MapEditorContainer::MapEditorContainer(MapModel *map_model, MapTileRepository *t
     this->layout->setSpacing(0);
     
     QScrollArea *scroll_controls = new QScrollArea(this);
+    this->map_menu_scroll = scroll_controls;
     scroll_controls->setMinimumWidth(Sizes::SidebarMapEditLeftWidth);
     scroll_controls->setMaximumWidth(Sizes::SidebarMapEditLeftWidth);
     scroll_controls->setWidgetResizable(true);
@@ -159,6 +162,19 @@ MapEditorContainer::MapEditorContainer(MapModel *map_model, MapTileRepository *t
             this->map_canvas, &MapCanvasWidget::setBackgroundOpacity);
     connect(this->map_menu->mapNavigationWidget(), &MapNavigationWidget::signalIconSizeChanged,
             this->map_canvas, &MapCanvasWidget::setIconSizePercent);
+    // The opacity slider follows whether there is a network to show:
+    // leftmost without one, NetworkOpacityPercent once one is loaded, left
+    // again when it is deleted (MapNavigationWidget::setNetworkPresent()).
+    const std::function<void()> sync_network_present = [this]()
+    {
+        const NetworkRenderSnapshot &snapshot = this->hydraulic_data->networkRenderSnapshot();
+        this->map_menu->mapNavigationWidget()->setNetworkPresent(
+            !snapshot.nodes.isEmpty() || !snapshot.links.isEmpty());
+    };
+    connect(this->hydraulic_data, &HydraulicData::signalNetworkLoaded, this, sync_network_present);
+    connect(this->hydraulic_data, &HydraulicData::signalNetworkGeometryChanged, this,
+            [sync_network_present](quint64) { sync_network_present(); });
+    sync_network_present();
     connect(this->map_menu, &MapEditorMenuWidget::signalMapEditorGuideVisibilityChanged, this, &MapEditorContainer::signalMapEditorGuideVisibilityChanged);
     connect(this->map_menu, &MapEditorMenuWidget::signalEditNetworkSectionActive, this, &MapEditorContainer::signalEditNetworkSectionActive);
     
@@ -176,10 +192,16 @@ MapEditorContainer::~MapEditorContainer()
     this->map->setRenderSurfaceGlobeSurfacePointResolver(MapWidget::GlobeSurfacePointResolver());
     this->map->setCachedTerrainElevationResolver(MapWidget::CachedTerrainElevationResolver());
     this->editor_controller->setGlobeCoordinateResolver(MapEditorController::ScreenCoordinateResolver());
-    // A fullscreen map stack is its own window: back into the tab, so it
-    // goes with the container (the monitor's destructor).
-    if (this->bgfx_fullscreen_active)
-        setBgfxFullscreen(false);
+}
+
+void MapEditorContainer::hideEvent(QHideEvent *event)
+{
+    // The main navigation switched to another page (not a minimized
+    // window: spontaneous): the cache sections' selections are left behind
+    // with the tool.
+    if (!event->spontaneous())
+        this->map_menu->clearCacheSelections();
+    QWidget::hideEvent(event);
 }
 
 void MapEditorContainer::showRendererStatus(const QString &text)
@@ -540,6 +562,9 @@ void MapEditorContainer::setupBgfxEditor()
         // A build with margin exceeded the draw-list budget at this zoom
         // (huge networks): no margin until the zoom changes.
         double margin_overflow_world_pixels = 0.0;
+        // The tile selection the last build drew (it is not part of the
+        // visual state): a changed selection is never reused.
+        quint64 tile_selection_revision = 0;
     };
     const std::shared_ptr<OverlayFrame> overlay_frame = std::make_shared<OverlayFrame>();
     surface->setOverlayBuilder(
@@ -551,7 +576,9 @@ void MapEditorContainer::setupBgfxEditor()
             // coordinate, which pannable content does not show.
             const bool content_unchanged = !this->bgfx_visual_state_dirty
                 && (overlay_frame->pannable || !this->bgfx_visual_camera_dirty)
-                && overlay_frame->atlas_generation == cache->generation();
+                && overlay_frame->atlas_generation == cache->generation()
+                && overlay_frame->tile_selection_revision
+                       == this->editor_controller->tileSelectionRevision();
             QPointF offset;
             if (content_unchanged && overlay_frame->pan.reuse(camera, viewport, ratio, &offset))
                 return offset;
@@ -607,6 +634,7 @@ void MapEditorContainer::setupBgfxEditor()
             }
             overlay_frame->pannable = pannable;
             overlay_frame->atlas_generation = cache->generation();
+            overlay_frame->tile_selection_revision = this->editor_controller->tileSelectionRevision();
             return build.offset;
         });
     // Globe: the cache sections' tile selection on the drawn surface, built
@@ -851,48 +879,29 @@ void MapEditorContainer::setBgfxFullscreen(bool fullscreen)
     if (fullscreen && (!this->bgfx_editor_active || this->bgfx_surface == nullptr))
         return;
 
-    // MapMonitorContainer::setBgfxFullscreen(): bgfx is shut down first,
-    // reparenting destroys the embedded native surface (Wayland: the
-    // wl_surface) and a live swapchain on it is a fatal protocol error. The
-    // surface restarts once the window is exposed again. The map stack is
-    // the layout's last widget, so re-adding it restores the order.
-    this->bgfx_surface->suspendForNativeWindowChange();
-    if (fullscreen)
-    {
-        const QPoint previous_global_position = this->map_stack->mapToGlobal(QPoint(0, 0));
-        this->layout->removeWidget(this->map_stack);
-        this->map_stack->setParent(nullptr, Qt::Window);
-        this->map_stack->move(previous_global_position);
-        this->bgfx_fullscreen_active = true;
-        this->map_stack->showFullScreen();
-    }
-    else
-    {
-        this->bgfx_fullscreen_active = false;
-        this->map_stack->hide();
-        this->map_stack->setWindowState(Qt::WindowNoState);
-        this->map_stack->setParent(this, Qt::Widget);
-        this->layout->addWidget(this->map_stack);
-        this->map_stack->show();
-    }
-    this->bgfx_surface->setHudFullscreen(this->bgfx_fullscreen_active);
-    this->bgfx_surface->resumeAfterNativeWindowChange();
+    // In place, as MapMonitorContainer::setBgfxFullscreen(): the main window
+    // hides everything but this map; no reparenting, so bgfx keeps running.
+    applyMapFullscreen(fullscreen);
+    emit signalMapFullscreenRequested(fullscreen);
+}
+
+void MapEditorContainer::applyMapFullscreen(bool fullscreen)
+{
+    if (fullscreen == this->bgfx_fullscreen_active)
+        return;
+
+    this->bgfx_fullscreen_active = fullscreen;
+    if (this->map_menu_scroll != nullptr)
+        this->map_menu_scroll->setVisible(!fullscreen);
+    if (this->bgfx_surface != nullptr)
+        this->bgfx_surface->setHudFullscreen(fullscreen);
     // Keys belong to the canvas (editor keys; in fullscreen also the left
     // menu's button shortcuts, see eventFilter()).
-    this->map_canvas->activateWindow();
     this->map_canvas->setFocus(Qt::OtherFocusReason);
 }
 
 bool MapEditorContainer::eventFilter(QObject *watched, QEvent *event)
 {
-    // Closing the fullscreen map window returns the map to the tab.
-    if (watched == this->map_stack && event->type() == QEvent::Close
-        && this->bgfx_fullscreen_active)
-    {
-        setBgfxFullscreen(false);
-        event->ignore();
-        return true;
-    }
     if (watched == this->map_canvas)
     {
 #ifdef Q_OS_WASM
@@ -917,9 +926,10 @@ bool MapEditorContainer::eventFilter(QObject *watched, QEvent *event)
             event->accept();
             return true;
         }
-        // Fullscreen: the left menu's button shortcuts cannot fire (other
-        // window), so the canvas' key presses try them first - exactly what
-        // the shortcut would have done before the key reached the canvas.
+        // Fullscreen: the left menu is hidden, so its buttons' shortcuts
+        // cannot fire (Qt ignores hidden widgets' shortcuts); the canvas' key
+        // presses try them first - exactly what the shortcut would have done
+        // before the key reached the canvas.
         if (event->type() == QEvent::KeyPress && this->bgfx_fullscreen_active
             && this->map_menu->triggerButtonShortcut(static_cast<QKeyEvent *>(event)))
         {
@@ -1120,6 +1130,15 @@ bool MapEditorMenuWidget::triggerButtonShortcut(const QKeyEvent *event)
         return true;
     }
     return false;
+}
+
+void MapEditorMenuWidget::clearCacheSelections()
+{
+    this->editor_controller->clearTileSelectionOverlay();
+    this->button_tiles_delete->setChecked(false);
+    this->button_tiles_delete->setEnabled(false);
+    this->terrain_selection_valid = false;
+    refreshTerrainDeleteButton();
 }
 
 void MapEditorMenuWidget::setMapEditorGuideChecked(bool checked)

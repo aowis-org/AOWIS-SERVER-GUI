@@ -99,6 +99,11 @@ public:
 
     bool requestTerrainForCurrentView(const QSize &viewport_size);
     void invalidateTerrainView();
+    // Map provider switch: the window tiles' imagery keys name the provider
+    // (MapModel::tileCacheKey()); they are computed when a tile enters the
+    // window, so a switch would otherwise keep looking up (and uploading)
+    // the old provider's cached images until the window is rebuilt.
+    void refreshImageryKeys();
     bool setRenderOriginEcef(
         const GeoWgs84Ellipsoid::EcefPositionD &origin_ecef);
     void notifyTerrainTileAvailable(const QString &key);

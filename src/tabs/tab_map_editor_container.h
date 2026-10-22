@@ -74,6 +74,9 @@ public:
     // presses here instead; true when a button's shortcut matched (the
     // button was clicked).
     bool triggerButtonShortcut(const QKeyEvent *event);
+    // Leaving the editor (main navigation): no tile / terrain selection
+    // stays behind; the Delete buttons are disabled until a new one.
+    void clearCacheSelections();
     
 private:
     CanvasMode mode;
@@ -156,9 +159,14 @@ public:
 
 public slots:
     void setMapEditorGuideChecked(bool checked);
+    // Map fullscreen ended (or started) by the main window: the HUD button
+    // state and the left menu follow. Never emits signalMapFullscreenRequested().
+    void applyMapFullscreen(bool fullscreen);
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
+    // Leaving the editor page clears the cache sections' selections.
+    void hideEvent(QHideEvent *event) override;
 
 private:
     HydraulicData *hydraulic_data = nullptr;
@@ -192,7 +200,8 @@ private:
     // over the editor tool's cursor.
     Qt::CursorShape bgfx_hud_cursor = Qt::ArrowCursor;
     // Map fullscreen (desktop and WASM): the HUD button and the map
-    // fullscreen shortcut, the monitor's reparenting.
+    // fullscreen shortcut, in place like the monitor's (the main window
+    // hides everything else; bgfx keeps running).
     QShortcut *bgfx_fullscreen_shortcut = nullptr;
     bool bgfx_fullscreen_active = false;
     void setupBgfxEditor();
@@ -217,10 +226,15 @@ private:
     QPointF render_move_translation;
     MapEditorController *editor_controller;
     MapEditorMenuWidget *map_menu;
+    // The left menu's scroll area (hidden in map fullscreen).
+    QScrollArea *map_menu_scroll = nullptr;
     
     QHBoxLayout *layout;
     
 signals:
+    // The HUD button / shortcut: the main window enters or leaves map
+    // fullscreen and answers with applyMapFullscreen().
+    void signalMapFullscreenRequested(bool fullscreen);
     void signalMapEditorGuideVisibilityChanged(bool visible);
     void signalEditNetworkSectionActive(bool active);
 };

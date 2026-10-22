@@ -1,4 +1,5 @@
 #include "map/core/map_model.h"
+#include "map/core/map_provider_catalog.h"
 #include "map/render/map_render_diagnostics.h"
 
 #include "map/render/map_render_cache_math.h"
@@ -79,6 +80,22 @@ bool coordinatesEqual(double first, double second)
 MapModel::MapModel(QObject *parent)
     : QObject(parent)
 {
+    connect(&mapProviderCatalog(), &MapProviderCatalog::catalogChanged, this, [this]
+    {
+        const MapProviderEntry *selected = mapProviderCatalog().provider(this->m_provider_id);
+        if (selected == nullptr || !selected->enabled)
+        {
+            for (const MapProviderEntry &candidate : mapProviderCatalog().providers())
+            {
+                if (candidate.enabled) {setProviderId(candidate.id); return;}
+            }
+        }
+        emit providerChanged(this->m_provider);
+    });
+    connect(&mapProviderCatalog(), &MapProviderCatalog::fallbackChanged, this, [this]
+    {
+        emit providerChanged(this->m_provider);
+    });
 }
 
 MapCameraViewState MapModel::cameraViewState() const
@@ -114,6 +131,24 @@ double MapModel::centerLat() const
 MapProvider MapModel::provider() const
 {
     return this->m_provider;
+}
+
+QString MapModel::providerId() const
+{
+    return this->m_provider_id;
+}
+
+int MapModel::imageryMaximumZoom() const
+{
+    return qBound(MinZoom, mapProviderCatalog().maximumSourceZoom(this->m_provider_id), MaxZoom);
+}
+
+int MapModel::imageryTileZoom(int requested_zoom) const
+{
+    const QString source = tileSourcePath(requested_zoom);
+    const MapProviderEntry *entry = mapProviderCatalog().provider(source);
+    return entry == nullptr ? MinZoom
+        : qBound(entry->minimum_zoom, requested_zoom, entry->maximum_zoom);
 }
 
 MapViewMode MapModel::viewMode() const
@@ -234,28 +269,12 @@ QString MapModel::tileEndpoint(int x, int y, int zoom) const
 
 QString MapModel::providerPath() const
 {
-    switch (this->m_provider)
-    {
-    case MapProvider::ArcGISSat:
-        return QStringLiteral("arcgis");
-    case MapProvider::OpenTopoMap:
-        return QStringLiteral("opentopomap");
-    case MapProvider::OpenStreetMap:
-        return QStringLiteral("openstreetmap");
-    case MapProvider::OSMCyclo:
-        return QStringLiteral("osmcyclo");
-    }
-
-    return QStringLiteral("arcgis");
+    return this->m_provider_id;
 }
 
 QString MapModel::tileSourcePath(int zoom) const
 {
-    // Only this source currently provides zoom levels above 17 in the map backend.
-    if (zoom > 17)
-        return QStringLiteral("osmcyclo");
-
-    return providerPath();
+    return mapProviderCatalog().sourceForZoom(this->m_provider_id, zoom);
 }
 
 void MapModel::setView(double lon, double lat, double continuous_zoom, const QSize &viewport)
@@ -726,10 +745,29 @@ void MapModel::clampCenter(const QSize &viewport)
 
 void MapModel::setProvider(MapProvider provider)
 {
-    if (this->m_provider == provider)
+    if (provider == MapProvider::Custom)
         return;
+    setProviderId(MapProviderCatalog::builtinId(int(provider)));
+}
 
-    this->m_provider = provider;
+void MapModel::setProviderId(const QString &provider_id)
+{
+    if (provider_id.isEmpty() || this->m_provider_id == provider_id)
+        return;
+    const MapProviderEntry *entry = mapProviderCatalog().provider(provider_id);
+    if (entry == nullptr || !entry->enabled)
+        return;
+    this->m_provider_id = provider_id;
+    this->m_provider = MapProvider::Custom;
+    for (int number = 1; number <= 4; ++number)
+    {
+        if (provider_id == MapProviderCatalog::builtinId(number))
+        {
+            this->m_provider = MapProvider(number);
+            break;
+        }
+    }
+    emit providerIdChanged(this->m_provider_id);
     emit providerChanged(this->m_provider);
 }
 

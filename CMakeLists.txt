@@ -249,6 +249,7 @@ qt_add_executable(aowis-server-gui
     src/geo/geo_wgs84_ellipsoid.h
 
     # Map core
+    src/map/core/map_provider_catalog.cpp
     src/map/core/map_model.cpp
     src/map/core/map_model.h
     src/map/core/map_models.h
@@ -553,6 +554,13 @@ else()
 endif()
 
 if(BUILD_TESTING AND NOT EMSCRIPTEN)
+    add_executable(aowis-map-provider-fallback-tests
+        tests/map_provider_fallback_resolution_test.cpp)
+    target_include_directories(aowis-map-provider-fallback-tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(aowis-map-provider-fallback-tests PRIVATE Qt6::Core Qt6::Network)
+    add_test(NAME aowis-map-provider-fallback COMMAND aowis-map-provider-fallback-tests)
+    set_tests_properties(aowis-map-provider-fallback PROPERTIES LABELS "aowis")
     # Continuous Web Mercator transforms are independent of Qt, bgfx and the
     # legacy integer zoom/cache path. Always test them, even with bgfx off.
     add_executable(aowis-bgfx-2d-projection-tests tests/bgfx_2d_projection_test.cpp)

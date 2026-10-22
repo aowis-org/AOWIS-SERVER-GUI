@@ -86,6 +86,20 @@ private:
     Qt::WindowStates window_state_saved;
     QRect window_geometry_saved;
     void fullScreenToggle();
+    // Map fullscreen (the map HUD's fullscreen button and shortcut, monitor
+    // and editor): the window goes full screen (desktop: the window; WASM:
+    // the browser page, when the browser allows it) and shows only the
+    // current map page's map - toolbar, status bar, navigation bar, right
+    // docks and the page's left menu are hidden. In place: the map's native
+    // window / browser canvas is never moved, so bgfx keeps running.
+    void setMapFullscreen(bool fullscreen);
+    bool map_fullscreen_active = false;
+    // This mode made the window (browser page) full screen: leaving it
+    // restores the previous state; the window leaving full screen ends it.
+    bool map_fullscreen_entered_window_fullscreen = false;
+    bool map_fullscreen_hid_right_docks = false;
+    bool map_fullscreen_toolbar_visible = true;
+    bool map_fullscreen_status_bar_visible = true;
     void toggleRightDockArea();
     void showEntityInspectorForSelection();
     void hideRightDock(QDockWidget *dock);

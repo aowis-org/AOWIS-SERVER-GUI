@@ -263,8 +263,16 @@ MainWindow::MainWindow(QWidget *parent)
 
     this->main_navigation->setCurrentIndex(2);
 
+    // Map fullscreen: requested by the map pages' HUD button / shortcut;
+    // another page (shortcut) ends it.
+    connect(this->map_monitor, &MapMonitorContainer::signalMapFullscreenRequested,
+            this, &MainWindow::setMapFullscreen);
+    connect(this->map_editor, &MapEditorContainer::signalMapFullscreenRequested,
+            this, &MainWindow::setMapFullscreen);
     connect(this->main_navigation, &MainNavigationWidget::currentChanged, this, [this](int)
     {
+        if (this->map_fullscreen_active)
+            setMapFullscreen(false);
         updateMapEdgePanning();
         this->dock_entity_map_legend->setMapMonitorActive(this->main_navigation->currentWidget() == this->map_monitor);
         this->dock_map_editor_guide->setMapEditorActive(this->main_navigation->currentWidget() == this->map_editor);
@@ -299,8 +307,8 @@ MainWindow::MainWindow(QWidget *parent)
     MapNavigationWidget *map_edit_nav = this->map_editor->mapNavigationWidget();
     MapNavigationWidget *map_mon_nav = this->map_monitor->mapNavigationWidget();
 
-    connect(this->map_model_editor, &MapModel::providerChanged, this->map_model_monitor, &MapModel::setProvider);
-    connect(this->map_model_monitor, &MapModel::providerChanged, this->map_model_editor, &MapModel::setProvider);
+    connect(this->map_model_editor, &MapModel::providerIdChanged, this->map_model_monitor, &MapModel::setProviderId);
+    connect(this->map_model_monitor, &MapModel::providerIdChanged, this->map_model_editor, &MapModel::setProviderId);
     connect(this->map_model_editor, &MapModel::providerChanged, map_edit_nav, &MapNavigationWidget::mapProviderChange);
     connect(this->map_model_monitor, &MapModel::providerChanged, map_mon_nav, &MapNavigationWidget::mapProviderChange);
 
@@ -763,10 +771,87 @@ void MainWindow::changeEvent(QEvent *event)
         QTimer::singleShot(0, this, [this]
         {
             this->top_control_bar->setFullScreenState(this->isFullScreen());
+            // Leaving full screen (window manager, the fullscreen shortcut)
+            // ends map fullscreen too.
+            if (this->map_fullscreen_active && !isFullScreen())
+                setMapFullscreen(false);
             this->updateMapEdgePanning();
         });
     }
 #endif
+}
+
+void MainWindow::setMapFullscreen(bool fullscreen)
+{
+    if (fullscreen == this->map_fullscreen_active)
+        return;
+    this->map_fullscreen_active = fullscreen;
+
+    if (fullscreen)
+    {
+        this->map_fullscreen_toolbar_visible = this->top_control_bar->isVisible();
+        this->map_fullscreen_status_bar_visible = this->footer->statusBar()->isVisible();
+        this->top_control_bar->hide();
+        this->footer->statusBar()->hide();
+        this->main_navigation->setNavigationBarVisible(false);
+        // The right dock area's own hide (it keeps docks that want to show
+        // up, e.g. the inspector on a selection, hidden meanwhile).
+        this->map_fullscreen_hid_right_docks = !this->right_dock_area_hidden;
+        if (this->map_fullscreen_hid_right_docks)
+            toggleRightDockArea();
+#ifdef Q_OS_WASM
+        // Browsers allow this only inside a user gesture; when it is refused
+        // the page still shows nothing but the map.
+        this->map_fullscreen_entered_window_fullscreen = !this->browser_fullscreen_active;
+        if (this->map_fullscreen_entered_window_fullscreen)
+        {
+            emscripten_run_script(
+                "if (!document.fullscreenElement) "
+                "document.documentElement.requestFullscreen().catch(() => {});");
+        }
+#else
+        this->map_fullscreen_entered_window_fullscreen = !isFullScreen();
+        if (this->map_fullscreen_entered_window_fullscreen)
+        {
+            this->window_state_saved = windowState();
+            this->window_geometry_saved = geometry();
+            showFullScreen();
+        }
+#endif
+    }
+    else
+    {
+        this->top_control_bar->setVisible(this->map_fullscreen_toolbar_visible);
+        this->footer->statusBar()->setVisible(this->map_fullscreen_status_bar_visible);
+        this->main_navigation->setNavigationBarVisible(true);
+        if (this->map_fullscreen_hid_right_docks && this->right_dock_area_hidden)
+            toggleRightDockArea();
+        this->map_fullscreen_hid_right_docks = false;
+        if (this->map_fullscreen_entered_window_fullscreen)
+        {
+#ifdef Q_OS_WASM
+            emscripten_run_script(
+                "if (document.fullscreenElement) document.exitFullscreen().catch(() => {});");
+#else
+            if (isFullScreen())
+            {
+                showNormal();
+                setGeometry(this->window_geometry_saved);
+                setWindowState(this->window_state_saved);
+            }
+#endif
+        }
+        this->map_fullscreen_entered_window_fullscreen = false;
+        // Whichever page asked: its HUD button and left menu (no-op for the
+        // one already out).
+        this->map_monitor->applyMapFullscreen(false);
+        this->map_editor->applyMapFullscreen(false);
+    }
+
+#ifndef Q_OS_WASM
+    this->top_control_bar->setFullScreenState(isFullScreen());
+#endif
+    updateMapEdgePanning();
 }
 
 void MainWindow::toggleRightDockArea()
@@ -994,6 +1079,14 @@ EM_BOOL MainWindow::fullScreenChangeCallback(int event_type, const EmscriptenFul
 
     window->browser_fullscreen_active = event->isFullscreen != 0;
     window->top_control_bar->setFullScreenState(window->browser_fullscreen_active);
+    // The browser left the full screen map fullscreen entered (Escape): map
+    // fullscreen ends with it.
+    if (!window->browser_fullscreen_active && window->map_fullscreen_active
+        && window->map_fullscreen_entered_window_fullscreen)
+    {
+        window->map_fullscreen_entered_window_fullscreen = false;
+        window->setMapFullscreen(false);
+    }
     window->updateMapEdgePanning();
     return EM_TRUE;
 }
@@ -1005,9 +1098,9 @@ void MainWindow::updateMapEdgePanning()
         return;
 
 #ifdef Q_OS_WASM
-    const bool fullscreen = this->browser_fullscreen_active;
+    const bool fullscreen = this->browser_fullscreen_active || this->map_fullscreen_active;
 #else
-    const bool fullscreen = this->isFullScreen();
+    const bool fullscreen = isFullScreen() || this->map_fullscreen_active;
 #endif
 
     this->map_edit->setEdgePanningEnabled(fullscreen && this->main_navigation->currentWidget() == this->map_editor);

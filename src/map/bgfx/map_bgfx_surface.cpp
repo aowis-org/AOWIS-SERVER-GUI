@@ -275,7 +275,20 @@ MapBgfxSurface::MapBgfxSurface(MapModel *model, QWidget *parent)
             this->imagery_gpu.clearTextures();
         this->imagery_layout_key = 0;
         this->imagery_requests_dirty = true;
-        this->globe_surface->requestAgain();
+        // The new provider's tiles go out at once: the old provider's queued
+        // requests are dropped and its transfers in flight no longer hold
+        // the request slots (both map tabs share the repository; the
+        // sources are the same for both, as their providers are synced).
+        if (this->tile_repository != nullptr)
+        {
+            QSet<QString> wanted_sources;
+            for (int zoom = MapModel::MinZoom; zoom <= MapModel::MaxZoom; ++zoom)
+                wanted_sources.insert(this->map_model->tileSourcePath(zoom));
+            this->tile_repository->supersedeTileSources(wanted_sources);
+        }
+        // The globe's window tiles carry provider-specific imagery keys:
+        // without this it kept drawing the old provider's cached tiles.
+        this->globe_surface->providerChanged();
         requestRedraw();
     });
     // A unit profile switch changes the scale bar label (HUD).
@@ -604,10 +617,18 @@ void MapBgfxSurface::setTerrainRepository(MapTerrainRepository *terrain_reposito
             this->globe_underground_refresh_requested = true;
             scheduleGlobeUndergroundRefresh();
         }
-        requestRedraw();
+        // Only the globe draws DEM tiles: in 2D (and while hidden) an
+        // arriving tile is no reason for a frame. Both map tabs share the
+        // repository, so this ran for both surfaces on every arrival.
+        if (this->globe_ready && this->map_model->viewMode() == MapViewMode::Globe)
+            requestRedraw();
     });
     connect(this->terrain_repository, &MapTerrainRepository::signalTerrainTileRetryReady, this,
-            [this](const QString &) { requestRedraw(); });
+            [this](const QString &)
+    {
+        if (this->globe_ready && this->map_model->viewMode() == MapViewMode::Globe)
+            requestRedraw();
+    });
     // A terrain cache deletion dropped tiles (Map Editor). Nothing is torn
     // down: the drawn meshes stay until their tiles arrive again - the next
     // frame's requestMissingTerrainTiles() asks for them (the terrain
@@ -2302,10 +2323,12 @@ void MapBgfxSurface::renderImagery(const QSizeF &logical)
     const MapBgfx2dImagery::Availability resident =
         [this](const MapBgfx2dImagery::TileId &tile) { return this->imagery_gpu.hasTexture(tile); };
     MapBgfx2dImagery::Layout layout = MapBgfx2dImagery::buildLayout(
-        camera, MapModel::MinZoom, MapModel::MaxZoom, resident);
+        camera, MapModel::MinZoom, this->map_model->imageryMaximumZoom(), resident);
     this->imagery_zoom = layout.imagery_zoom;
 
-    if (this->tile_repository != nullptr && !layout.requests.empty())
+    if (this->tile_repository != nullptr &&
+        !this->map_model->tileSourcePath(layout.imagery_zoom).isEmpty() &&
+        !layout.requests.empty())
     {
         if (layout.layout_key != this->imagery_layout_key)
         {
@@ -2354,7 +2377,7 @@ void MapBgfxSurface::renderImagery(const QSizeF &logical)
         this->imagery_requests_dirty = false;
         if (uploads > 0)
             layout = MapBgfx2dImagery::buildLayout(
-                camera, MapModel::MinZoom, MapModel::MaxZoom, resident);
+                camera, MapModel::MinZoom, this->map_model->imageryMaximumZoom(), resident);
     }
 
     this->imagery_quad_count = int(layout.quads.size());

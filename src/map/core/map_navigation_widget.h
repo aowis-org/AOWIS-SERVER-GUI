@@ -17,6 +17,8 @@
 
 #include <QTimer>
 
+class QKeyEvent;
+
 #include "map/core/map_widget.h"
 #include "common/_enums_structs.h"
 #include "network/network_symbology.h"
@@ -31,6 +33,17 @@ public:
     void mapProviderChange(MapProvider provider);
     // The map label switches (all off initially).
     MapLabelSettings labelSettings() const;
+    // The network this map shows has entities (true) or none (false): the
+    // opacity slider starts leftmost (imagery unfaded) without a network,
+    // moves to NetworkOpacityPercent when a network appears and back to the
+    // left when it is gone. Changes in between keep the user's position.
+    void setNetworkPresent(bool present);
+    static constexpr int NetworkOpacityPercent = 50;
+    // Map fullscreen hides this widget, and Qt ignores the shortcuts of
+    // hidden buttons: the map forwards its key presses here (true when a
+    // button of root - this widget's buttons included - matched and was
+    // clicked, as its shortcut would have done).
+    static bool triggerButtonShortcut(QWidget *root, const QKeyEvent *event);
     
 private:
     CanvasMode mode;
@@ -38,7 +51,9 @@ private:
     MapWidget *map;
     QWidget *keyboard_focus_target;
     
-    QButtonGroup *button_group_map_select;
+    QButtonGroup *button_group_map_select = nullptr;
+    QComboBox *combo_provider = nullptr;
+    void refreshProviderChoices();
     QRadioButton* map_arcgissat = nullptr;
     QRadioButton* map_opentopomap = nullptr;
     QRadioButton* map_openstreetmap = nullptr;
@@ -53,6 +68,8 @@ private:
     QCheckBox *check_label_node_values = nullptr;
     QCheckBox *check_label_link_values = nullptr;
     QSlider *slider_icon_size = nullptr;
+    QSlider *slider_map_opacity = nullptr;
+    bool network_present = false;
     QComboBox *combo_icon_size_unit = nullptr;
     int icon_size_2d_percent = 100;
     int icon_size_3d_percent = 100;

@@ -131,13 +131,17 @@ void MapWidget::fitViewToBounds(
 void MapWidget::deleteCachedTiles(int zoom, int tile_x_min, int tile_x_max, int tile_y_min, int tile_y_max)
 {
     const int bounded_zoom = qBound(MapModel::MinZoom, zoom, MapModel::MaxZoom);
+    const int source_zoom = this->m_model->imageryTileZoom(bounded_zoom);
+    if (source_zoom > bounded_zoom)
+        return;
+    const int reduction = bounded_zoom - source_zoom;
     this->tile_repository->deleteTiles(
-        this->m_model->tileSourcePath(bounded_zoom),
-        bounded_zoom,
-        tile_x_min,
-        tile_x_max,
-        tile_y_min,
-        tile_y_max);
+        this->m_model->tileSourcePath(source_zoom),
+        source_zoom,
+        tile_x_min >> reduction,
+        tile_x_max >> reduction,
+        tile_y_min >> reduction,
+        tile_y_max >> reduction);
 }
 
 void MapWidget::init()

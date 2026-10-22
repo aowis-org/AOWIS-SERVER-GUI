@@ -71,6 +71,7 @@ void MapEditorController::setTileSelectionKind(MapEditorTileSelectionKind kind)
     if (this->tile_selection_kind == kind)
         return;
     this->tile_selection_kind = kind;
+    ++this->tile_selection_revision;
     emit signalStateChanged();
 }
 
@@ -85,6 +86,7 @@ void MapEditorController::setTerrainZoomRange(int minimum_zoom, int maximum_zoom
         return;
     this->terrain_minimum_zoom = minimum_zoom;
     this->terrain_maximum_zoom = maximum_zoom;
+    ++this->tile_selection_revision;
     emit signalStateChanged();
 }
 
@@ -202,6 +204,11 @@ QRect MapEditorController::currentSelectionRect(const QSize &viewport_size) cons
     const QPoint rectangle_current_pos = this->map_model->screenFromWgs84(
         this->rectangle_current_wgs84, viewport_size).toPoint();
     return QRect(rectangle_start_pos, rectangle_current_pos).normalized();
+}
+
+quint64 MapEditorController::tileSelectionRevision() const
+{
+    return this->tile_selection_revision;
 }
 
 const MapEditorController::TileSelectionOverlay &MapEditorController::tileSelectionOverlay() const
@@ -590,6 +597,7 @@ void MapEditorController::updateTileSelectionOverlayFromCorners(const QSize &vie
         return;
     }
 
+    ++this->tile_selection_revision;
     this->tile_selection_overlay.zoom = zoom;
     this->tile_selection_overlay.tile_x_min = int(std::floor(qMin(first_x, second_x)));
     this->tile_selection_overlay.tile_x_max = int(std::floor(qMax(first_x, second_x)));
@@ -606,6 +614,7 @@ bool MapEditorController::clearTileSelectionOverlayState()
         return false;
 
     this->tile_selection_overlay = TileSelectionOverlay();
+    ++this->tile_selection_revision;
     return true;
 }
 
@@ -653,6 +662,7 @@ void MapEditorController::updateTileSelectionOverlay(const QRect &selected_rect,
         return;
     }
 
+    ++this->tile_selection_revision;
     this->tile_selection_overlay.zoom = zoom;
     this->tile_selection_overlay.tile_x_min = int(std::floor(qMin(tile_x_first, tile_x_second)));
     this->tile_selection_overlay.tile_x_max = int(std::floor(qMax(tile_x_first, tile_x_second)));

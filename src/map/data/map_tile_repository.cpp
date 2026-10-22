@@ -1,4 +1,7 @@
 #include "map/data/map_tile_repository.h"
+#include "map/core/map_provider_catalog.h"
+
+#include <functional>
 #ifdef Q_OS_WASM
 #include "map/data/map_tile_browser_decoder.h"
 #endif
@@ -72,6 +75,8 @@ MapTileRepository::MapTileRepository(QObject *parent)
     this->tile_decode_pool.setMaxThreadCount(decode_threads);
     this->tile_decode_pool.setExpiryTimeout(30000);
 
+    connect(&mapProviderCatalog(), &MapProviderCatalog::catalogChanged,
+            this, &MapTileRepository::invalidateProviderCatalog);
     initServerMapInterface();
 }
 
@@ -214,6 +219,41 @@ int MapTileRepository::backgroundTileRequestInFlightLimit() const
         return 2;
 #endif
     return MaximumBackgroundTileRequestsInFlight;
+}
+
+void MapTileRepository::supersedeTileSources(const QSet<QString> &wanted_sources)
+{
+    const std::function<bool(const QString &)> wanted = [&wanted_sources](const QString &key)
+    {
+        const qsizetype separator = key.indexOf(QLatin1Char('/'));
+        return separator > 0 && wanted_sources.contains(key.left(separator));
+    };
+
+    QHash<QString, PendingTileRequest>::iterator queued = this->tile_requests_queued.begin();
+    while (queued != this->tile_requests_queued.end())
+    {
+        if (wanted(queued.key()))
+        {
+            ++queued;
+            continue;
+        }
+        const QString key = queued.key();
+        queued = this->tile_requests_queued.erase(queued);
+        this->tiles_pending.remove(key);
+        this->tiles_invalidated_while_pending.remove(key);
+    }
+
+    // In flight: still pending (the answer is decoded and cached), just no
+    // longer occupying a request slot.
+    const QList<QString> in_flight = this->tiles_in_flight.values();
+    for (const QString &key : in_flight)
+    {
+        if (wanted(key))
+            continue;
+        this->tiles_in_flight.remove(key);
+        this->background_tiles_in_flight.remove(key);
+    }
+    scheduleTileRequestDispatch();
 }
 
 void MapTileRepository::scheduleTileRequestDispatch()
@@ -476,6 +516,15 @@ void MapTileRepository::cancelUpstreamDownloads()
 {
     if (this->interface_map != nullptr)
         this->interface_map->cancelMapTileUpstreamDownloads();
+}
+
+void MapTileRepository::invalidateProviderCatalog()
+{
+    // Provider UUIDs are stable, but their URLs are editable. Old HTTP
+    // replies and decoded tiles must not populate the replacement catalog.
+    this->cache.clear();
+    initServerMapInterface();
+    emit signalTilesDeleted();
 }
 
 void MapTileRepository::setMapServerMode(MapServerMode mode)

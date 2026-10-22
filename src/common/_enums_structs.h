@@ -18,7 +18,8 @@ enum MapProvider
     ArcGISSat       = 1,
     OpenStreetMap   = 2,
     OpenTopoMap     = 3,
-    OSMCyclo        = 4
+    OSMCyclo        = 4,
+    Custom          = 5
 };
 
 enum StatusColorCode

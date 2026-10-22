@@ -251,6 +251,18 @@ bool MapGlobeSurfacePreparation::requestTerrainForCurrentView(
     return true;
 }
 
+void MapGlobeSurfacePreparation::refreshImageryKeys()
+{
+    if (this->map_model == nullptr)
+        return;
+    for (MapGlobeSurfaceTile &tile : this->window_tiles)
+    {
+        if (tile.is_cap)
+            continue;
+        tile.imagery_key = this->map_model->tileCacheKey(tile.tile_x, tile.tile_y, tile.zoom);
+    }
+}
+
 void MapGlobeSurfacePreparation::invalidateTerrainView()
 {
     this->window_dirty = true;

@@ -447,6 +447,11 @@ QWidget *MainNavigationWidget::currentWidget() const
     return this->page_layout->currentWidget();
 }
 
+void MainNavigationWidget::setNavigationBarVisible(bool visible)
+{
+    this->navigation_bar->setVisible(visible);
+}
+
 void MainNavigationWidget::setCurrentIndex(int index)
 {
     if (index < 0 || index >= this->page_layout->count())

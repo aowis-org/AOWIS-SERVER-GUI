@@ -2,11 +2,16 @@
 #define MAP_SETTINGS_WIDGET_H
 
 #include <QWidget>
+#include <QHash>
+#include <QString>
 
 class QLabel;
 class QLineEdit;
 class QPushButton;
 class QTimer;
+class QTableWidget;
+class QComboBox;
+class QNetworkAccessManager;
 class SliderNumberControl;
 
 // Settings > Map Settings: navigation sensitivity, terrain performance knobs
@@ -35,8 +40,22 @@ private:
     QLineEdit *server_base_url_edit = nullptr;
     QLineEdit *server_api_key_edit = nullptr;
     QLineEdit *server_delete_api_key_edit = nullptr;
-    QPushButton *server_save_button = nullptr;
     QLabel *server_status = nullptr;
+    QTableWidget *provider_table = nullptr;
+    QLabel *provider_status = nullptr;
+    QHash<QString, QString> pending_fallback_choices;
+    QTimer *provider_save_debounce = nullptr;
+    bool loading_provider_table = false;
+    bool provider_edits_pending = false;
+    bool provider_save_in_flight = false;
+    void refreshProviderTable();
+    void refreshFallbackChoices();
+    void rememberFallbackChange(int row);
+    void scheduleProviderSave();
+    void addProviderRow(const QString &uuid, const QString &name, const QString &url,
+                        int minimum_zoom, int maximum_zoom, bool enabled,
+                        const QString &fallback_id = QString());
+    void saveProviderEdits();
 
     void buildNavigationSection(QWidget *parent_widget);
     void buildPerformanceSection(QWidget *parent_widget);

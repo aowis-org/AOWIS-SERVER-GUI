@@ -81,6 +81,9 @@ public:
     bool rectangleDragging() const;
     QRect currentSelectionRect(const QSize &viewport_size) const;
     const TileSelectionOverlay &tileSelectionOverlay() const;
+    // Changes with every change of what the tile selection shows (range,
+    // kind, terrain range): renderers that keep a built overlay compare it.
+    quint64 tileSelectionRevision() const;
     TileSelectionRange tileSelectionRange(int zoom) const;
     std::optional<Qt::CursorShape> cursorShape() const;
 
@@ -136,6 +139,7 @@ private:
     CoordinateWGS84 rectangle_start_wgs84;
     CoordinateWGS84 rectangle_current_wgs84;
     TileSelectionOverlay tile_selection_overlay;
+    quint64 tile_selection_revision = 0;
     MapEditorTileSelectionKind tile_selection_kind = MapEditorTileSelectionKind::MapTiles;
     int terrain_minimum_zoom = 0;
     int terrain_maximum_zoom = -1;

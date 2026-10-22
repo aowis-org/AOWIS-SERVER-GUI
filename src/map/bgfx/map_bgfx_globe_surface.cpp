@@ -318,6 +318,12 @@ void MapBgfxGlobeSurface::requestAgain()
     this->window_tiles_requested = false;
 }
 
+void MapBgfxGlobeSurface::providerChanged()
+{
+    this->surface_preparation.refreshImageryKeys();
+    this->window_tiles_requested = false;
+}
+
 void MapBgfxGlobeSurface::requestTerrainForCurrentView(const QSize &logical_viewport)
 {
     if (!this->surface_preparation.requestTerrainForCurrentView(logical_viewport))
@@ -420,20 +426,32 @@ void MapBgfxGlobeSurface::requestImagery()
 {
     if (this->tile_repository == nullptr || this->window_tiles_requested)
         return;
-    // One batch per window: the repository drops queued requests of tiles
-    // that left the view (like the 2D map's per-layout batches).
+    // One batch per provider: a switch starts a new one, so the new
+    // provider's requests outrank the old one's. Not one per window
+    // rebuild: while the camera moves the window is rebuilt nearly every
+    // frame, and a new batch each time re-sorted and pruned the request
+    // queue and dropped still-wanted requests (uneven tile streaming).
     const quint64 batch = this->tile_repository->beginTileRequestBatch(
-        this, QStringLiteral("bgfx-globe"));
+        this, QStringLiteral("bgfx-globe|%1").arg(this->map_model->tileSourcePath(MapModel::MinZoom)));
     for (const MapGlobeSurfaceTile &tile : this->surface_preparation.windowTiles())
     {
-        if (tile.imagery_key.isEmpty() || this->tile_repository->tile(tile.imagery_key) != nullptr)
+        const int source_zoom = this->map_model->imageryTileZoom(tile.zoom);
+        if (source_zoom > tile.zoom)
+            continue;
+        const int offset = tile.zoom - source_zoom;
+        const int source_x = tile.tile_x >> offset;
+        const int source_y = tile.tile_y >> offset;
+        if (this->map_model->tileSourcePath(source_zoom).isEmpty())
+            continue;
+        const QString source_key = this->map_model->tileCacheKey(source_x, source_y, source_zoom);
+        if (this->tile_repository->tile(source_key) != nullptr)
             continue;
         const int priority = mapGlobeSurfaceTileRequestPriority(
             tile.tile_x, tile.tile_y, tile.zoom,
             this->map_model->centerLon(), this->map_model->centerLat());
         this->tile_repository->requestTile(
-            this->map_model->tileEndpoint(tile.tile_x, tile.tile_y, tile.zoom),
-            tile.imagery_key, tile.tile_x, tile.tile_y, priority, batch, true);
+            this->map_model->tileEndpoint(source_x, source_y, source_zoom),
+            source_key, source_x, source_y, priority, batch, true);
     }
     this->window_tiles_requested = true;
 }

@@ -84,6 +84,9 @@ public:
     void notifyTerrainTileAvailable(const QString &key);
     // A failed terrain tile became retryable, or the provider changed.
     void requestAgain();
+    // Map provider switch: the window's imagery keys follow the new provider
+    // and its tiles are requested again (the textures were cleared).
+    void providerChanged();
     // Selects the visible window now (outside a frame) and requests its DEM
     // tiles: terrain starts loading for a freshly fitted network before the
     // next frame. logical_viewport as FrameInputs::logical_viewport.

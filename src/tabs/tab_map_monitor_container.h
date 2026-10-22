@@ -122,6 +122,9 @@ public:
     MapNavigationWidget *mapNavigationWidget();
 
 public slots:
+    // Map fullscreen ended (or started) by the main window: the HUD button
+    // state and the left menu follow. Never emits signalMapFullscreenRequested().
+    void applyMapFullscreen(bool fullscreen);
     void setNodePalette(NetworkSymbologyPalette palette, bool flipped);
     void setLinkPalette(NetworkSymbologyPalette palette, bool flipped);
     void setHeatmapPalette(NetworkSymbologyPalette palette, bool flipped);
@@ -143,6 +146,8 @@ private:
     // is deliberately no CPU or JavaScript map renderer behind it.
     QLabel *renderer_status = nullptr;
     MapMonitorMenuWidget *map_menu = nullptr;
+    // The left menu's scroll area (hidden in map fullscreen).
+    QScrollArea *map_menu_scroll = nullptr;
     int network_background_opacity = 0;
     NetworkSymbologySettings symbology_settings;
     bool visual_control_symbology_apply_pending = false;
@@ -172,8 +177,10 @@ private:
     int bgfx_terrain_active = 0;
     int bgfx_terrain_queued = 0;
     // Map fullscreen for the bgfx surface (desktop and WASM): the HUD button
-    // and the MapMonitorFullscreen shortcut: the map stack is reparented
-    // into its own full-screen window.
+    // and the MapMonitorFullscreen shortcut. In place: the main window hides
+    // everything but this map (signalMapFullscreenRequested()); the map's
+    // native window is never reparented, so bgfx keeps running (no device
+    // restart, no re-upload) and the browser canvas keeps its stacking.
     QShortcut *bgfx_fullscreen_shortcut = nullptr;
     bool bgfx_fullscreen_active = false;
     // Pointer shape the bgfx HUD wants under the pointer (pointing hand over
@@ -225,6 +232,9 @@ private:
 
 
 signals:
+    // The HUD button / shortcut: the main window enters or leaves map
+    // fullscreen and answers with applyMapFullscreen().
+    void signalMapFullscreenRequested(bool fullscreen);
     void signalShowMapLegendNode(VisualNode visual_node);
     void signalShowMapLegendLink(VisualLink visual_link);
     void signalShowMapLegendHeatmap(VisualHeatmap visual_heatmap);

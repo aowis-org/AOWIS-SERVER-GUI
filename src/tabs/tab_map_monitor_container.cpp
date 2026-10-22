@@ -333,6 +333,7 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
     this->layout->setSpacing(0);
     
     QScrollArea *scroll_controls = new QScrollArea(this);
+    this->map_menu_scroll = scroll_controls;
     scroll_controls->setMinimumWidth(Sizes::SidebarLeftWidth);
     scroll_controls->setMaximumWidth(Sizes::SidebarLeftWidth);
     scroll_controls->setWidgetResizable(true);
@@ -361,6 +362,19 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
     this->map_stack_layout->setStackingMode(QStackedLayout::StackAll);
     connect(this->map_menu->mapNavigationWidget(), &MapNavigationWidget::signalSlideOpacityChanged,
         this, &MapMonitorContainer::setNetworkBackgroundOpacity);
+    // The opacity slider follows whether there is a network to show:
+    // leftmost without one, NetworkOpacityPercent once one is loaded, left
+    // again when it is deleted (MapNavigationWidget::setNetworkPresent()).
+    const std::function<void()> sync_network_present = [this]()
+    {
+        const NetworkRenderSnapshot &snapshot = this->hydraulic_data->networkRenderSnapshot();
+        this->map_menu->mapNavigationWidget()->setNetworkPresent(
+            !snapshot.nodes.isEmpty() || !snapshot.links.isEmpty());
+    };
+    connect(this->hydraulic_data, &HydraulicData::signalNetworkLoaded, this, sync_network_present);
+    connect(this->hydraulic_data, &HydraulicData::signalNetworkGeometryChanged, this,
+            [sync_network_present](quint64) { sync_network_present(); });
+    sync_network_present();
     connect(this->map_menu->mapNavigationWidget(),
         &MapNavigationWidget::signalMonitorIconSizeUnitChanged, this,
         [this](NetworkSymbologySizeUnit unit)
@@ -402,7 +416,18 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
         // the status label is shown. MapWidget keeps map navigation input.
         MapBgfxSurface *surface = new MapBgfxSurface(this->map_model, this->map_stack);
         surface->setNavigationHandlers(
-            [this](QKeyEvent *event) { return this->map->handleKeyPressEvent(event); },
+            [this](QKeyEvent *event)
+            {
+                // Map fullscreen hides the left menu, whose buttons'
+                // shortcuts (map providers, visuals) then cannot fire.
+                if (event->type() == QEvent::KeyPress && this->bgfx_fullscreen_active
+                    && MapNavigationWidget::triggerButtonShortcut(this->map_menu, event))
+                {
+                    event->accept();
+                    return true;
+                }
+                return this->map->handleKeyPressEvent(event);
+            },
             [this](QKeyEvent *event) { return this->map->handleKeyReleaseEvent(event); },
             [this]() { this->map->clearKeyboardPanInput(); });
         surface->setNavigationWheelHandler(
@@ -874,8 +899,6 @@ MapMonitorContainer::~MapMonitorContainer()
     this->map->setRenderSurfaceScreenCoordinateResolver(MapWidget::ScreenCoordinateResolver());
     this->map->setRenderSurfaceGlobeSurfacePointResolver(MapWidget::GlobeSurfacePointResolver());
     this->map->setCachedTerrainElevationResolver(MapWidget::CachedTerrainElevationResolver());
-    if (this->bgfx_fullscreen_active)
-        setBgfxFullscreen(false);
 }
 
 void MapMonitorContainer::setNodePalette(NetworkSymbologyPalette palette, bool flipped)
@@ -968,15 +991,15 @@ void MapMonitorContainer::showMapLegendHeatmap(VisualHeatmap visual_heatmap)
 
 bool MapMonitorContainer::eventFilter(QObject *watched, QEvent *event)
 {
-    // Closing the bgfx fullscreen window returns the map to the tab.
-    if (watched == this->map_stack && event->type() == QEvent::Close
-        && this->bgfx_fullscreen_active)
+    // Map fullscreen: the hidden left menu's button shortcuts, for keys the
+    // map widget receives itself (WASM; desktop keys of the native window
+    // take the navigation key handler, see setNavigationHandlers()).
+    if (watched == this->map && event->type() == QEvent::KeyPress && this->bgfx_fullscreen_active
+        && MapNavigationWidget::triggerButtonShortcut(this->map_menu, static_cast<QKeyEvent *>(event)))
     {
-        setBgfxFullscreen(false);
-        event->ignore();
+        event->accept();
         return true;
     }
-
 #ifdef Q_OS_WASM
     // A press on the map or a HUD element brings the keys back to the map
     // (desktop: MapBgfxSurface does it for its native window), also when
@@ -1340,36 +1363,31 @@ void MapMonitorContainer::setBgfxFullscreen(bool fullscreen)
     if (fullscreen && (!this->bgfx_render_surface_active || this->bgfx_surface == nullptr))
         return;
 
-    // The map stack becomes its own full-screen window (desktop: on the
-    // screen; WASM: over the whole Qt screen of the page, the bgfx canvas
-    // follows the surface's geometry). bgfx is shut down first:
-    // reparenting destroys the embedded native surface (Wayland: the
-    // wl_surface) and a live swapchain on it is a fatal protocol error. The
-    // surface restarts once the window is exposed (WASM: shown) again.
-    this->bgfx_surface->suspendForNativeWindowChange();
-    if (fullscreen)
-    {
-        const QPoint previous_global_position = this->map_stack->mapToGlobal(QPoint(0, 0));
-        this->layout->removeWidget(this->map_stack);
-        this->map_stack->setParent(nullptr, Qt::Window);
-        this->map_stack->move(previous_global_position);
-        this->bgfx_fullscreen_active = true;
-        this->map_stack->showFullScreen();
-    }
-    else
-    {
-        this->bgfx_fullscreen_active = false;
-        this->map_stack->hide();
-        this->map_stack->setWindowState(Qt::WindowNoState);
-        this->map_stack->setParent(this, Qt::Widget);
-        this->layout->addWidget(this->map_stack);
-        this->map_stack->show();
-    }
-    this->bgfx_surface->setHudFullscreen(this->bgfx_fullscreen_active);
-    this->bgfx_surface->resumeAfterNativeWindowChange();
-    this->bgfx_surface->focusNavigationInput();
+    // In place (MainWindow::setMapFullscreen()): the main window goes full
+    // screen and hides everything but this map. The map stack is never
+    // reparented, so its native window (desktop) or the shared browser
+    // canvas (WASM) stays as it is: bgfx keeps running, nothing is shut
+    // down or uploaded again. (A reparented map stack forced a full bgfx
+    // restart, and in the browser the full-screen Qt window covered the bgfx
+    // canvas: an empty page.)
+    applyMapFullscreen(fullscreen);
+    emit signalMapFullscreenRequested(fullscreen);
 }
 
+void MapMonitorContainer::applyMapFullscreen(bool fullscreen)
+{
+    if (fullscreen == this->bgfx_fullscreen_active)
+        return;
+
+    this->bgfx_fullscreen_active = fullscreen;
+    if (this->map_menu_scroll != nullptr)
+        this->map_menu_scroll->setVisible(!fullscreen);
+    if (this->bgfx_surface != nullptr)
+    {
+        this->bgfx_surface->setHudFullscreen(fullscreen);
+        this->bgfx_surface->focusNavigationInput();
+    }
+}
 
 void MapMonitorContainer::applySymbology()
 {

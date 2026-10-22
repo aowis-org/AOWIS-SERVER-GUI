@@ -149,3 +149,40 @@ WebAssembly builds render through WebGL 2. If the GPU renderer cannot start, Map
 The bgfx map renders on demand: a frame is drawn only when the camera, the viewport, the content or an animation changes, so an idle map costs no CPU or GPU time in the browser. While the map is only panned, the editor's icons and the map labels are not rebuilt for every frame: they are built once with a margin of about a fifth of the screen around the visible area and then moved with the map, and built again only when the pan leaves that margin (zooming, resizing and editing rebuild them as before). Map tiles are decoded by the browser's own native image decoders (`createImageBitmap` on a dedicated worker, pixels written straight into the GPU's pixel format) and handed to WebGL without a further copy, into a few large atlas textures, so all visible map tiles are drawn with a single draw call; browsers without `OffscreenCanvas` in workers, and the first tiles after start, use Qt's decoders on worker threads instead. The browser canvas uses multisampling only below a device pixel ratio of 1.75 (on HiDPI screens the pixels are small enough without it, and there are four times as many) and requests the high-performance GPU on systems with two. `compile_wasm.sh` preserves an existing `build-wasm-dist/aowis-server-gui.ini`.
 
 WebAssembly builds include `aowis-server-gui.ini` beside the generated `index.html`. Set `examples_builtin_enable`, `base_url`, `api_key`, and `delete_api_key` there and reload the page. The browser first loads the configuration from the same deployment directory as `index.html`, so subdirectory deployments work correctly; `/aowis-server-gui.ini` at the origin root remains a compatibility fallback. Existing administrator-edited files in `build-wasm` and `build-wasm-dist` are preserved across rebuilds. The normal API key is used for tile requests; the delete API key is used only for tile-cache deletion requests.
+
+## Map providers and personal fallback chains
+
+The REST map server owns the raster provider catalog: stable UUIDs, display
+names, URL templates, enabled state, zoom ranges and download policies. In
+**Settings → Map Settings → 2D Map Providers**, edit those properties directly;
+AOWIS submits server-provider edits automatically shortly after a change. The
+**Add provider** and **Remove selected** buttons edit the catalog; **Reload from
+server** retrieves its current state (discarding any unsent table edits). The
+server must be reachable before provider editing becomes available. Failed
+submissions retain the edits in the table and show an error, so they can be
+corrected and retried. There is no provider Save button.
+
+**My fallback** is independent of the server catalog. Each user's fallback
+selection takes effect immediately and is saved locally in the native GUI's
+`aowis-server-gui.ini`, under `[map_provider_fallback]` by provider UUID.
+Selecting a fallback never changes the server's provider definitions. A new
+provider's fallback is saved once its UUID has been accepted by the server.
+WASM builds do not currently persist these personal fallback preferences.
+
+Fallbacks **cascade**: if A supports zoom 0–17, B 0–18 and C 0–20, choosing
+A → B and B → C uses A through 17, B at 18 and C at 19–20. Every hop must
+extend the previous maximum zoom without leaving a gap. The fallback dropdown
+only offers enabled providers that meet that condition. This strictly
+increasing zoom limit also prevents circular fallback chains. If there is no
+valid next provider, the current highest-resolution tiles are smoothly enlarged
+instead of requesting unsupported higher-zoom tiles from upstream.
+
+The map layer picker displays all enabled sources announced by
+`GET /map/v1/providers`; F1–F4 still select the four built-in sources when
+available. Startup uses built-in provider entries until discovery succeeds.
+Map server **connection** fields are saved when editing finishes; a GUI restart
+is required before the changed connection takes effect. Map control and
+performance settings save as you adjust them. The server stores catalog edits
+in its own persistent state, leaving its administrator-owned `/etc` INI
+untouched. For deployment ownership and HTTP API details, see the map-server
+README. The provider-editing API currently has no authentication.
