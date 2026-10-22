@@ -20,24 +20,41 @@ networks or run distribution editing.
 
 ## Ownership and boundaries
 
-**Present implementation (Stage 2):** `MainWindow` owns two `MapModel`s. The distribution
-monitor and editor each own a `MapWidget`, `MapBgfxSurface`, map-specific HUD
-and interaction logic. Their left controls are now hosted by independent
-`MapModeToolPanel` widgets (`src/tabs/map_mode_tool_panel.h/.cpp`), whose
-ownership includes only the controls, scrolling and mode-selector widgets;
-they never own map models, viewports or GPU resources. The legacy containers
-still host these panels alongside their map stacks, preserving existing widget
-hierarchy and behavior until the renderer migration. The workspace can discover
-the selected panel through `activeToolPanel()` and containers expose
-`toolPanel()` / `mapViewport()` as explicit separation points. `MapWorkspaceWidget` owns the pages and tab selectors,
-but not their renderers. Only one map surface owns the process-global bgfx
-device at a time; switching between distribution modes can stop and start it.
+**Present implementation (Stage 3):** `MapWorkspaceWidget` now owns the
+Distribution Monitor `MapModel` and hosts its **existing** map stack (including
+`MapWidget`, `MapBgfxSurface`, and the native bgfx window) beside its independent
+`MapModeToolPanel`. `MapWorkspaceViewportPage` performs this single, pre-show
+transfer without recreating or reparenting the renderer surface itself.
+The existing `MapMonitorContainer` survives as a hidden *behavior/controller*
+widget in that page: its event filters, HUD, picking, symbology, fullscreen,
+timers and signal connections remain connected to the same map and controls.
+The controller is made the page's **first child** so its destructor can safely
+clear map resolvers before the viewport is destroyed. The old controller
+`QHBoxLayout` retains neither migrated widget.
+
+`MainWindow` still constructs the two models for now, but immediately after
+constructing the workspace the monitor model becomes its child. The Distribution
+Editor still has its separate `MapModel`, `MapWidget`, `MapBgfxSurface`, tool panel,
+and editor interaction/controller system. The editor page retains its existing
+widget hierarchy. The drainage modes are empty placeholders.
+
+**This is deliberately not the final one-renderer state.** The workspace's
+`QStackedWidget` still hides the monitor viewport when showing the legacy editor
+page. Because bgfx is process-global and there are still two GPU surfaces,
+the normal editor/monitor switch continues to stop/restart bgfx until Stage 4.
+Moving the monitor *once at construction* is safe; moving a live native surface
+between pages during mode switches is explicitly prohibited.
+
+`MapModeToolPanel` owns scrolling and the mode-selector UI but never owns a
+map model, native window or renderer. Mode tools and the monitor viewport are
+siblings in the workspace page. The controller currently retains the behavior
+of the old monitor until its responsibilities can be extracted into a
+non-widget controller when completing the single-viewport migration.
 
 `MapWorkspaceWidget::activeMap()` and `activeModel()` provide *non-owning*
 navigation access, returning `nullptr` for the currently empty drainage modes.
-MainWindow uses these accessors to route footer zoom edits. They are also the
-compatibility seam for giving the workspace one authoritative map in the
-future without making MainWindow depend on which legacy page is active.
+MainWindow uses these accessors to route footer zoom edits. They will point to
+the same shared map for both distribution modes after the editor migrates.
 
 **Intended shared viewport:** the Maps workspace exclusively owns one
 `MapModel` (camera and provider), one `MapWidget` (continuous navigation), one
@@ -68,10 +85,12 @@ renderers:
 - **Lifecycle:** destruction/recreation of the native surface can still
   require an explicit bgfx device restart. Merely switching modes must not.
 
-Do not merge these ownership changes into one large untestable patch. The tool-panel extraction is now complete (Stage 2). Next attach the monitor to the shared
-viewport, migrate the editor, and finally remove obsolete sync/device-handover
-logic. Fullscreen and WASM input should remain working at every intermediate
-stage.
+Do not merge these ownership changes into one large untestable patch. The
+tool-panel extraction (Stage 2) and the monitor viewport ownership transfer
+(Stage 3) are complete. Next migrate the editor's rendering and interaction to
+the workspace's monitor-origin viewport (Stage 4), then isolate mode-specific
+HUD/symbology, and finally remove obsolete sync/device-handover logic.
+Fullscreen and WASM input must remain working at every intermediate stage.
 
 ## Diagnostics and regression baseline
 
@@ -97,8 +116,10 @@ cumulative process-wide counters, including both legacy bgfx surfaces.
 | `globe_geometry_rebuilt`, `globe_flow_rebuilt` | Existing globe preparation diagnostics |
 | `frames` | Submitted frames and their CPU time, **not** GPU execution time |
 
-These diagnostics establish a baseline, not an assertion that the shared
-viewport exists already. Once consolidated, a mode switch should increase
+These diagnostics establish a baseline. In Stage 3 the monitor's viewport is
+workspace-owned, but there are still two GPU surfaces; device shutdown/start
+counts on monitor/editor switches are still **expected**. Once consolidated,
+a mode switch should increase
 `workspace_mode_switch` but **not** `bgfx_device_started`,
 `bgfx_device_stopped` or network geometry counters. Initial startup, a true
 model change, or native surface loss may legitimately affect those counters.
@@ -111,7 +132,11 @@ ctest --test-dir build-linux-tests-debug --output-on-failure \
   -R 'aowis-map-(workspace|mode-tool-panel|camera-invalidation|retained-network-scene)'
 ```
 
-The tool-panel test checks that each controls tree is independently parented,
+The workspace viewport-page test checks that a monitor-style controller's
+map stack and tools transfer to the workspace without reconstruction, that
+fullscreen only hides controls, and that the controller is destroyed before
+the map it references. It uses ordinary Qt widgets rather than initializing
+bgfx. The tool-panel test checks that each controls tree is independently parented,
 mode tabs remain outside the scroll viewport, scrollbar behavior matches the
 old controls, and fullscreen hides only the requested panel. It runs through
 the `aowis-tests` aggregate build target using Qt's offscreen platform.
@@ -137,6 +162,6 @@ Manual acceptance baseline before moving ownership:
 5. Repeat on Linux desktop, Windows and WASM during each relevant migration.
    A unit test without a GPU cannot prove native-window behavior.
 
-The end state is **one persistent GPU renderer, one authoritative camera and
+The end state, *not yet achieved in Stage 3*, is **one persistent GPU renderer, one authoritative camera and
 four selectable modes**; no CPU-era zoom buckets or geometry rebuilds tied
 to fractional zoom are permitted.

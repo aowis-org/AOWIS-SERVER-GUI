@@ -13,9 +13,9 @@ class MapModel;
 class QStackedWidget;
 class QTabBar;
 
-// One main-navigation map page. Stage 1 defines the mode contract without
-// changing ownership: distribution monitor/editor still own separate maps.
-// Stage 2 extracts the tools; Stage 3 transfers surface ownership here.
+// One main-navigation map page. Stage 3 hosts the monitor's map stack and
+// navigation model in this workspace. The editor retains its legacy viewport
+// until its interaction controller is migrated in Stage 4.
 class MapWorkspaceWidget final : public QWidget
 {
     Q_OBJECT
@@ -44,13 +44,13 @@ public:
     bool isDistributionEditorActive() const;
     bool isDistributionMonitorActive() const;
 
-    // Non-owning access to the active navigation model. Drainage modes have
-    // no map yet; callers must handle nullptr. This is the MainWindow seam
-    // for switching from separate viewports to one shared viewport later.
+    // Non-owning access to the active navigation model. The workspace owns
+    // the monitor model and viewport; the editor's model/viewport remain
+    // temporary legacy instances. Drainage modes return nullptr.
     MapWidget *activeMap() const;
     MapModel *activeModel() const;
-    // Stage 2 seam: tools no longer contain a GPU viewport and can later be
-    // hosted directly by the workspace. Legacy pages still host them today.
+    // Tools are independent of their map renderer. The workspace directly
+    // hosts monitor controls; the legacy editor page still hosts its controls.
     MapModeToolPanel *activeToolPanel() const;
 
 

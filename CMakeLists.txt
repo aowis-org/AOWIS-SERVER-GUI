@@ -217,6 +217,7 @@ qt_add_executable(aowis-server-gui
     src/tabs/tab_logs_widget.cpp
     src/tabs/tab_logs_widget.h
     src/tabs/tab_map_workspace.cpp
+    src/tabs/map_workspace_viewport_page.cpp
     src/tabs/tab_map_workspace.h
     src/tabs/map_workspace_mode.h
     src/tabs/map_mode_tool_panel.cpp
@@ -589,6 +590,21 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
     add_test(NAME aowis-map-mode-tool-panel
         COMMAND aowis-map-mode-tool-panel-tests)
     set_tests_properties(aowis-map-mode-tool-panel PROPERTIES
+        LABELS "aowis"
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+    # Stage 3: test that a migrated map keeps its viewport and controls as
+    # siblings, and that its controller dies before the map it references.
+    add_executable(aowis-map-workspace-viewport-page-tests
+        tests/map_workspace_viewport_page_test.cpp
+        src/tabs/map_workspace_viewport_page.cpp
+        src/tabs/map_mode_tool_panel.cpp)
+    target_include_directories(aowis-map-workspace-viewport-page-tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(aowis-map-workspace-viewport-page-tests PRIVATE Qt6::Widgets)
+    add_test(NAME aowis-map-workspace-viewport-page
+        COMMAND aowis-map-workspace-viewport-page-tests)
+    set_tests_properties(aowis-map-workspace-viewport-page PROPERTIES
         LABELS "aowis"
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
@@ -1154,6 +1170,7 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
             aowis-map-workspace-contract-tests
             aowis-map-workspace-diagnostics-tests
             aowis-map-mode-tool-panel-tests
+            aowis-map-workspace-viewport-page-tests
             aowis-map-provider-fallback-tests
             aowis-bgfx-2d-projection-tests
             aowis-bgfx-2d-imagery-layout-tests

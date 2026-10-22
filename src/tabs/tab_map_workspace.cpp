@@ -4,6 +4,7 @@
 #include "map/render/map_render_diagnostics.h"
 #include "tabs/tab_map_editor_container.h"
 #include "tabs/map_mode_tool_panel.h"
+#include "tabs/map_workspace_viewport_page.h"
 #include "tabs/tab_map_monitor_container.h"
 
 #include <QDebug>
@@ -36,12 +37,21 @@ MapWorkspaceWidget::MapWorkspaceWidget(MapEditorContainer *editor,
     layout->setSpacing(0);
     layout->addWidget(this->pages);
 
-    // Preserve the existing editor and monitor map/surface parent hierarchy.
-    // Only the top-level containers change parent to QStackedWidget.
-    this->pages->addWidget(monitor);
+    // Stage 3: monitor's map stack, including its native bgfx window, is
+    // now hosted by the workspace. The monitor controller is a hidden
+    // logic-only child of this page and is destroyed before its viewport.
+    // The editor remains a self-contained legacy page until Stage 4.
+    MapWorkspaceViewportPage *monitor_page = new MapWorkspaceViewportPage(
+        monitor, this->monitor_tools, monitor->mapViewport(), this->pages);
+    this->pages->addWidget(monitor_page);
     this->pages->addWidget(editor);
     this->pages->addWidget(createEmptyModePage(DrainageMonitor));
     this->pages->addWidget(createEmptyModePage(DrainageEditor));
+
+    // The authoritative monitor navigation model follows its workspace
+    // viewport, not MainWindow. The editor's model remains separate until
+    // its controller is migrated in Stage 4.
+    this->monitor_map->model()->setParent(this);
 
     this->editor_tools->setModeSelector(createModeSelector(DistributionEditor));
     this->monitor_tools->setModeSelector(createModeSelector(DistributionMonitor));
