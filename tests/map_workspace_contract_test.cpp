@@ -17,21 +17,21 @@ int main()
 {
     using namespace MapWorkspace;
 
-    if (!expect(modeInfo(-1) == nullptr && modeInfo(4) == nullptr,
+    if (!expect(modeInfo(-1) == nullptr && modeInfo(5) == nullptr,
                 "invalid tab indices must be rejected"))
         return 1;
 
     const char *expected_titles[] = {
         "Distribution Monitor", "Distribution Editor",
-        "Drainage Monitor", "Drainage Editor"
+        "Drainage Monitor", "Drainage Editor", "Map Management"
     };
     const Domain expected_domains[] = {
         Domain::Distribution, Domain::Distribution,
-        Domain::Drainage, Domain::Drainage
+        Domain::Drainage, Domain::Drainage, Domain::Management
     };
     const Activity expected_activities[] = {
         Activity::Monitor, Activity::Editor,
-        Activity::Monitor, Activity::Editor
+        Activity::Monitor, Activity::Editor, Activity::Manage
     };
     for (int index = 0; index < static_cast<int>(Modes.size()); ++index)
     {
@@ -42,11 +42,11 @@ int main()
             || !expect(info->domain == expected_domains[index], "incorrect map domain")
             || !expect(info->activity == expected_activities[index], "incorrect map activity")
             || !expect(info->icon_resource[0] == ':', "missing Qt icon resource")
-            || !expect(isImplemented(index) == (index < 2),
-                       "drainage modes must remain blank until implemented"))
+            || !expect(isImplemented(index) == (index < 2 || index == MapManagement),
+                       "management implements tools but drainage remains blank"))
             return 1;
     }
-    if (!expect(!isImplemented(-1) && !isImplemented(4),
+    if (!expect(!isImplemented(-1) && !isImplemented(5),
                 "invalid modes cannot own tools"))
         return 1;
 
@@ -55,10 +55,10 @@ int main()
     for (int index = 0; index < static_cast<int>(Modes.size()); ++index)
     {
         if (!expect(rendersDistributionNetwork(index) == (index < 2),
-                    "distribution network visibility differs from mode domain"))
+                    "only distribution modes may show network"))
             return 1;
     }
-    if (!expect(!rendersDistributionNetwork(-1) && !rendersDistributionNetwork(4),
+    if (!expect(!rendersDistributionNetwork(-1) && !rendersDistributionNetwork(5),
                 "invalid modes must never enable the distribution network"))
         return 1;
 
@@ -71,8 +71,9 @@ int main()
         || !expect(!useGlobe3dIconModels(DistributionMonitor, false),
                    "monitor 3D icon-model preference must be honored")
         || !expect(!useGlobe3dIconModels(DrainageMonitor, true)
-                       && !useGlobe3dIconModels(DrainageEditor, true),
-                   "empty drainage modes must not inherit distribution icon models"))
+                       && !useGlobe3dIconModels(DrainageEditor, true)
+                       && !useGlobe3dIconModels(MapManagement, true),
+                   "basemap-only modes must not inherit distribution icon models"))
         return 1;
 
     std::puts("Map workspace mode/ownership contract passed");

@@ -85,6 +85,9 @@ public:
         const MapEditorViewportRenderState *viewport_state = nullptr;
         // The whole network is being moved: the GPU network is drawn
         // shifted by this many logical pixels, and so are the icons here.
+        // Map Management keeps the cache selection overlays without network
+        // entities or editing previews, including on a persistent GPU surface.
+        bool tile_only = false;
         bool full_network_move = false;
         QPointF full_network_move_translation;
     };

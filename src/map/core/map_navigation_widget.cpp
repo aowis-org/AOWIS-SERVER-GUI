@@ -396,7 +396,7 @@ void MapNavigationWidget::syncIconSizeSliderForViewMode(MapViewMode view_mode)
         return;
     }
 
-    const int maximum = view_mode == MapViewMode::Globe ? 200 : 250;
+    const int maximum = view_mode == MapViewMode::Globe ? 600 : 250;
     const int remembered_value = view_mode == MapViewMode::Globe
         ? this->icon_size_3d_percent
         : this->icon_size_2d_percent;

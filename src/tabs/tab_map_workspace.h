@@ -14,7 +14,7 @@ class MapModel;
 class QStackedWidget;
 class QTabBar;
 
-// Four map modes share one persistent viewport and camera. Distribution
+// Five map modes share one persistent viewport and camera. Distribution
 // uses monitor/editor rendering profiles; drainage uses basemap-only mode.
 class MapWorkspaceWidget final : public QWidget
 {
@@ -26,7 +26,8 @@ public:
         DistributionMonitor = 0,
         DistributionEditor = 1,
         DrainageMonitor = 2,
-        DrainageEditor = 3
+        DrainageEditor = 3,
+        MapManagement = 4
     };
     Q_ENUM(Mode)
     // Keep Qt's meta-enum numeric values aligned with the independent mode
@@ -35,6 +36,7 @@ public:
     static_assert(DistributionEditor == MapWorkspace::DistributionEditor);
     static_assert(DrainageMonitor == MapWorkspace::DrainageMonitor);
     static_assert(DrainageEditor == MapWorkspace::DrainageEditor);
+    static_assert(MapManagement == MapWorkspace::MapManagement);
 
     explicit MapWorkspaceWidget(MapEditorContainer *editor,
                                 MapMonitorContainer *monitor,
@@ -73,5 +75,6 @@ private:
     MapWidget *shared_map = nullptr;
     MapModeToolPanel *monitor_tools = nullptr;
     MapModeToolPanel *editor_tools = nullptr;
+    MapModeToolPanel *management_tools = nullptr;
     QList<QTabBar *> mode_tabs;
 };

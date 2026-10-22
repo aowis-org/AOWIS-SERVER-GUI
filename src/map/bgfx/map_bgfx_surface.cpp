@@ -6,6 +6,7 @@
 #include "map/data/map_terrain_repository.h"
 #include "map/data/map_tile_repository.h"
 #include "map/bgfx/map_bgfx_2d_picking.h"
+#include "map/bgfx/map_bgfx_layer_visibility.h"
 #include "map/core/map_scale_distance.h"
 #include "map/render/map_render_diagnostics.h"
 #include "map/core/map_scale_renderer.h"
@@ -2103,10 +2104,16 @@ void MapBgfxSurface::renderFrameAt(double elapsed_seconds)
     bgfx::setViewTransform(kMapBgfxView, nullptr, nullptr);
     bgfx::touch(kMapBgfxView);
     this->network_frame_stats = MapBgfx2dGpu::FrameStats();
+    // Cache/terrain selection overlays belong to the active input mode, not
+    // to the distribution network layer. In Map Management the latter is
+    // hidden, while green/brown selection rectangles must remain visible.
+    const MapBgfxLayerVisibility layers = mapBgfxLayerVisibility(
+        this->distribution_network_visible, bool(this->overlay_builder),
+        bool(this->globe_overlay_builder));
     if (this->camera_state.mode == MapViewMode::TwoD) {
         // Imagery first (opaque), network on top; the view is Sequential.
         renderImagery(logical);
-        if (this->distribution_network_visible)
+        if (layers.distribution_network)
         {
             // Icon placement comes from the shared QRhi atlas layout. Atlas v
             // runs downwards (uv_rect.top() < bottom()); see appendIcon().
@@ -2161,9 +2168,20 @@ void MapBgfxSurface::renderFrameAt(double elapsed_seconds)
                 network_view.center.y -= this->network_screen_translation.y() / view.world_pixels;
             }
             this->network_frame_stats = this->gpu_2d_scene.draw(network_view, style, this->entity_style);
-            renderOverlay(logical, view);
+            if (layers.editor_overlay_2d)
+                renderOverlay(logical, view);
             // Labels above the network and the editor's icons, below the HUD.
             renderLabels(logical, network_view, sizes);
+        }
+        else if (layers.editor_overlay_2d)
+        {
+            // No network mesh or labels in Map Management, but the editor
+            // canvas still draws its green/brown cache-selection overlay.
+            const MapBgfx2d::Camera view = MapBgfx2d::cameraFor(
+                this->camera_state.center_lon_deg, this->camera_state.center_lat_deg,
+                this->camera_state.continuous_2d_zoom,
+                logical.width(), logical.height());
+            renderOverlay(logical, view);
         }
     }
     else
@@ -2173,7 +2191,9 @@ void MapBgfxSurface::renderFrameAt(double elapsed_seconds)
         if (globe_shown)
         {
             renderGlobe(logical);
-            if (this->distribution_network_visible)
+            // Project the selected map/terrain tile lattice independently of
+            // the distribution-network visibility, also on the 3D globe.
+            if (layers.editor_overlay_3d)
                 renderGlobeOverlay(logical);
         }
     }

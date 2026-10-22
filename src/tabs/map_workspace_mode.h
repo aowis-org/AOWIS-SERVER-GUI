@@ -11,13 +11,15 @@ namespace MapWorkspace
 enum class Domain
 {
     Distribution,
-    Drainage
+    Drainage,
+    Management
 };
 
 enum class Activity
 {
     Monitor,
-    Editor
+    Editor,
+    Manage
 };
 
 struct ModeInfo
@@ -26,11 +28,11 @@ struct ModeInfo
     const char *icon_resource;
     Domain domain;
     Activity activity;
-    // A blank drainage tool panel is deliberate, not a different renderer.
+    // Drainage has blank tool panels; management owns tile/terrain tools.
     bool tools_implemented;
 };
 
-inline constexpr std::array<ModeInfo, 4> Modes{{
+inline constexpr std::array<ModeInfo, 5> Modes{{
     {"Distribution Monitor", ":/icon/water_distribution_monitor.png",
      Domain::Distribution, Activity::Monitor, true},
     {"Distribution Editor", ":/icon/water_distribution_editor.png",
@@ -38,13 +40,16 @@ inline constexpr std::array<ModeInfo, 4> Modes{{
     {"Drainage Monitor", ":/icon/water_drainage_monitor.png",
      Domain::Drainage, Activity::Monitor, false},
     {"Drainage Editor", ":/icon/water_drainage_editor.png",
-     Domain::Drainage, Activity::Editor, false}
+     Domain::Drainage, Activity::Editor, false},
+    {"Map Management", ":/icon/map_config.png",
+     Domain::Management, Activity::Manage, true}
 }};
 
 inline constexpr int DistributionMonitor = 0;
 inline constexpr int DistributionEditor = 1;
 inline constexpr int DrainageMonitor = 2;
 inline constexpr int DrainageEditor = 3;
+inline constexpr int MapManagement = 4;
 
 constexpr const ModeInfo *modeInfo(int index)
 {
@@ -75,13 +80,15 @@ constexpr bool useGlobe3dIconModels(int mode, bool monitor_preference = false)
     return mode == DistributionMonitor && monitor_preference;
 }
 
-static_assert(Modes.size() == 4);
+static_assert(Modes.size() == 5);
 static_assert(Modes[DistributionMonitor].activity == Activity::Monitor);
 static_assert(Modes[DistributionEditor].activity == Activity::Editor);
 static_assert(Modes[DrainageMonitor].domain == Domain::Drainage);
 static_assert(Modes[DrainageEditor].domain == Domain::Drainage);
+static_assert(Modes[MapManagement].domain == Domain::Management);
 static_assert(rendersDistributionNetwork(DistributionMonitor));
 static_assert(rendersDistributionNetwork(DistributionEditor));
 static_assert(!rendersDistributionNetwork(DrainageMonitor));
 static_assert(!rendersDistributionNetwork(DrainageEditor));
+static_assert(!rendersDistributionNetwork(MapManagement));
 }

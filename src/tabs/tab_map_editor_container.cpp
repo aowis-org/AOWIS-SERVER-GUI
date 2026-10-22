@@ -578,6 +578,7 @@ void MapEditorContainer::setupBgfxEditor()
                 && overlay_frame->margin_overflow_world_pixels != camera.world_pixels;
             MapBgfxEditorOverlay::Inputs inputs;
             inputs.snapshot = &this->hydraulic_data->networkRenderSnapshot();
+            inputs.tile_only = !this->map_menu->isEditNetworkSectionActive();
             inputs.visual_state = &this->bgfx_visual_state;
             inputs.viewport_state = &viewport_state;
             inputs.full_network_move = this->render_full_network_move;
@@ -613,8 +614,10 @@ void MapEditorContainer::setupBgfxEditor()
             const double base_width = std::clamp(10.0 + (zoom - 16.0) * 10.0, 10.0, 40.0);
             const int width = qMax(1, qRound(base_width
                 * this->map_canvas->mapCanvasEntities()->iconSizePercent() / 100.0));
+            const NetworkRenderSnapshot *snapshot = this->map_menu->isEditNetworkSectionActive()
+                ? &this->hydraulic_data->networkRenderSnapshot() : nullptr;
             overlay->buildGlobe(canvas, cache, viewport_state, projector,
-                                &this->hydraulic_data->networkRenderSnapshot(), width, viewport);
+                                snapshot, width, viewport);
         };
     connect(this->map_canvas, &MapCanvasWidget::signalRenderUpdateRequested, this, [this]()
     {
@@ -974,6 +977,30 @@ MapNavigationWidget *MapEditorContainer::mapNavigationWidget()
     return this->map_menu->mapNavigationWidget();
 }
 
+QWidget *MapEditorContainer::managementControls() const
+{
+    return this->map_menu->managementControls();
+}
+
+void MapEditorContainer::setManagementActive(bool active)
+{
+    const bool unchanged = this->map_menu->isEditNetworkSectionActive() == !active;
+    // Re-arm a cache rectangle when returning from drainage or monitor,
+    // even if the management toolbox kept the same selected page.
+    this->map_menu->setManagementActive(active);
+    if (unchanged)
+        return;
+    this->bgfx_visual_state_dirty = true;
+    if (this->shared_editor_mode && this->bgfx_surface != nullptr)
+    {
+        this->bgfx_surface->setLabelSettings(active ? MapLabelSettings()
+            : this->map_menu->mapNavigationWidget()->labelSettings());
+        this->bgfx_surface->setBackgroundOpacity(active ? 0
+            : this->map_canvas->backgroundOpacity());
+        this->bgfx_surface->requestRedraw();
+    }
+}
+
 bool MapEditorContainer::isEditNetworkSectionActive() const
 {
     return this->map_menu->isEditNetworkSectionActive();
@@ -1002,12 +1029,13 @@ MapEditorMenuWidget::MapEditorMenuWidget(MapWidget *map, MapCanvasWidget *map_ca
     
     this->toolbox->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     
-    createToolboxEdit(this->toolbox);
+    this->layout->addWidget(this->map_nav);
+    createEditControls();
     createToolboxCache(this->toolbox);
     createToolboxTerrain(this->toolbox);
-    
-    this->layout->addWidget(this->map_nav);
-    this->layout->addWidget(this->toolbox);
+
+    // The cache toolbox is deliberately NOT added to the Editor layout.
+    // It is owned visually by the workspace's Map Management sidebar.
     this->layout->addStretch();
     
     connect(this->toolbox, &QToolBox::currentChanged, this, &MapEditorMenuWidget::setToolboxMode);
@@ -1019,7 +1047,8 @@ MapEditorMenuWidget::MapEditorMenuWidget(MapWidget *map, MapCanvasWidget *map_ca
                 this, &MapEditorMenuWidget::applyTerrainDataset);
     }
     
-    setToolboxMode(this->toolbox->currentIndex());
+    this->button_radio_select->setChecked(true);
+    this->editor_controller->startRectangleSelection(false, true);
     applyTerrainDataset();
     applyViewMode(this->map->model()->viewMode());
 }
@@ -1035,8 +1064,7 @@ void MapEditorMenuWidget::applyViewMode(MapViewMode view_mode)
         this->edit_tools->setEnabled(!globe);
     if (this->label_edit_globe_hint != nullptr)
         this->label_edit_globe_hint->setVisible(globe);
-    updateToolboxHeight(this->toolbox->currentIndex());
-}
+} 
 
 void MapEditorMenuWidget::applyTerrainDataset()
 {
@@ -1133,14 +1161,45 @@ MapNavigationWidget *MapEditorMenuWidget::mapNavigationWidget()
 
 bool MapEditorMenuWidget::isEditNetworkSectionActive() const
 {
-    return this->toolbox->currentIndex() == this->toolbox_edit_index;
+    return !this->management_active;
+}
+
+QWidget *MapEditorMenuWidget::managementControls() const
+{
+    return this->toolbox;
+}
+
+void MapEditorMenuWidget::setManagementActive(bool active)
+{
+    if (this->management_active == active)
+    {
+        // The editor input controller cancels a cache drag when leaving
+        // management for a monitor/drainage mode. Re-arm the active cache
+        // section on return, even when the panel itself stayed selected.
+        if (active)
+            setToolboxMode(this->toolbox->currentIndex());
+        return;
+    }
+    this->management_active = active;
+    emit signalEditNetworkSectionActive(!active);
+    if (active)
+        setToolboxMode(this->toolbox->currentIndex());
+    else
+    {
+        clearCacheSelections();
+        this->editor_controller->setTileSelectionKind(MapEditorTileSelectionKind::MapTiles);
+        this->button_radio_select->setChecked(true);
+        this->editor_controller->stopEntityPositioning();
+        this->editor_controller->startRectangleSelection(false, true);
+    }
 }
 
 bool MapEditorMenuWidget::triggerButtonShortcut(const QKeyEvent *event)
 {
     // Reuse the navigation helper for the map provider shortcuts as well as
     // this menu's editor tool buttons while fullscreen hides the sidebar.
-    return MapNavigationWidget::triggerButtonShortcut(this, event);
+    return MapNavigationWidget::triggerButtonShortcut(
+        this->management_active ? static_cast<QWidget *>(this->map_nav) : this, event);
 }
 
 void MapEditorMenuWidget::clearCacheSelections()
@@ -1197,7 +1256,7 @@ void MapEditorMenuWidget::createToolboxCache(QToolBox *tbx)
     
     connect(this->editor_controller, &MapEditorController::signalRectangleSelectionCanceled, this, [this]
     {
-        if (this->toolbox->currentIndex() != this->toolbox_cache_index)
+        if (!this->management_active || this->toolbox->currentIndex() != this->toolbox_cache_index)
             return;
 
         this->button_tiles_delete->setChecked(false);
@@ -1205,7 +1264,7 @@ void MapEditorMenuWidget::createToolboxCache(QToolBox *tbx)
     });
     connect(this->editor_controller, &MapEditorController::signalRectangleSelected, this, [this]
     {
-        if (this->toolbox->currentIndex() != this->toolbox_cache_index)
+        if (!this->management_active || this->toolbox->currentIndex() != this->toolbox_cache_index)
             return;
 
         this->button_tiles_delete->setEnabled(true);
@@ -1214,7 +1273,9 @@ void MapEditorMenuWidget::createToolboxCache(QToolBox *tbx)
     {
         this->button_tiles_delete->setChecked(false);
 
-        QMessageBox *box = new QMessageBox(this);
+        // This menu widget is hidden in the shared workspace: the cache
+        // toolbox, not the hidden editor menu, is the visible dialog owner.
+        QMessageBox *box = new QMessageBox(this->toolbox);
         box->setAttribute(Qt::WA_DeleteOnClose);
         box->setWindowTitle("Delete selected map tiles?");
         box->setIcon(QMessageBox::Warning);
@@ -1320,7 +1381,7 @@ void MapEditorMenuWidget::createToolboxTerrain(QToolBox *tbx)
 
     connect(this->editor_controller, &MapEditorController::signalRectangleSelectionCanceled, this, [this]
     {
-        if (this->toolbox->currentIndex() != this->toolbox_terrain_index)
+        if (!this->management_active || this->toolbox->currentIndex() != this->toolbox_terrain_index)
             return;
 
         this->terrain_selection_valid = false;
@@ -1328,7 +1389,7 @@ void MapEditorMenuWidget::createToolboxTerrain(QToolBox *tbx)
     });
     connect(this->editor_controller, &MapEditorController::signalRectangleSelected, this, [this]
     {
-        if (this->toolbox->currentIndex() != this->toolbox_terrain_index)
+        if (!this->management_active || this->toolbox->currentIndex() != this->toolbox_terrain_index)
             return;
 
         this->terrain_selection_valid = true;
@@ -1346,7 +1407,9 @@ void MapEditorMenuWidget::createToolboxTerrain(QToolBox *tbx)
         const int zoom_to = this->spin_terrain_zoom_to->value();
         const bool with_source = this->checkbox_terrain_source->isChecked();
 
-        QMessageBox *box = new QMessageBox(this);
+        // This menu widget is hidden in the shared workspace: the cache
+        // toolbox, not the hidden editor menu, is the visible dialog owner.
+        QMessageBox *box = new QMessageBox(this->toolbox);
         box->setAttribute(Qt::WA_DeleteOnClose);
         box->setWindowTitle("Delete selected terrain?");
         box->setIcon(QMessageBox::Warning);
@@ -1453,15 +1516,15 @@ void MapEditorMenuWidget::createToolboxTerrain(QToolBox *tbx)
 
     this->toolbox_terrain_index = tbx->addItem(wgt, "Terrain Cache");
 }
-void MapEditorMenuWidget::createToolboxEdit(QToolBox *tbx)
+void MapEditorMenuWidget::createEditControls()
 {
-    QWidget *wgt = new QWidget(tbx);
+    QWidget *wgt = new QWidget(this);
     QVBoxLayout *page_layout = new QVBoxLayout(wgt);
     // 3D: the tools are disabled as a whole (their own enabled states are
     // kept for 2D) and this hint says why.
     this->label_edit_globe_hint = new QLabel(
         "<b>Network editing works in 2D.</b> Switch the map to 2D with the 2D/3D button "
-        "to edit; the cache sections below work in 3D too.", wgt);
+        "to edit. Map and terrain cache controls are in Map Management.", wgt);
     this->label_edit_globe_hint->setWordWrap(true);
     this->label_edit_globe_hint->setVisible(false);
     page_layout->addWidget(this->label_edit_globe_hint);
@@ -1479,7 +1542,7 @@ void MapEditorMenuWidget::createToolboxEdit(QToolBox *tbx)
     this->button_group_tools->addButton(this->button_radio_select, 100);
     connect(this->button_radio_select, &QRadioButton::clicked, this, [this]
     {
-        if (this->toolbox->currentIndex() != this->toolbox_edit_index)
+        if (this->management_active)
             return;
 
         this->editor_controller->stopEntityPositioning();
@@ -1597,12 +1660,13 @@ void MapEditorMenuWidget::createToolboxEdit(QToolBox *tbx)
         this->editor_controller->stopEntityPositioning();
     });
     
-    this->toolbox_edit_index = tbx->addItem(wgt, "Edit Network");
+    this->layout->addWidget(wgt);
 }
 
 void MapEditorMenuWidget::setToolboxMode(int index)
 {
-    emit signalEditNetworkSectionActive(index == this->toolbox_edit_index);
+    if (!this->management_active)
+        return;
 
     this->editor_controller->stopEntityPositioning();
     this->editor_controller->clearTileSelectionOverlay();
@@ -1621,13 +1685,6 @@ void MapEditorMenuWidget::setToolboxMode(int index)
         this->editor_controller->setTileSelectionKind(MapEditorTileSelectionKind::Terrain);
         this->editor_controller->startRectangleSelection(false, false);
     }
-    else if (index == this->toolbox_edit_index)
-    {
-        this->editor_controller->setTileSelectionKind(MapEditorTileSelectionKind::MapTiles);
-        this->button_radio_select->setChecked(true);
-        this->editor_controller->startRectangleSelection(false, true);
-    }
-
     updateToolboxHeight(index);
 }
 

@@ -100,7 +100,7 @@ of the old monitor until its responsibilities can be extracted into a
 non-widget controller when completing the single-viewport migration.
 
 `MapWorkspaceWidget::activeMap()` and `activeModel()` provide *non-owning*
-navigation access to the single shared map in **all four** modes. MainWindow
+navigation access to the single shared map in **all five** modes. MainWindow
 uses these accessors to route footer zoom edits, including in drainage.
 
 **Shared viewport contract:** the Maps workspace exclusively owns one
@@ -168,7 +168,7 @@ node-declutter presentation. Subsequent editor/monitor switches on the same
 network must not increase it. Real network geometry revisions prepare the
 current presentation and invalidate the other one.
 Initial startup and native surface loss can change renderer lifecycle counters;
-**none of the four map modes** should change them.
+**none of the five map modes** should change them.
 
 Automated checks:
 
@@ -216,7 +216,7 @@ Manual shared-viewport acceptance checks:
 5. Repeat on Linux desktop, Windows and WASM before release.
    A unit test without a GPU cannot prove native-window behavior.
 
-All four map modes share **one persistent GPU renderer and camera**, with
+All five map modes share **one persistent GPU renderer and camera**, with
 monitor/editor presentation settings, two cached distribution 2D scene
 variants and basemap-only drainage placeholders. No mode change may shut down
 bgfx, destroy the native window, or clear the network snapshot. No CPU-era
@@ -231,7 +231,7 @@ AOWIS_MAP_RENDER_DIAGNOSTICS=1 ./build-linux/aowis-server-gui 2>&1 | tee /tmp/ao
 python3 tools/check_map_workspace_diagnostics.py /tmp/aowis-map-workspace.log --min-switches 12
 ```
 
-Exercise all four modes before exiting. The checker rejects missing or
+Exercise all five modes before exiting. The checker rejects missing or
 non-monotonic counters, unexpected bgfx starts/stops, insufficient mode
 switch coverage, and an absence of repeated switches after the last 2D
 scene preparation. Genuine network geometry revisions can occur while
@@ -246,3 +246,21 @@ input focus and shortcuts, editor drag-selection cleanup, network styling,
 blank drainage overlays, fullscreen expansion, high-density networks, and
 clean shutdown on Linux, Windows, and WASM. A passing Linux diagnostics
 trace is not evidence that those other platform runs were completed.
+
+## Map Management
+
+The rightmost **Map Management** tab shares the persistent bgfx viewport and
+map camera with the two distribution and two drainage tabs. It displays the
+basemap without distribution-network layers but preserves retained geometry.
+Its sidebar owns the map imagery and terrain cache management toolbox, migrated
+from Distribution Editor, including 2D/3D rectangle selection, zoom-range
+configuration, and cache-deletion confirmations. **Basemap-only rendering
+suppresses distribution-network geometry and labels, not editor overlays:**
+the green map-tile and brown terrain-tile selection outlines, fill and grid
+must remain visible while dragging and while a completed cache selection is
+available for deletion. The actual map/terrain cache deletion workflows remain
+owned by the editor controller and cache repositories. Cache selections continue to
+use the existing editor input controller; management does not enable network
+editing operations. Distribution Editor shows its editing controls directly
+without a QToolBox. The 3D Editor icon scale ranges to 600% while 2D retains
+its former 250% limit.

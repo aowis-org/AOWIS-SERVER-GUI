@@ -1,6 +1,7 @@
 #include "tabs/tab_map_workspace.h"
 
 #include "map/render/map_render_diagnostics.h"
+#include "common/_sizes.h"
 #include "tabs/tab_map_editor_container.h"
 #include "tabs/map_mode_tool_panel.h"
 #include "tabs/map_workspace_viewport_page.h"
@@ -36,12 +37,12 @@ MapWorkspaceWidget::MapWorkspaceWidget(MapEditorContainer *editor,
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
 
-    // The single native map viewport stays visible across all four map modes.
+    // The single native map viewport stays visible across all five map modes.
     // The monitor controller remains a hidden logic-only widget.
     this->viewport_page = new MapWorkspaceViewportPage(
         monitor, this->monitor_tools, monitor->mapViewport(), this);
     layout->addWidget(this->viewport_page);
-    // Keep the map viewport on the SAME page for all four modes.
+    // Keep the map viewport on the SAME page for all five modes.
     // Only the left panel switches. Never remove/reparent the native surface.
     this->mode_tool_stack = new QStackedWidget(this->viewport_page);
     this->viewport_page->layout()->removeWidget(this->monitor_tools);
@@ -50,6 +51,10 @@ MapWorkspaceWidget::MapWorkspaceWidget(MapEditorContainer *editor,
     this->mode_tool_stack->addWidget(this->editor_tools);
     this->mode_tool_stack->addWidget(createEmptyModeTools(DrainageMonitor));
     this->mode_tool_stack->addWidget(createEmptyModeTools(DrainageEditor));
+    this->management_tools = new MapModeToolPanel(
+        editor->managementControls(), Sizes::SidebarMapEditLeftWidth,
+        MapModeToolPanel::ScrollbarWidthPolicy::Fixed, true, this->mode_tool_stack);
+    this->mode_tool_stack->addWidget(this->management_tools);
     static_cast<QHBoxLayout *>(this->viewport_page->layout())->insertWidget(0, this->mode_tool_stack);
     this->viewport_page->setSidebarWidget(this->mode_tool_stack);
     this->mode_tool_stack->setCurrentIndex(0);
@@ -63,6 +68,7 @@ MapWorkspaceWidget::MapWorkspaceWidget(MapEditorContainer *editor,
 
     this->editor_tools->setModeSelector(createModeSelector(DistributionEditor));
     this->monitor_tools->setModeSelector(createModeSelector(DistributionMonitor));
+    this->management_tools->setModeSelector(createModeSelector(MapManagement));
 }
 
 MapWorkspaceWidget::~MapWorkspaceWidget()
@@ -126,6 +132,8 @@ MapModeToolPanel *MapWorkspaceWidget::activeToolPanel() const
     case DrainageMonitor:
     case DrainageEditor:
         return nullptr;
+    case MapManagement:
+        return this->management_tools;
     }
     return nullptr;
 }
@@ -140,26 +148,29 @@ void MapWorkspaceWidget::setCurrentMode(int index)
     {
         const MapRenderDiagnostics::Scope timing(
             MapRenderDiagnostics::Counter::WorkspaceModeSwitch);
-        const bool was_editor = this->selected_mode == DistributionEditor;
-        const bool now_editor = index == DistributionEditor;
-        const bool drainage = !MapWorkspace::rendersDistributionNetwork(index);
+        const bool was_editor_input = this->selected_mode == DistributionEditor
+            || this->selected_mode == MapManagement;
+        const bool editor_input = index == DistributionEditor || index == MapManagement;
+        const bool management = index == MapManagement;
+        const bool basemap_only = !MapWorkspace::rendersDistributionNetwork(index);
 
         // Synchronously retire editor callbacks before another mode can use
-        // the shared native window. The monitor controller owns navigation
-        // in both drainage placeholders, but not distribution picking there.
-        if (was_editor && !now_editor)
+        // the shared native window. The monitor controller owns navigation in drainage placeholders;
+        // management reuses editor input only for cache rectangle selection.
+        if (was_editor_input && !editor_input)
             this->editor_controller->activateSharedSurface(false);
-        if (now_editor)
+        if (editor_input)
         {
-            this->monitor_controller->setBasemapOnly(false);
+            this->editor_controller->setManagementActive(management);
             this->monitor_controller->setEditorMode(true);
-            if (!was_editor)
+            if (!was_editor_input)
                 this->editor_controller->activateSharedSurface(true);
+            this->monitor_controller->setBasemapOnly(basemap_only);
         }
         else
         {
             this->monitor_controller->setEditorMode(false);
-            this->monitor_controller->setBasemapOnly(drainage);
+            this->monitor_controller->setBasemapOnly(basemap_only);
         }
 
         // Changing modes moves only the tools, NEVER the viewport or its
@@ -188,14 +199,14 @@ QWidget *MapWorkspaceWidget::createModeSelector(Mode mode)
     layout->setContentsMargins(3, 4, 3, 5);
     layout->setSpacing(2);
 
-    // Four icon tabs fit the existing 210-240 px map sidebar on desktop and
-    // WASM. The full, human-readable mode name stays visible just below.
+    // Five compact icon tabs share the existing map sidebar.
+    // The full mode name remains visible beneath the icon tabs.
     QTabBar *tabs = new QTabBar(selector);
     tabs->setObjectName(QStringLiteral("mapModeTabs"));
     tabs->setAccessibleName(tr("Map modes"));
     tabs->setExpanding(true);
     tabs->setUsesScrollButtons(false);
-    tabs->setIconSize(QSize(32, 32));
+    tabs->setIconSize(QSize(26, 26));
     for (const MapWorkspace::ModeInfo &description : MapWorkspace::Modes)
     {
         const QString title = QString::fromUtf8(description.title);

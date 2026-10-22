@@ -32,6 +32,7 @@
         <file alias="map_edit.png">assets/iconsets/gothic/map_edit.png</file>
         <file alias="map_monitor.png">assets/iconsets/gothic/map_monitor.png</file>
         <file alias="map.png">assets/iconsets/gothic/map.png</file>
+        <file alias="map_config.png">assets/iconsets/gothic/map_config.png</file>
         <file alias="water_distribution_editor.png">assets/iconsets/gothic/water_distribution_editor.png</file>
         <file alias="water_distribution_monitor.png">assets/iconsets/gothic/water_distribution_monitor.png</file>
         <file alias="water_drainage_editor.png">assets/iconsets/gothic/water_drainage_editor.png</file>

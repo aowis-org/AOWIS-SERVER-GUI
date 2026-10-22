@@ -212,7 +212,8 @@ void MapBgfxEditorOverlay::build(MapBgfxHudCanvas *canvas, MapBgfxHudTextCache *
     this->canvas = canvas;
     this->cache = cache;
     this->inputs = &inputs;
-    synchronizeGeometry(*inputs.snapshot);
+    if (!inputs.tile_only)
+        synchronizeGeometry(*inputs.snapshot);
 
     // Membership tests per entity: sets instead of the visual state's lists
     // (a full selection would make every icon an O(n) scan).
@@ -255,6 +256,8 @@ void MapBgfxEditorOverlay::buildOnce()
     // The former QPainter editor's paintRenderSurfaceOverlay(), same order.
     tileSelection();
     rectangleSelection();
+    if (this->inputs->tile_only)
+        return;
 
     if (state.move.active && this->inputs->full_network_move)
     {

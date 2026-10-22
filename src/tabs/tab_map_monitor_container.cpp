@@ -1541,7 +1541,10 @@ void MapMonitorContainer::setEditorInputCanvas(QWidget *canvas)
 
 void MapMonitorContainer::setBasemapOnly(bool enabled)
 {
-    if (this->basemap_only == enabled)
+    // Returning from Map Management to Drainage can re-activate the monitor
+    // HUD while basemap-only was already enabled. Reapply the empty-layer
+    // presentation even then, without rebuilding any geometry.
+    if (this->basemap_only == enabled && !enabled)
         return;
     this->basemap_only = enabled;
     if (this->bgfx_surface == nullptr)

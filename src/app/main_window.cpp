@@ -283,7 +283,7 @@ MainWindow::MainWindow(QWidget *parent)
     connect(this->map_workspace, &MapWorkspaceWidget::currentModeChanged,
             this, [this](int)
     {
-        // All four modes retain the same map, including in fullscreen.
+        // All five modes retain the same map, including in fullscreen.
         if (this->map_fullscreen_active)
             applyMapFullscreenToMode();
         updateActiveMapPanels();
@@ -642,12 +642,12 @@ void MainWindow::setMapFullscreen(bool fullscreen)
 
 void MainWindow::applyMapFullscreenToMode()
 {
-    // Drainage uses the common map navigation/HUD controller, not the
-    // distribution editing controller. Fullscreen stays active in drainage.
-    const bool monitor_active = this->map_fullscreen_active
-        && !this->map_workspace->isDistributionEditorActive();
-    const bool editor_active = this->map_fullscreen_active
-        && this->map_workspace->isDistributionEditorActive();
+    // Management uses the editor's input controller for cache rectangle
+    // selections and therefore shares its fullscreen HUD/shortcut state.
+    const bool editor_input_mode = this->map_workspace->isDistributionEditorActive()
+        || this->map_workspace->currentMode() == MapWorkspaceWidget::MapManagement;
+    const bool monitor_active = this->map_fullscreen_active && !editor_input_mode;
+    const bool editor_active = this->map_fullscreen_active && editor_input_mode;
 
     // Deactivate the old mode first and activate the new one last: both
     // controllers address the same bgfx HUD and navigation input focus.

@@ -254,7 +254,8 @@ struct Harness
     }
     void build(const Scene &scene, const MapBgfx2d::Camera &view, bool full_move = false,
                QPointF translation = QPointF(),
-               const QSizeF &viewport = QSizeF(ViewportWidth, ViewportHeight))
+               const QSizeF &viewport = QSizeF(ViewportWidth, ViewportHeight),
+               bool tile_only = false)
     {
         probe.calls.clear();
         MapBgfxEditorOverlay::Inputs inputs;
@@ -263,11 +264,85 @@ struct Harness
         inputs.snapshot = &scene.snapshot;
         inputs.visual_state = &scene.state;
         inputs.viewport_state = &scene.viewport;
+        inputs.tile_only = tile_only;
         inputs.full_network_move = full_move;
         inputs.full_network_move_translation = translation;
         overlay.build(&canvas, &cache, inputs);
     }
 };
+
+void testMapManagementOverlay()
+{
+    Harness harness;
+    Scene current = scene();
+    const MapBgfx2d::Camera view = camera();
+    // The same nonempty distribution snapshot is retained in memory; the
+    // Management overlay should draw no distribution entity icons.
+    harness.build(current, view, false, QPointF(),
+                  QSizeF(ViewportWidth, ViewportHeight), true);
+    req(harness.probe.calls.isEmpty() && harness.canvas.vertices().isEmpty(),
+        "management hides network icons without changing the retained snapshot");
+
+    current.viewport.rectangle_selection_visible = true;
+    current.viewport.rectangle_selection = QRect(100, 100, 200, 120);
+    harness.build(current, view, false, QPointF(),
+                  QSizeF(ViewportWidth, ViewportHeight), true);
+    req(hasColor(harness.canvas, 0xb456d7ffu),
+        "management keeps its 2D cache-selection rectangle");
+    req(harness.probe.calls.isEmpty(),
+        "management selection does not re-enable distribution icons");
+
+    current.viewport.rectangle_selection_visible = false;
+    harness.build(current, view, false, QPointF(),
+                  QSizeF(ViewportWidth, ViewportHeight), true);
+    req(harness.canvas.vertices().isEmpty(),
+        "management rectangle vanishes on release");
+
+    // The temporary blue drag frame disappears, but the selected tiles
+    // remain highlighted until deletion, cancellation, or mode change.
+    const MapBgfx2d::WorldPoint center = MapBgfx2d::worldFromWgs84(9.0, 47.0);
+    const double tiles_per_axis = std::exp2(18.0);
+    current.viewport.tile_selection_visible = true;
+    current.viewport.tile_selection_zoom = 18;
+    current.viewport.tile_x_min = int(std::floor(center.x * tiles_per_axis));
+    current.viewport.tile_x_max = current.viewport.tile_x_min + 1;
+    current.viewport.tile_y_min = int(std::floor(center.y * tiles_per_axis));
+    current.viewport.tile_y_max = current.viewport.tile_y_min;
+    current.viewport.tile_selection_kind = MapEditorTileSelectionKind::MapTiles;
+    harness.build(current, view, false, QPointF(), QSizeF(ViewportWidth, ViewportHeight), true);
+    req(hasColor(harness.canvas, 0xe69bff91u) && harness.probe.calls.isEmpty(),
+        "management keeps the green map-tile selection without network icons in 2D");
+
+    current.viewport.tile_selection_kind = MapEditorTileSelectionKind::Terrain;
+    harness.build(current, view, false, QPointF(), QSizeF(ViewportWidth, ViewportHeight), true);
+    req(hasColor(harness.canvas, 0xebf0ca96u) && harness.probe.calls.isEmpty(),
+        "management keeps the brown terrain selection without network icons in 2D");
+
+    const MapBgfxEditorOverlay::GlobeProjector projector = [](
+        double longitude, double latitude, QPointF *screen, double *distance_m)
+    {
+        *screen = QPointF(400.0 + (longitude - 9.0) * 100000.0,
+                          300.0 - (latitude - 47.0) * 100000.0);
+        if (distance_m != nullptr)
+            *distance_m = 1000.0;
+        return true;
+    };
+    harness.overlay.buildGlobe(&harness.canvas, &harness.cache, current.viewport, projector);
+    req(hasColor(harness.canvas, 0xebf0ca96u) && harness.probe.calls.isEmpty(),
+        "management keeps the brown terrain selection without network icons in 3D");
+
+    current.viewport.tile_selection_kind = MapEditorTileSelectionKind::MapTiles;
+    harness.overlay.buildGlobe(&harness.canvas, &harness.cache, current.viewport, projector);
+    req(hasColor(harness.canvas, 0xe69bff91u) && harness.probe.calls.isEmpty(),
+        "management keeps the green map-tile selection without network icons in 3D");
+
+    current.viewport.tile_selection_visible = false;
+    // Switching back to Editor must reuse the same network snapshot and
+    // restore its icons without any geometry change.
+    harness.build(current, view);
+    req(harness.probe.calls.size() == 4,
+        "distribution editor restores retained entity icons after management");
+}
 
 void testStaticDetails()
 {
@@ -790,6 +865,7 @@ int main(int argc, char **argv)
         qputenv("QT_QPA_PLATFORM", "offscreen");
     QGuiApplication application(argc, argv);
 
+    testMapManagementOverlay();
     testStaticDetails();
     testSelection();
     testPlacement();

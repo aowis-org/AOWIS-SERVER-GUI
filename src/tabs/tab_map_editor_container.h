@@ -77,8 +77,10 @@ public:
     // presses here instead; true when a button's shortcut matched (the
     // button was clicked).
     bool triggerButtonShortcut(const QKeyEvent *event);
-    // Leaving the editor (main navigation): no tile / terrain selection
-    // stays behind; the Delete buttons are disabled until a new one.
+    // The cache and terrain toolbox is hosted by the Map Management panel,
+    // not by the Distribution Editor's tools.
+    QWidget *managementControls() const;
+    void setManagementActive(bool active);
     void clearCacheSelections();
     
 private:
@@ -95,16 +97,15 @@ private:
     QSpinBox *spin_zoom_to;
     
     QToolBox *toolbox;
-    int toolbox_edit_index = -1;
+    bool management_active = false;
     int toolbox_cache_index = -1;
     int toolbox_terrain_index = -1;
     void createToolboxCache(QToolBox *tbx);
     void createToolboxTerrain(QToolBox *tbx);
-    void createToolboxEdit(QToolBox *tbx);
+    void createEditControls();
     void setToolboxMode(int index);
     void updateToolboxHeight(int index);
-    // Network editing is 2D only: in 3D the Edit Network tools are disabled
-    // (a hint says why); the cache sections work in both.
+    // Network editing is 2D only; cache management works in both views.
     void applyViewMode(MapViewMode view_mode);
     // The terrain dataset (zoom range for the spin boxes and the selection,
     // availability) from the terrain service's catalog.
@@ -163,6 +164,8 @@ public:
     // this legacy container until the shared viewport migration.
     MapModeToolPanel *toolPanel() const;
     QWidget *mapViewport() const;
+    QWidget *managementControls() const;
+    void setManagementActive(bool active);
     
     MapNavigationWidget *mapNavigationWidget();
     bool isEditNetworkSectionActive() const;

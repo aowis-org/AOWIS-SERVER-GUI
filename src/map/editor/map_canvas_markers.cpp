@@ -32,7 +32,7 @@ void MapCanvasMarkers::setWrapReferenceLongitude(double longitude)
 
 void MapCanvasMarkers::setIconSizePercent(int size_percent)
 {
-    this->icon_size_percent = qBound(50, size_percent, 250);
+    this->icon_size_percent = qBound(50, size_percent, 600);
 }
 
 QPointF MapCanvasMarkers::screenFromWgs84(const CoordinateWGS84 &coordinate) const

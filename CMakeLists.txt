@@ -571,6 +571,16 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
         COMMAND aowis-map-workspace-contract-tests)
     set_tests_properties(aowis-map-workspace-contract PROPERTIES LABELS "aowis")
 
+    # Cache-selection overlays must be drawable even when distribution meshes
+    # are hidden in Map Management (2D and globe), without a graphics device.
+    add_executable(aowis-map-bgfx-layer-visibility-tests
+        tests/map_bgfx_layer_visibility_test.cpp)
+    target_include_directories(aowis-map-bgfx-layer-visibility-tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    add_test(NAME aowis-map-bgfx-layer-visibility
+        COMMAND aowis-map-bgfx-layer-visibility-tests)
+    set_tests_properties(aowis-map-bgfx-layer-visibility PROPERTIES LABELS "aowis")
+
     add_executable(aowis-map-workspace-diagnostics-tests
         tests/map_workspace_diagnostics_test.cpp)
     target_include_directories(aowis-map-workspace-diagnostics-tests PRIVATE
@@ -1189,6 +1199,7 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
     add_custom_target(aowis-tests
         DEPENDS
             aowis-map-workspace-contract-tests
+            aowis-map-bgfx-layer-visibility-tests
             aowis-map-workspace-diagnostics-tests
             aowis-map-mode-tool-panel-tests
             aowis-map-workspace-viewport-page-tests
