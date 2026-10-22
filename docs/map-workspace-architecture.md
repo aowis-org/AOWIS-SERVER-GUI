@@ -20,7 +20,7 @@ networks or run distribution editing.
 
 ## Ownership and boundaries
 
-**Current implementation (Stage 5):** `MapWorkspaceWidget` owns the single
+**Current implementation (Stage 6):** `MapWorkspaceWidget` owns the single
 Distribution `MapModel` and hosts the persistent `MapWidget` and
 `MapBgfxSurface` in `MapWorkspaceViewportPage`. The renderer is constructed
 by the monitor controller once; the editor receives non-owning pointers to
@@ -58,12 +58,31 @@ highlights. The monitor's model-selection and simulation-diagnostic signals
 may change while editing, but cannot overwrite the editor's GPU state; the
 latest selected entity and diagnostics are restored when returning to monitor.
 The monitor reinstates its own HUD action handlers, labels and symbology.
+The shared globe also restores the icon *presentation* on each activation:
+Distribution Editor uses its original flat billboard entity icons, while
+Distribution Monitor follows its configurable 3D icon-model preference.
+This prevents the monitor's GPU icon-model state leaking into the editor.
+The policy is encoded in `MapWorkspace::useGlobe3dIconModels()` and covered
+by the Qt-independent workspace contract test.
 
-`MainWindow` has only one distribution `MapModel`. Camera movement and
-provider changes are inherently shared across distribution modes; the old
-cross-view synchronization controls remain temporarily but no longer drive
-second-model updates. Their removal and fullscreen/navigation cleanup belong
-to Stage 6.
+`MainWindow` has only one distribution `MapModel`. Camera movement, provider
+changes, zoom edits, GPS navigation and fullscreen edge-panning are routed
+through one shared `MapWidget`. The obsolete **Sync Map Movement** checkbox,
+cross-model signal forwarding and per-mode center snapshots are removed.
+`MapModel::setViewMode()` transfers the apparent zoom scale between 2D and
+Globe; both views already use the same center coordinates, so no second
+synchronization controller is needed. Switching Editor/Monitor changes neither
+camera nor native surface.
+
+Map fullscreen uses one MainWindow state. On a distribution mode change, the
+previous controller relinquishes fullscreen/HUD focus before the newly active
+controller receives it. `MapWorkspaceViewportPage` hides the entire outer
+sidebar stack during fullscreen, rather than its active `MapModeToolPanel`:
+hiding a stacked child alone leaves the parent `QStackedWidget` reserving its
+full width and produces an empty strip instead of an expanded map. The native
+map stays parented and visible; exiting fullscreen restores the sidebar.
+Switching to an empty drainage page exits map-only fullscreen rather than
+leaving a blank fullscreen map.
 
 `MapModeToolPanel` owns scrolling and the mode-selector UI but never owns a
 map model, native window or renderer. Mode tools and the monitor viewport are
@@ -106,9 +125,9 @@ renderers:
 
 The tool-panel extraction (Stage 2), monitor viewport ownership transfer
 (Stage 3), single-surface distribution renderer migration (Stage 4), and
-presentation isolation plus 2D variant caching (Stage 5) are complete in the
-source architecture. Further work removes legacy sync and fullscreen paths
-(Stage 6) and integrates drainage modes (Stage 7).
+presentation isolation plus 2D variant caching (Stage 5), and shared
+camera/navigation/fullscreen cleanup (Stage 6) are complete in the
+source architecture. Further work integrates drainage modes (Stage 7).
 Fullscreen and WASM input must remain working at every intermediate stage.
 
 ## Diagnostics and regression baseline
@@ -155,8 +174,9 @@ ctest --test-dir build-linux-tests-debug --output-on-failure \
 
 The workspace viewport-page test checks that a monitor-style controller's
 map stack and tools transfer to the workspace without reconstruction, that
-fullscreen only hides controls, and that the controller is destroyed before
-the map it references. It uses ordinary Qt widgets rather than initializing
+fullscreen releases the full sidebar width to the map even with a nested
+stack of mode panels, and that the controller is destroyed before the map it
+references. It uses ordinary Qt widgets rather than initializing
 bgfx. The tool-panel test checks that each controls tree is independently parented,
 mode tabs remain outside the scroll viewport, scrollbar behavior matches the
 old controls, and fullscreen hides only the requested panel. It runs through

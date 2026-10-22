@@ -159,16 +159,6 @@ MapNavigationWidget::MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidge
     }
     syncIconSizeSliderForViewMode(initial_view_mode);
     
-    this->check_map_sync = new QCheckBox("Sync Map Movement");
-    this->check_map_sync->setToolTip(
-        "Synchronize map center and scale between Editor and Monitor, and between "
-        "Monitor 2D and 3D views.");
-    this->check_map_sync->setChecked(true);
-    connect(this->check_map_sync, &QCheckBox::checkStateChanged, this, [this]
-    {
-        emit signalSyncMapMovementStateChanged(this->check_map_sync->isChecked());
-    });
-    
     // Pan and zoom live on the map's HUD (joystick, zoom buttons).
     this->combo_provider = new QComboBox(this);
     this->combo_provider->setContextMenuPolicy(Qt::CustomContextMenu);
@@ -221,7 +211,7 @@ MapNavigationWidget::MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidge
     this->grid->addWidget(slider_map_visibility, 2, 0, 1, 3);
     const int icon_label_row = this->check_3d_icons != nullptr ? 4 : 3;
     const int icon_slider_row = icon_label_row + 1;
-    const int map_sync_row = icon_slider_row + 1;
+    const int label_controls_row = icon_slider_row + 1;
     if (this->check_3d_icons != nullptr)
         this->grid->addWidget(this->check_3d_icons, 3, 0, 1, 3);
     this->grid->addWidget(label_slider_icon_size, icon_label_row, 0, 1,
@@ -229,8 +219,7 @@ MapNavigationWidget::MapNavigationWidget(MapWidget *map, CanvasMode mode, QWidge
     if (this->combo_icon_size_unit != nullptr)
         this->grid->addWidget(this->combo_icon_size_unit, icon_label_row, 2);
     this->grid->addWidget(this->slider_icon_size, icon_slider_row, 0, 1, 3);
-    this->grid->addWidget(check_map_sync, map_sync_row, 0, 1, 3);
-    this->grid->addWidget(createLabelControls(), map_sync_row + 1, 0, 1, 3);
+    this->grid->addWidget(createLabelControls(), label_controls_row, 0, 1, 3);
     
     if (this->mode == CanvasMode::Monitor)
     {
@@ -505,12 +494,6 @@ bool MapNavigationWidget::triggerProviderShortcut(const QKeySequence &pressed)
         return true;
     }
     return false;
-}
-
-void MapNavigationWidget::mapMovementSyncStateChange(bool sync)
-{
-    const QSignalBlocker blocker(this->check_map_sync);
-    this->check_map_sync->setChecked(sync);
 }
 
 void MapNavigationWidget::setNetworkPresent(bool present)

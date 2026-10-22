@@ -21,8 +21,15 @@ public:
     MapModeToolPanel *toolPanel() const;
     QWidget *viewport() const;
 
+    // The outer sidebar widget may be a QStackedWidget containing multiple
+    // tool panels. Hide that container, not only its selected panel, so the
+    // map receives the full width during fullscreen without reparenting.
+    void setSidebarWidget(QWidget *sidebar);
+    void setMapFullscreen(bool fullscreen);
+
 private:
     QWidget *mode_controller = nullptr;
     MapModeToolPanel *mode_tools = nullptr;
+    QWidget *sidebar_widget = nullptr;
     QWidget *map_viewport = nullptr;
 };

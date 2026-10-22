@@ -6,6 +6,7 @@
 #include <QWidget>
 
 class MapModeToolPanel;
+class MapWorkspaceViewportPage;
 class MapEditorContainer;
 class MapMonitorContainer;
 class MapWidget;
@@ -57,6 +58,7 @@ public:
 
 public slots:
     void setCurrentMode(int index);
+    void setMapFullscreen(bool fullscreen);
 
 signals:
     void currentModeChanged(int index);
@@ -69,6 +71,7 @@ private:
     MapMonitorContainer *monitor_controller = nullptr;
     MapEditorContainer *editor_controller = nullptr;
     QStackedWidget *distribution_tools = nullptr;
+    MapWorkspaceViewportPage *distribution_page = nullptr;
     MapWidget *monitor_map = nullptr;
     MapWidget *editor_map = nullptr;
     MapModeToolPanel *monitor_tools = nullptr;

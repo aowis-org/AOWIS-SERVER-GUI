@@ -21,12 +21,11 @@ MainWindow::MainWindow(QWidget *parent)
     map_tile_repository( new MapTileRepository(this) ),
     map_terrain_repository( new MapTerrainRepository(this) ),
     map_model_monitor( new MapModel(this) ),
-    map_model_editor( this->map_model_monitor ),
     settings( new SettingsWidget(this) ),
     map_monitor( new MapMonitorContainer(this->map_model_monitor, this->map_tile_repository,
                                          this->map_terrain_repository, this->hydraulic_data,
                                          this->gps, this) ),
-    map_editor( new MapEditorContainer(this->map_model_editor, this->map_tile_repository,
+    map_editor( new MapEditorContainer(this->map_model_monitor, this->map_tile_repository,
                                        this->map_terrain_repository, this->hydraulic_data,
                                        this->gps, this->dock_entity_inspector, this->map_monitor, this) ),
     energy( new EnergyWidget(this) ),
@@ -179,7 +178,6 @@ MainWindow::MainWindow(QWidget *parent)
     */
     
     this->map_mon = this->map_monitor->getMap();
-    this->map_edit = this->map_editor->getMap();
     
     this->main_navigation->setContentsMargins(0, 0, 0, 0);
     
@@ -285,6 +283,15 @@ MainWindow::MainWindow(QWidget *parent)
     connect(this->map_workspace, &MapWorkspaceWidget::currentModeChanged,
             this, [this](int)
     {
+        // In fullscreen, switching tool panels must not expose a sidebar
+        // or leave input/HUD focus on the previously active controller.
+        if (this->map_fullscreen_active)
+        {
+            if (this->map_workspace->activeMap() == nullptr)
+                setMapFullscreen(false); // Stage 7: drainage pages are empty.
+            else
+                applyMapFullscreenToMode();
+        }
         updateActiveMapPanels();
         updateMapEdgePanning();
     });
@@ -313,85 +320,14 @@ MainWindow::MainWindow(QWidget *parent)
             active_model->setView2dContinuousZoom(zoom, active_widget->size());
     });
     
-    MapNavigationWidget *map_edit_nav = this->map_editor->mapNavigationWidget();
-    MapNavigationWidget *map_mon_nav = this->map_monitor->mapNavigationWidget();
+    // Both distribution toolbars select providers on the same MapModel.
+    // The model itself owns the 2D/3D camera-scale transfer in setViewMode().
+    // No editor/monitor synchronization or per-view camera snapshots exist.
+    connect(this->map_model_monitor, &MapModel::providerChanged,
+            this->map_editor->mapNavigationWidget(), &MapNavigationWidget::mapProviderChange);
+    connect(this->map_model_monitor, &MapModel::providerChanged,
+            this->map_monitor->mapNavigationWidget(), &MapNavigationWidget::mapProviderChange);
 
-    // No cross-model synchronization: only one MapModel exists.
-    connect(this->map_model_editor, &MapModel::providerChanged, map_edit_nav, &MapNavigationWidget::mapProviderChange);
-    connect(this->map_model_monitor, &MapModel::providerChanged, map_mon_nav, &MapNavigationWidget::mapProviderChange);
-
-    connect(this->map_model_editor, &MapModel::view2dContinuousZoomChanged,
-            this, [this](double)
-    {
-        this->syncMapMovement(this->map_edit, this->map_mon);
-    });
-    connect(this->map_model_editor, &MapModel::centerChangedWGS84, this, [this](CoordinateWGS84)
-    {
-        this->syncMapMovement(this->map_edit, this->map_mon);
-    });
-    // The editor has a 3D view too: its globe camera distance is its zoom.
-    connect(this->map_model_editor, &MapModel::viewGlobeCameraChanged, this, [this]
-    {
-        if (this->map_model_editor->viewMode() == MapViewMode::Globe)
-            syncMapMovement(this->map_edit, this->map_mon);
-    });
-    connect(this->map_model_monitor, &MapModel::view2dContinuousZoomChanged,
-            this, [this](double)
-    {
-        if (this->map_model_monitor->viewMode() != MapViewMode::Globe)
-            this->syncMapMovement(this->map_mon, this->map_edit);
-        if (this->map_model_monitor->viewMode() == MapViewMode::TwoD)
-            this->syncMonitorViewModesFromActive();
-    });
-    connect(this->map_model_monitor, &MapModel::viewGlobeCameraChanged, this, [this]
-    {
-        if (this->map_model_monitor->viewMode() != MapViewMode::Globe)
-            return;
-
-        this->syncMonitorViewModesFromActive();
-        this->syncMapMovement(this->map_mon, this->map_edit);
-    });
-    connect(this->map_model_monitor, &MapModel::centerChangedWGS84, this, [this](CoordinateWGS84)
-    {
-        this->captureMonitorCenter();
-        this->syncMapMovement(this->map_mon, this->map_edit);
-    });
-    connect(this->map_model_monitor, &MapModel::viewModeChanged, this,
-            [this](MapViewMode view_mode)
-    {
-        this->handleMonitorViewModeChanged(view_mode);
-    });
-
-    connect(map_edit_nav, &MapNavigationWidget::signalSyncMapMovementStateChanged, this, [this, map_mon_nav](bool state)
-    {
-        this->sync_map_movement = state;
-        map_mon_nav->mapMovementSyncStateChange(state);
-
-        if (state)
-        {
-            this->syncMonitorViewModesFromActive();
-            this->syncMapMovement(this->map_edit, this->map_mon);
-        }
-    });
-    connect(map_mon_nav, &MapNavigationWidget::signalSyncMapMovementStateChanged, this, [this, map_edit_nav](bool state)
-    {
-        this->sync_map_movement = state;
-        map_edit_nav->mapMovementSyncStateChange(state);
-
-        if (state)
-        {
-            this->syncMonitorViewModesFromActive();
-            this->syncMapMovement(this->map_mon, this->map_edit);
-        }
-    });
-
-    this->monitor_last_view_mode = this->map_model_monitor->viewMode();
-    this->monitor_2d_center_lon = this->map_model_monitor->centerLon();
-    this->monitor_2d_center_lat = this->map_model_monitor->centerLat();
-    this->monitor_globe_center_lon = this->map_model_monitor->centerLon();
-    this->monitor_globe_center_lat = this->map_model_monitor->centerLat();
-    this->syncMonitorViewModesFromActive();
-    
     connect(this->top_control_bar, &TopControlBar::signalHeadlossFormulaChanged, this->dock_entity_inspector, &EntityInspectorDock::onHeadlossFormulaChanged);
     connect(this->top_control_bar, &TopControlBar::signalHeadlossFormulaChanged, this, [this](HeadlossFormulas)
     {
@@ -459,22 +395,10 @@ MainWindow::MainWindow(QWidget *parent)
         const CoordinateWGS84 &maximum = this->hydraulic_data->boundingBoxWgs84Maximum();
         const double elevation_minimum_m = this->hydraulic_data->nodeElevationMMinimum();
         const double elevation_maximum_m = this->hydraulic_data->nodeElevationMMaximum();
-        const bool movement_sync_was_active = this->syncing_map_movement;
-        this->syncing_map_movement = true;
-
-        if (this->map_edit != nullptr)
-        {
-            this->map_edit->fitViewToBounds(
-                minimum, maximum, elevation_minimum_m, elevation_maximum_m);
-        }
-
+        // One shared navigation model and viewport: fit only once.
         if (this->map_mon != nullptr)
-        {
             this->map_mon->fitViewToBounds(
                 minimum, maximum, elevation_minimum_m, elevation_maximum_m);
-        }
-
-        this->syncing_map_movement = movement_sync_was_active;
     });
     connect(this->hydraulic_data, &HydraulicData::signalSimulationResultTimelineChanged, this, [this](bool available)
     {
@@ -532,143 +456,6 @@ MainWindow::MainWindow(QWidget *parent)
     #endif
 }
 
-
-void MainWindow::syncMapMovement(MapWidget *source, MapWidget *target)
-{
-    if (!this->sync_map_movement || this->syncing_map_movement || !source || !target
-        || source->model() == target->model())
-        return;
-
-    MapModel *source_model = source->model();
-    MapModel *target_model = target->model();
-
-    if (!source_model || !target_model)
-        return;
-
-    const double source_zoom = source_model->viewMode() == MapViewMode::Globe
-        ? source_model->viewGlobeZoomLevel(source->size())
-        : source_model->view2dContinuousZoom();
-
-    this->syncing_map_movement = true;
-    target_model->setCenter(
-        source_model->centerLon(), source_model->centerLat(), target->size());
-    if (target_model->viewMode() == MapViewMode::Globe)
-        target_model->setViewGlobeZoomLevel(source_zoom, target->size());
-    else
-        target_model->setView2dContinuousZoom(source_zoom, target->size());
-    this->syncing_map_movement = false;
-}
-
-void MainWindow::syncMonitorViewModesFromActive()
-{
-    if (!this->sync_map_movement || this->syncing_monitor_view_modes
-        || this->map_model_monitor == nullptr || this->map_mon == nullptr)
-    {
-        return;
-    }
-
-    const MapViewMode view_mode = this->map_model_monitor->viewMode();
-    this->syncing_monitor_view_modes = true;
-
-    const double center_lon = this->map_model_monitor->centerLon();
-    const double center_lat = this->map_model_monitor->centerLat();
-    this->monitor_2d_center_lon = center_lon;
-    this->monitor_2d_center_lat = center_lat;
-    this->monitor_globe_center_lon = center_lon;
-    this->monitor_globe_center_lat = center_lat;
-
-    if (view_mode == MapViewMode::TwoD)
-    {
-        this->map_model_monitor->setViewGlobeZoomLevel(
-            this->map_model_monitor->view2dContinuousZoom(), this->map_mon->size());
-    }
-    else
-    {
-        this->map_model_monitor->setView2dContinuousZoom(
-            this->map_model_monitor->viewGlobeZoomLevel(this->map_mon->size()),
-            this->map_mon->size());
-    }
-
-    this->syncing_monitor_view_modes = false;
-}
-
-void MainWindow::captureMonitorCenter()
-{
-    if (this->syncing_monitor_view_modes || this->map_model_monitor == nullptr)
-        return;
-
-    const double center_lon = this->map_model_monitor->centerLon();
-    const double center_lat = this->map_model_monitor->centerLat();
-
-    if (this->sync_map_movement)
-    {
-        this->monitor_2d_center_lon = center_lon;
-        this->monitor_2d_center_lat = center_lat;
-        this->monitor_globe_center_lon = center_lon;
-        this->monitor_globe_center_lat = center_lat;
-        return;
-    }
-
-    if (this->map_model_monitor->viewMode() == MapViewMode::TwoD)
-    {
-        this->monitor_2d_center_lon = center_lon;
-        this->monitor_2d_center_lat = center_lat;
-    }
-    else
-    {
-        this->monitor_globe_center_lon = center_lon;
-        this->monitor_globe_center_lat = center_lat;
-    }
-}
-
-void MainWindow::handleMonitorViewModeChanged(MapViewMode view_mode)
-{
-    if (this->map_model_monitor == nullptr || this->map_mon == nullptr)
-        return;
-
-    if (this->sync_map_movement)
-    {
-        this->syncing_monitor_view_modes = true;
-        if (this->monitor_last_view_mode == MapViewMode::TwoD
-            && view_mode == MapViewMode::Globe)
-        {
-            this->map_model_monitor->setViewGlobeZoomLevel(
-                this->map_model_monitor->view2dContinuousZoom(),
-                this->map_mon->size());
-        }
-        else if (this->monitor_last_view_mode == MapViewMode::Globe
-                 && view_mode == MapViewMode::TwoD)
-        {
-            this->map_model_monitor->setView2dContinuousZoom(
-                this->map_model_monitor->viewGlobeZoomLevel(this->map_mon->size()),
-                this->map_mon->size());
-        }
-        this->syncing_monitor_view_modes = false;
-
-        this->monitor_2d_center_lon = this->map_model_monitor->centerLon();
-        this->monitor_2d_center_lat = this->map_model_monitor->centerLat();
-        this->monitor_globe_center_lon = this->map_model_monitor->centerLon();
-        this->monitor_globe_center_lat = this->map_model_monitor->centerLat();
-        this->monitor_last_view_mode = view_mode;
-        return;
-    }
-
-    this->syncing_monitor_view_modes = true;
-    if (view_mode == MapViewMode::TwoD)
-    {
-        this->map_model_monitor->setCenter(
-            this->monitor_2d_center_lon, this->monitor_2d_center_lat,
-            this->map_mon->size());
-    }
-    else
-    {
-        this->map_model_monitor->setCenter(
-            this->monitor_globe_center_lon, this->monitor_globe_center_lat,
-            this->map_mon->size());
-    }
-    this->syncing_monitor_view_modes = false;
-    this->monitor_last_view_mode = view_mode;
-}
 
 void MainWindow::checkServerMapInit()
 {
@@ -851,16 +638,37 @@ void MainWindow::setMapFullscreen(bool fullscreen)
 #endif
         }
         this->map_fullscreen_entered_window_fullscreen = false;
-        // Whichever page asked: its HUD button and left menu (no-op for the
-        // one already out).
-        this->map_monitor->applyMapFullscreen(false);
-        this->map_editor->applyMapFullscreen(false);
     }
 
+    applyMapFullscreenToMode();
 #ifndef Q_OS_WASM
     this->top_control_bar->setFullScreenState(isFullScreen());
 #endif
     updateMapEdgePanning();
+}
+
+void MainWindow::applyMapFullscreenToMode()
+{
+    const bool monitor_active = this->map_fullscreen_active
+        && this->map_workspace->isDistributionMonitorActive();
+    const bool editor_active = this->map_fullscreen_active
+        && this->map_workspace->isDistributionEditorActive();
+
+    // Deactivate the old mode first and activate the new one last: both
+    // controllers address the same bgfx HUD and navigation input focus.
+    if (monitor_active)
+    {
+        this->map_editor->applyMapFullscreen(false);
+        this->map_monitor->applyMapFullscreen(true);
+    }
+    else
+    {
+        this->map_monitor->applyMapFullscreen(false);
+        this->map_editor->applyMapFullscreen(editor_active);
+    }
+    // The shared viewport page, not its currently selected tool panel,
+    // must release the sidebar's layout width in map fullscreen.
+    this->map_workspace->setMapFullscreen(this->map_fullscreen_active);
 }
 
 void MainWindow::toggleRightDockArea()
@@ -1112,7 +920,7 @@ void MainWindow::updateActiveMapPanels()
 
 void MainWindow::updateMapEdgePanning()
 {
-    if (!this->map_mon || !this->map_edit || !this->main_navigation)
+    if (this->map_mon == nullptr || this->main_navigation == nullptr)
         return;
 
 #ifdef Q_OS_WASM
@@ -1121,9 +929,8 @@ void MainWindow::updateMapEdgePanning()
     const bool fullscreen = isFullScreen() || this->map_fullscreen_active;
 #endif
 
-    const bool map_visible = this->main_navigation->currentWidget() == this->map_workspace;
-    this->map_edit->setEdgePanningEnabled(
-        fullscreen && map_visible && this->map_workspace->isDistributionEditorActive());
-    this->map_mon->setEdgePanningEnabled(
-        fullscreen && map_visible && this->map_workspace->isDistributionMonitorActive());
+    const bool map_visible = this->main_navigation->currentWidget() == this->map_workspace
+        && this->map_workspace->activeMap() == this->map_mon;
+    // The same MapWidget handles edge panning in both distribution modes.
+    this->map_mon->setEdgePanningEnabled(fullscreen && map_visible);
 }

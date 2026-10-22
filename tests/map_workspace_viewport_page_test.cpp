@@ -118,6 +118,37 @@ int main(int argc, char **argv)
                      "switching back to monitor must keep viewport exposed"))
             return 1;
 
+        // Stage 6: fullscreen hides the ENTIRE sidebar stack. Hiding only
+        // its selected panel leaves a grey strip where QStackedWidget keeps
+        // reserving its maximum width. Mode switches must not reveal it.
+        page->setSidebarWidget(mode_tools);
+        root.resize(900, 500);
+        app.processEvents();
+        const int windowed_viewport_width = viewport->width();
+        page->setMapFullscreen(true);
+        mode_tools->setCurrentIndex(1);
+        app.processEvents();
+        if (!require(viewport->isVisible() && !mode_tools->isVisible()
+                        && !tools->isVisible() && !editor_tools->isVisible(),
+                     "fullscreen editor switch exposed a sidebar or hid viewport")
+            || !require(viewport->width() > windowed_viewport_width + 100,
+                     "fullscreen did not release the sidebar width to the map"))
+            return 1;
+        mode_tools->setCurrentIndex(0);
+        app.processEvents();
+        if (!require(viewport->isVisible() && !mode_tools->isVisible()
+                        && !tools->isVisible() && !editor_tools->isVisible(),
+                     "fullscreen monitor switch exposed a sidebar or hid viewport"))
+            return 1;
+        page->setMapFullscreen(false);
+        app.processEvents();
+        if (!require(viewport->isVisible() && mode_tools->isVisible()
+                        && tools->isVisible() && !editor_tools->isVisible(),
+                     "leaving fullscreen failed to restore the active sidebar")
+            || !require(viewport->width() < windowed_viewport_width + 20,
+                     "leaving fullscreen did not restore the sidebar layout width"))
+            return 1;
+
         delete page;
     }
     if (!require(destructor_calls == 1 && destructor_errors == 0,

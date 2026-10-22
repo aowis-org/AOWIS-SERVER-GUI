@@ -9,7 +9,7 @@ MapWorkspaceViewportPage::MapWorkspaceViewportPage(QWidget *controller,
                                                    MapModeToolPanel *tools,
                                                    QWidget *viewport, QWidget *parent)
     : QWidget(parent), mode_controller(controller), mode_tools(tools),
-      map_viewport(viewport)
+      sidebar_widget(tools), map_viewport(viewport)
 {
     Q_ASSERT(this->mode_controller != nullptr);
     Q_ASSERT(this->mode_tools != nullptr);
@@ -44,6 +44,20 @@ MapWorkspaceViewportPage::MapWorkspaceViewportPage(QWidget *controller,
     // them without needing a renderer-specific show/restart workaround.
     this->mode_tools->show();
     this->map_viewport->show();
+}
+
+void MapWorkspaceViewportPage::setSidebarWidget(QWidget *sidebar)
+{
+    Q_ASSERT(sidebar != nullptr);
+    Q_ASSERT(sidebar != this->map_viewport);
+    Q_ASSERT(sidebar->parentWidget() == this);
+    this->sidebar_widget = sidebar;
+}
+
+void MapWorkspaceViewportPage::setMapFullscreen(bool fullscreen)
+{
+    Q_ASSERT(this->sidebar_widget != nullptr);
+    this->sidebar_widget->setVisible(!fullscreen);
 }
 
 QWidget *MapWorkspaceViewportPage::controller() const

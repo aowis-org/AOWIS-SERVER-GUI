@@ -59,6 +59,15 @@ constexpr bool isImplemented(int index)
     return mode != nullptr && mode->tools_implemented;
 }
 
+// Before the single-viewport migration the editor's independent globe used
+// flat billboard symbols (3D models disabled), while the monitor followed its
+// configurable "3D icons" option. Preserve that presentation distinction
+// when the two modes reuse the same MapBgfxSurface.
+constexpr bool useGlobe3dIconModels(int mode, bool monitor_preference = false)
+{
+    return mode == DistributionMonitor && monitor_preference;
+}
+
 static_assert(Modes.size() == 4);
 static_assert(Modes[DistributionMonitor].activity == Activity::Monitor);
 static_assert(Modes[DistributionEditor].activity == Activity::Editor);

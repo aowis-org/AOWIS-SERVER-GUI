@@ -55,7 +55,6 @@ private:
     void refreshProviderChoices();
     bool triggerProviderShortcut(const QKeySequence &pressed);
     
-    QCheckBox* check_map_sync = nullptr;
     QCheckBox *check_3d_icons = nullptr;
     // Map labels: IDs (monitor and editor), values of the colouring metric
     // (monitor only).
@@ -89,11 +88,8 @@ signals:
     void signalMonitorIconSizeUnitChanged(NetworkSymbologySizeUnit unit);
     void signalMonitorIconSizeChanged(NetworkSymbologySizeUnit unit, double size);
     void signal3dIconsChanged(bool enabled);
-    void signalSyncMapMovementStateChanged(bool sync);
     void signalLabelSettingsChanged(const MapLabelSettings &settings);
     
-public slots:
-    void mapMovementSyncStateChange(bool sync);
 };
 
 #endif // MAP_NAVIGATION_WIDGET_H

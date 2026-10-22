@@ -11,6 +11,7 @@
 #include "map/bgfx/map_bgfx_pan_reuse.h"
 #include "map/bgfx/map_bgfx_surface.h"
 #include "tabs/tab_map_monitor_container.h"
+#include "tabs/map_workspace_mode.h"
 #include "map/render/map_entity_pixmap_renderer.h"
 
 #include <QCoreApplication>
@@ -729,6 +730,11 @@ void MapEditorContainer::activateSharedSurface(bool active)
     surface->setNavigationFrameHandler(
         [this](double elapsed_seconds) { this->map->advanceNavigationFrame(elapsed_seconds); });
     surface->setHudActionHandler(this->editor_hud_action_handler);
+    // The editor's former independent globe used flat entity billboards.
+    // The shared surface may still hold the monitor's 3D icon-model setting;
+    // restore the editor presentation on every mode activation.
+    surface->setGlobe3dIconsEnabled(
+        MapWorkspace::useGlobe3dIconModels(MapWorkspace::DistributionEditor));
     surface->setNodeDeclutteringEnabled(false);
     surface->setLabelSettings(this->map_menu->mapNavigationWidget()->labelSettings());
     surface->setLabelSymbolRects(this->editor_node_label_rect, this->editor_link_label_rect);
@@ -882,7 +888,8 @@ void MapEditorContainer::applyMapFullscreen(bool fullscreen)
         return;
 
     this->bgfx_fullscreen_active = fullscreen;
-    this->tool_panel->setMapFullscreen(fullscreen);
+    // Sidebar visibility belongs to MapWorkspaceViewportPage: hiding only
+    // this child leaves the QStackedWidget's width allocated in fullscreen.
     if (this->bgfx_surface != nullptr)
         this->bgfx_surface->setHudFullscreen(fullscreen);
     // Keys belong to the canvas (editor keys; in fullscreen also the left

@@ -42,17 +42,18 @@ MapWorkspaceWidget::MapWorkspaceWidget(MapEditorContainer *editor,
 
     // The persistent viewport stays in this page across editor/monitor switches.
     // The monitor controller remains a hidden logic-only widget.
-    MapWorkspaceViewportPage *monitor_page = new MapWorkspaceViewportPage(
+    this->distribution_page = new MapWorkspaceViewportPage(
         monitor, this->monitor_tools, monitor->mapViewport(), this->pages);
-    this->pages->addWidget(monitor_page);
+    this->pages->addWidget(this->distribution_page);
     // Keep the map viewport on the SAME page for both distribution modes.
     // Only the left panel switches. Never remove/reparent the native surface.
-    this->distribution_tools = new QStackedWidget(monitor_page);
-    monitor_page->layout()->removeWidget(this->monitor_tools);
+    this->distribution_tools = new QStackedWidget(this->distribution_page);
+    this->distribution_page->layout()->removeWidget(this->monitor_tools);
     editor->QWidget::layout()->removeWidget(this->editor_tools);
     this->distribution_tools->addWidget(this->monitor_tools);
     this->distribution_tools->addWidget(this->editor_tools);
-    static_cast<QHBoxLayout *>(monitor_page->layout())->insertWidget(0, this->distribution_tools);
+    static_cast<QHBoxLayout *>(this->distribution_page->layout())->insertWidget(0, this->distribution_tools);
+    this->distribution_page->setSidebarWidget(this->distribution_tools);
     this->distribution_tools->setCurrentIndex(0);
     // The editor is a hidden interaction controller; it owns no visible map.
     editor->setParent(this);
@@ -83,6 +84,14 @@ MapWorkspaceWidget::~MapWorkspaceWidget()
         this->monitor_controller->setEditorInputCanvas(nullptr);
     delete this->editor_controller;
     this->editor_controller = nullptr;
+}
+
+void MapWorkspaceWidget::setMapFullscreen(bool fullscreen)
+{
+    // Hiding a tool panel *inside* QStackedWidget leaves the stack's
+    // width reserved and produces a blank strip beside the native map.
+    // Hide the entire sidebar stack so QHBoxLayout expands the viewport.
+    this->distribution_page->setMapFullscreen(fullscreen);
 }
 
 MapWorkspaceWidget::Mode MapWorkspaceWidget::currentMode() const

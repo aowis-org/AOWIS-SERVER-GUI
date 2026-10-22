@@ -108,6 +108,7 @@ private:
     void scheduleRightDockResize();
     void resizeRightDocks();
     void updateMapEdgePanning();
+    void applyMapFullscreenToMode();
 
 #ifdef Q_OS_WASM
     static EM_BOOL fullScreenChangeCallback(int event_type, const EmscriptenFullscreenChangeEvent *event, void *user_data);
@@ -133,23 +134,8 @@ private:
     MapTileRepository *map_tile_repository;
     MapTerrainRepository *map_terrain_repository;
     MapModel *map_model_monitor;
-    MapModel *map_model_editor;
     MapWidget *map_mon = nullptr;
-    MapWidget *map_edit = nullptr;
 
-    bool sync_map_movement = true;
-    bool syncing_map_movement = false;
-    bool syncing_monitor_view_modes = false;
-    MapViewMode monitor_last_view_mode = MapViewMode::TwoD;
-    double monitor_2d_center_lon = 0.0;
-    double monitor_2d_center_lat = 0.0;
-    double monitor_globe_center_lon = 0.0;
-    double monitor_globe_center_lat = 0.0;
-    void syncMapMovement(MapWidget *source, MapWidget *target);
-    void syncMonitorViewModesFromActive();
-    void captureMonitorCenter();
-    void handleMonitorViewModeChanged(MapViewMode view_mode);
-    
     MainNavigationWidget *main_navigation = nullptr;
     SettingsWidget *settings;
     int settings_page_index = -1;

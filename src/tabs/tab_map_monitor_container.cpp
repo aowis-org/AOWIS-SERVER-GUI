@@ -1,5 +1,6 @@
 #include <aowis/model/units/quantity.h>
 #include "tabs/tab_map_monitor_container.h"
+#include "tabs/map_workspace_mode.h"
 #include "tabs/map_mode_tool_panel.h"
 
 #include "network/hydraulic_data.h"
@@ -451,7 +452,13 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
         // Globe network (slice 3): tanks and reservoirs as 3D models.
         connect(this->map_menu->mapNavigationWidget(),
                 &MapNavigationWidget::signal3dIconsChanged,
-                surface, [this, surface](bool enabled) { this->monitor_globe_3d_icons = enabled; if (!this->editor_mode) surface->setGlobe3dIconsEnabled(enabled); });
+                surface, [this, surface](bool enabled)
+                {
+                    this->monitor_globe_3d_icons = enabled;
+                    if (!this->editor_mode)
+                        surface->setGlobe3dIconsEnabled(MapWorkspace::useGlobe3dIconModels(
+                            MapWorkspace::DistributionMonitor, enabled));
+                });
         surface->setBackgroundOpacity(this->network_background_opacity);
         connect(this->map_menu->mapNavigationWidget(),
                 &MapNavigationWidget::signalSlideOpacityChanged,
@@ -1372,7 +1379,8 @@ void MapMonitorContainer::applyMapFullscreen(bool fullscreen)
         return;
 
     this->bgfx_fullscreen_active = fullscreen;
-    this->tool_panel->setMapFullscreen(fullscreen);
+    // Sidebar visibility belongs to MapWorkspaceViewportPage: hiding only
+    // this child leaves the QStackedWidget's width allocated in fullscreen.
     if (this->bgfx_surface != nullptr)
     {
         this->bgfx_surface->setHudFullscreen(fullscreen);
@@ -1591,7 +1599,8 @@ void MapMonitorContainer::activateMonitorSurface()
     surface->setGlobeOverlayBuilder(MapBgfxSurface::GlobeOverlayBuilder());
     surface->setLabelSymbolRects(MapBgfxLabels::SymbolRect(), MapBgfxLabels::SymbolRect());
     surface->setNodeDeclutteringEnabled(this->monitor_node_decluttering);
-    surface->setGlobe3dIconsEnabled(this->monitor_globe_3d_icons);
+    surface->setGlobe3dIconsEnabled(MapWorkspace::useGlobe3dIconModels(
+        MapWorkspace::DistributionMonitor, this->monitor_globe_3d_icons));
     surface->setBackgroundOpacity(this->network_background_opacity);
     surface->setLabelSettings(this->map_menu->mapNavigationWidget()->labelSettings());
     surface->setNetworkScreenTranslation(QPointF());

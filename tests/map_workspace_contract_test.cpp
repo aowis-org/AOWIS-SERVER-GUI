@@ -50,6 +50,19 @@ int main()
                 "invalid modes cannot own tools"))
         return 1;
 
+    // Regression: a persistent globe must not carry the monitor's configurable
+    // 3D models into Distribution Editor. The monitor restores its preference.
+    if (!expect(!useGlobe3dIconModels(DistributionEditor, true),
+                "editor must use its original flat globe icons")
+        || !expect(useGlobe3dIconModels(DistributionMonitor, true),
+                   "monitor must restore enabled 3D icon models")
+        || !expect(!useGlobe3dIconModels(DistributionMonitor, false),
+                   "monitor 3D icon-model preference must be honored")
+        || !expect(!useGlobe3dIconModels(DrainageMonitor, true)
+                       && !useGlobe3dIconModels(DrainageEditor, true),
+                   "empty drainage modes must not inherit distribution icon models"))
+        return 1;
+
     std::puts("Map workspace mode/ownership contract passed");
     return 0;
 }
