@@ -68,9 +68,9 @@ private:
     Mode selected_mode = DistributionMonitor;
     MapMonitorContainer *monitor_controller = nullptr;
     MapEditorContainer *editor_controller = nullptr;
-    QStackedWidget *distribution_tools = nullptr;
-    MapWorkspaceViewportPage *distribution_page = nullptr;
-    MapWidget *monitor_map = nullptr;
+    QStackedWidget *mode_tool_stack = nullptr;
+    MapWorkspaceViewportPage *viewport_page = nullptr;
+    MapWidget *shared_map = nullptr;
     MapModeToolPanel *monitor_tools = nullptr;
     MapModeToolPanel *editor_tools = nullptr;
     QList<QTabBar *> mode_tabs;

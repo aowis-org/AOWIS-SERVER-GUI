@@ -27,9 +27,8 @@ MapWorkspaceViewportPage::MapWorkspaceViewportPage(QWidget *controller,
         old_layout->removeWidget(this->map_viewport);
     }
 
-    // A hidden controller remains the event filter, signal receiver and
-    // lifespan owner of its logic. Keep it alive until the page is torn down,
-    // and destroy it before the map to which its destructor refers.
+    // A hidden controller remains the event filter and signal receiver.
+    // The page destroys it explicitly before the viewport at teardown.
     this->mode_controller->setParent(this);
     this->mode_controller->hide();
 
@@ -44,6 +43,14 @@ MapWorkspaceViewportPage::MapWorkspaceViewportPage(QWidget *controller,
     // them without needing a renderer-specific show/restart workaround.
     this->mode_tools->show();
     this->map_viewport->show();
+}
+
+MapWorkspaceViewportPage::~MapWorkspaceViewportPage()
+{
+    // Controller cleanup clears callback resolvers on the shared viewport.
+    // Do not rely on QObject child insertion/deletion ordering during close.
+    delete this->mode_controller;
+    this->mode_controller = nullptr;
 }
 
 void MapWorkspaceViewportPage::setSidebarWidget(QWidget *sidebar)

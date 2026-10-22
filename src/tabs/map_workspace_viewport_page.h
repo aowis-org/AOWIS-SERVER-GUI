@@ -5,17 +5,17 @@
 class MapModeToolPanel;
 
 // Workspace-owned page for an existing map viewport and its independent tools.
-// During migration the controller still owns all its signal/interaction logic,
-// but does not own the tool panel, viewport or renderer widget hierarchy.
+// The hidden monitor controller owns input callbacks, but neither the mode
+// tool panels nor the viewport are children of that controller.
 //
-// The controller is parented FIRST: QWidget destroys children in insertion
-// order, so its destructor can clear callbacks into the still-live viewport.
-// Do not create the controller's parent/viewport relationship in reverse.
+// The controller is destroyed explicitly before QWidget tears down the
+// viewport children, so cleanup callbacks never touch an already-deleted map.
 class MapWorkspaceViewportPage final : public QWidget
 {
 public:
     MapWorkspaceViewportPage(QWidget *controller, MapModeToolPanel *tools,
                              QWidget *viewport, QWidget *parent = nullptr);
+    ~MapWorkspaceViewportPage() override;
 
     QWidget *controller() const;
     MapModeToolPanel *toolPanel() const;

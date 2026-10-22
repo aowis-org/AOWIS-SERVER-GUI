@@ -23,8 +23,8 @@ MapWorkspaceWidget::MapWorkspaceWidget(MapEditorContainer *editor,
     Q_ASSERT(monitor != nullptr);
     this->monitor_controller = monitor;
     this->editor_controller = editor;
-    this->monitor_map = monitor->getMap();
-    Q_ASSERT(this->monitor_map == editor->getMap());
+    this->shared_map = monitor->getMap();
+    Q_ASSERT(this->shared_map == editor->getMap());
     this->monitor_tools = monitor->toolPanel();
     this->editor_tools = editor->toolPanel();
     Q_ASSERT(this->monitor_tools != nullptr);
@@ -37,29 +37,29 @@ MapWorkspaceWidget::MapWorkspaceWidget(MapEditorContainer *editor,
     layout->setSpacing(0);
 
     // The single native map viewport stays visible across all four map modes.
-    // The legacy monitor controller remains a hidden logic-only widget.
-    this->distribution_page = new MapWorkspaceViewportPage(
+    // The monitor controller remains a hidden logic-only widget.
+    this->viewport_page = new MapWorkspaceViewportPage(
         monitor, this->monitor_tools, monitor->mapViewport(), this);
-    layout->addWidget(this->distribution_page);
+    layout->addWidget(this->viewport_page);
     // Keep the map viewport on the SAME page for all four modes.
     // Only the left panel switches. Never remove/reparent the native surface.
-    this->distribution_tools = new QStackedWidget(this->distribution_page);
-    this->distribution_page->layout()->removeWidget(this->monitor_tools);
+    this->mode_tool_stack = new QStackedWidget(this->viewport_page);
+    this->viewport_page->layout()->removeWidget(this->monitor_tools);
     editor->QWidget::layout()->removeWidget(this->editor_tools);
-    this->distribution_tools->addWidget(this->monitor_tools);
-    this->distribution_tools->addWidget(this->editor_tools);
-    this->distribution_tools->addWidget(createEmptyModeTools(DrainageMonitor));
-    this->distribution_tools->addWidget(createEmptyModeTools(DrainageEditor));
-    static_cast<QHBoxLayout *>(this->distribution_page->layout())->insertWidget(0, this->distribution_tools);
-    this->distribution_page->setSidebarWidget(this->distribution_tools);
-    this->distribution_tools->setCurrentIndex(0);
+    this->mode_tool_stack->addWidget(this->monitor_tools);
+    this->mode_tool_stack->addWidget(this->editor_tools);
+    this->mode_tool_stack->addWidget(createEmptyModeTools(DrainageMonitor));
+    this->mode_tool_stack->addWidget(createEmptyModeTools(DrainageEditor));
+    static_cast<QHBoxLayout *>(this->viewport_page->layout())->insertWidget(0, this->mode_tool_stack);
+    this->viewport_page->setSidebarWidget(this->mode_tool_stack);
+    this->mode_tool_stack->setCurrentIndex(0);
     // The editor is a hidden interaction controller; it owns no visible map.
     editor->setParent(this);
     editor->hide();
     monitor->setEditorInputCanvas(editor->inputCanvas());
 
     // One authoritative MapModel follows its workspace-owned viewport.
-    this->monitor_map->model()->setParent(this);
+    this->shared_map->model()->setParent(this);
 
     this->editor_tools->setModeSelector(createModeSelector(DistributionEditor));
     this->monitor_tools->setModeSelector(createModeSelector(DistributionMonitor));
@@ -86,7 +86,7 @@ void MapWorkspaceWidget::setMapFullscreen(bool fullscreen)
     // Hiding a tool panel *inside* QStackedWidget leaves the stack's
     // width reserved and produces a blank strip beside the native map.
     // Hide the entire sidebar stack so QHBoxLayout expands the viewport.
-    this->distribution_page->setMapFullscreen(fullscreen);
+    this->viewport_page->setMapFullscreen(fullscreen);
 }
 
 MapWorkspaceWidget::Mode MapWorkspaceWidget::currentMode() const
@@ -106,7 +106,7 @@ bool MapWorkspaceWidget::isDistributionMonitorActive() const
 
 MapWidget *MapWorkspaceWidget::activeMap() const
 {
-    return this->monitor_map;
+    return this->shared_map;
 }
 
 MapModel *MapWorkspaceWidget::activeModel() const
@@ -164,7 +164,7 @@ void MapWorkspaceWidget::setCurrentMode(int index)
 
         // Changing modes moves only the tools, NEVER the viewport or its
         // native surface. Drainage is an imagery/terrain-only render profile.
-        this->distribution_tools->setCurrentIndex(index);
+        this->mode_tool_stack->setCurrentIndex(index);
         this->selected_mode = static_cast<Mode>(index);
         for (QTabBar *tab_bar : this->mode_tabs)
         {
@@ -222,7 +222,7 @@ QWidget *MapWorkspaceWidget::createEmptyModeTools(Mode mode)
 {
     // Drainage controls intentionally remain empty, but all four selectors
     // occupy the same sidebar stack so the persistent map never disappears.
-    QWidget *sidebar = new QWidget(this->distribution_tools);
+    QWidget *sidebar = new QWidget(this->mode_tool_stack);
     QVBoxLayout *layout = new QVBoxLayout(sidebar);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);

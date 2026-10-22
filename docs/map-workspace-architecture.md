@@ -20,8 +20,8 @@ networks or run distribution editing.
 
 ## Ownership and boundaries
 
-**Current implementation:** `MapWorkspaceWidget` owns the single
-Distribution `MapModel` and hosts the persistent `MapWidget` and
+`MapWorkspaceWidget` owns the single shared `MapModel` and hosts
+the persistent `MapWidget` and
 `MapBgfxSurface` in `MapWorkspaceViewportPage`. The renderer is constructed
 by the monitor controller once; the editor receives non-owning pointers to
 that same map and surface. The editor keeps its `MapCanvasWidget` as an
@@ -157,7 +157,7 @@ asynchronous bgfx restart may appear in the *next* snapshot. These are cumulativ
 | `globe_geometry_rebuilt`, `globe_flow_rebuilt` | Existing globe preparation diagnostics |
 | `frames` | Submitted frames and their CPU time, **not** GPU execution time |
 
-In Stage 4 the distribution viewport is shared: ordinary Monitor ↔ Editor
+Because the distribution viewport is shared, ordinary Monitor ↔ Editor
 mode switches should increment `workspace_mode_switch` **without incrementing**
 `bgfx_device_started` or `bgfx_device_stopped`. The derived
 `bgfx_2d_scene_prepared` can increase once for a previously unprepared
@@ -167,7 +167,7 @@ current presentation and invalidate the other one.
 Initial startup and native surface loss can change renderer lifecycle counters;
 **none of the four map modes** should change them.
 
-Automated checks (including the new Qt Widgets panel ownership test):
+Automated checks:
 
 ```bash
 ./compile_linux_tests.sh --debug
@@ -175,14 +175,12 @@ ctest --test-dir build-linux-tests-debug --output-on-failure \
   -R 'aowis-map-(workspace|mode-tool-panel|camera-invalidation|retained-network-scene)'
 ```
 
-The workspace viewport-page test checks that a monitor-style controller's
-map stack and tools transfer to the workspace without reconstruction, that
-fullscreen releases the full sidebar width to the map even with a nested
-stack of mode panels, and that the controller is destroyed before the map it
-references. It uses ordinary Qt widgets rather than initializing
+The workspace viewport-page test checks that the monitor controller's
+map stack and tools are workspace-owned without reconstruction, that
+fullscreen releases the full sidebar width even after repeated mode changes,
+and that the controller is explicitly destroyed before the map it references. It uses ordinary Qt widgets rather than initializing
 bgfx. The tool-panel test checks that each controls tree is independently parented,
-mode tabs remain outside the scroll viewport, scrollbar behavior matches the
-old controls, and fullscreen hides only the requested panel. It runs through
+mode tabs remain outside the scroll viewport, scrollbar behavior is preserved, and fullscreen hides only the requested panel. It runs through
 the `aowis-tests` aggregate build target using Qt's offscreen platform.
 The separate mode-contract test compiles without Qt or a GPU. The diagnostics
 test uses Qt Core but does not create a window. The existing camera
@@ -212,7 +210,7 @@ Manual shared-viewport acceptance checks:
    Return to Distribution Monitor: network styling and selection are restored.
    Neither `bgfx_device_started` nor `bgfx_device_stopped` should increase.
    Fullscreen remains active during drainage mode switches.
-5. Repeat on Linux desktop, Windows and WASM during each relevant migration.
+5. Repeat on Linux desktop, Windows and WASM before release.
    A unit test without a GPU cannot prove native-window behavior.
 
 All four map modes share **one persistent GPU renderer and camera**, with
@@ -220,3 +218,28 @@ monitor/editor presentation settings, two cached distribution 2D scene
 variants and basemap-only drainage placeholders. No mode change may shut down
 bgfx, destroy the native window, or clear the network snapshot. No CPU-era
 zoom buckets or geometry rebuilds tied to fractional zoom are permitted.
+
+### Stage 8 diagnostics acceptance
+
+Capture both stdout and stderr (Qt writes messages to stderr):
+
+```bash
+AOWIS_MAP_RENDER_DIAGNOSTICS=1 ./build-linux/aowis-server-gui 2>&1 | tee /tmp/aowis-map-workspace.log
+python3 tools/check_map_workspace_diagnostics.py /tmp/aowis-map-workspace.log --min-switches 12
+```
+
+Exercise all four modes before exiting. The checker rejects missing or
+non-monotonic counters, unexpected bgfx starts/stops, insufficient mode
+switch coverage, and an absence of repeated switches after the last 2D
+scene preparation. Genuine network geometry revisions can occur while
+testing; run several additional mode switches after loading a network.
+This script checks *observed* renderer lifecycle, not visual correctness,
+GPU driver allocations, or shutdown memory safety. The Qt regression test
+checks explicit controller-before-viewport destruction and repeats mixed
+fullscreen/mode changes without constructing a GPU device.
+
+For an end-to-end release check, manually validate imagery/terrain in 2D/3D,
+input focus and shortcuts, editor drag-selection cleanup, network styling,
+blank drainage overlays, fullscreen expansion, high-density networks, and
+clean shutdown on Linux, Windows, and WASM. A passing Linux diagnostics
+trace is not evidence that those other platform runs were completed.

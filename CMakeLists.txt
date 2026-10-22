@@ -561,8 +561,7 @@ else()
 endif()
 
 if(BUILD_TESTING AND NOT EMSCRIPTEN)
-    # Shared-map migration stage 1: the mode contract has no Qt or GPU
-    # dependencies and can be validated before any surface is moved.
+    # The four-mode contract is independent of Qt and the graphics backend.
     add_executable(aowis-map-workspace-contract-tests
         tests/map_workspace_contract_test.cpp)
     target_include_directories(aowis-map-workspace-contract-tests PRIVATE
@@ -580,8 +579,7 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
         COMMAND aowis-map-workspace-diagnostics-tests)
     set_tests_properties(aowis-map-workspace-diagnostics PROPERTIES LABELS "aowis")
 
-    # Stage 2: panels are independent QWidget trees; no map model, GPU
-    # surface or native window is needed to build/test their behavior.
+    # Panels are independent QWidget trees; no GPU/native window is needed.
     add_executable(aowis-map-mode-tool-panel-tests
         tests/map_mode_tool_panel_test.cpp
         src/tabs/map_mode_tool_panel.cpp)
@@ -594,8 +592,7 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
         LABELS "aowis"
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
-    # Stage 3: test that a migrated map keeps its viewport and controls as
-    # siblings, and that its controller dies before the map it references.
+    # The workspace must preserve viewport identity and teardown order.
     add_executable(aowis-map-workspace-viewport-page-tests
         tests/map_workspace_viewport_page_test.cpp
         src/tabs/map_workspace_viewport_page.cpp
@@ -608,6 +605,17 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
     set_tests_properties(aowis-map-workspace-viewport-page PROPERTIES
         LABELS "aowis"
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+    # An optional Python-only diagnostics log regression test: no Qt or GPU
+    # runtime is required, and systems without Python keep the C++ suite.
+    find_package(Python3 QUIET COMPONENTS Interpreter)
+    if(Python3_Interpreter_FOUND)
+        add_test(NAME aowis-map-workspace-log-checker
+            COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_map_workspace_log_checker.py)
+        set_tests_properties(aowis-map-workspace-log-checker PROPERTIES
+            LABELS "aowis")
+    endif()
 
     add_executable(aowis-map-provider-fallback-tests
         tests/map_provider_fallback_resolution_test.cpp)

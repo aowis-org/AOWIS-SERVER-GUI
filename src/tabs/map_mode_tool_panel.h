@@ -6,8 +6,8 @@ class QScrollArea;
 class QVBoxLayout;
 
 // Owns the left-side controls for one Maps mode, independently of its map
-// viewport or renderer. It may be moved to the shared workspace in Stage 3
-// without transferring ownership of MapWidget or MapBgfxSurface.
+// viewport or renderer. The workspace stacks independent mode panels while
+// leaving the shared MapWidget and MapBgfxSurface in place.
 class MapModeToolPanel final : public QWidget
 {
 public:

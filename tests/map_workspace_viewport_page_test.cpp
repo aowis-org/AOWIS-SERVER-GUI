@@ -172,6 +172,34 @@ int main(int argc, char **argv)
                      "leaving fullscreen did not restore the sidebar layout width"))
             return 1;
 
+        // Stress the page's ownership contract without constructing a GPU
+        // device: toggling all four modes and fullscreen repeatedly must
+        // never reparent, hide or replace the persistent viewport.
+        QWidget *const stable_parent = viewport->parentWidget();
+        const QWidget *const stable_viewport = viewport;
+        for (int iteration = 0; iteration < 64; ++iteration)
+        {
+            mode_tools->setCurrentIndex(iteration % 4);
+            page->setMapFullscreen((iteration % 3) == 0);
+            app.processEvents();
+            if (!require(page->viewport() == stable_viewport
+                            && viewport->parentWidget() == stable_parent
+                            && viewport->isVisible(),
+                         "mode/fullscreen stress replaced or hid the viewport")
+                || !require(mode_tools->isVisible() == ((iteration % 3) != 0),
+                            "mode/fullscreen stress failed sidebar visibility")
+                || !require(!legacy->isVisible(),
+                            "mode/fullscreen stress exposed the hidden controller"))
+                return 1;
+        }
+        page->setMapFullscreen(false);
+        app.processEvents();
+        if (!require(mode_tools->currentIndex() == 3 && viewport->isVisible(),
+                     "stress cycle lost the final mode or viewport"))
+            return 1;
+
+        // Deliberately destroy the page from a drainage mode; its hidden
+        // monitor controller must be deleted while the map is still alive.
         delete page;
     }
     if (!require(destructor_calls == 1 && destructor_errors == 0,

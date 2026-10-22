@@ -32,8 +32,7 @@ enum class Counter : size_t
     DemandAttachmentsPrepared,
     GlobeGeometryRebuilt,
     GlobeFlowRebuilt,
-    // Shared map migration diagnostics. These are measured on the *existing*
-    // two-surface architecture until the single-surface migration is complete.
+    // One persistent shared map surface serves all four workspace modes.
     BgfxDeviceStarted,     // successful GPU resource initialization
     BgfxDeviceStopped,     // owning device was shut down
     Bgfx2dScenePrepared,   // CPU display geometry actually re-prepared
