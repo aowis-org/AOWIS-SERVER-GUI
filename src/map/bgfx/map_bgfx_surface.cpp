@@ -107,6 +107,13 @@ constexpr int kImageryUploadsPerFrame = 8;
 constexpr int kGlobeImageryUploadsPerFrame = 12;
 // VSYNC: presentation pacing (see MapFramePacer). MSAA x4: antialiased thick
 // line and marker edges; bgfx clamps it to what the renderer supports.
+// FLIP_AFTER_RENDER: with BGFX_CONFIG_MULTITHREADED=0 bgfx by default
+// presents (swaps) the frame rendered by the previous bgfx::frame() call at
+// the start of the next one. The map renders on demand, so the last frame
+// before it goes idle was never shown: a released selection rectangle, a
+// cleared tile selection or a just arrived tile stayed on screen as the
+// frame before, until anything else asked for a redraw. Presenting right
+// after rendering shows every frame (and one frame earlier).
 #ifdef Q_OS_WASM
 // NOT on WebGL: bgfx's OpenGL ES MSAA back buffer calls
 // glFramebufferTexture2DMultisampleEXT (EXT_multisampled_render_to_texture),
@@ -114,9 +121,10 @@ constexpr int kGlobeImageryUploadsPerFrame = 12;
 // frame traps with "RuntimeError: null function" inside
 // RendererContextGL::submit(). The browser multisamples the canvas instead:
 // the WebGL context is created with antialias=true (createBrowserContext()).
-constexpr uint32_t kMapBgfxResetFlags = BGFX_RESET_VSYNC;
+constexpr uint32_t kMapBgfxResetFlags = BGFX_RESET_VSYNC | BGFX_RESET_FLIP_AFTER_RENDER;
 #else
-constexpr uint32_t kMapBgfxResetFlags = BGFX_RESET_VSYNC | BGFX_RESET_MSAA_X4;
+constexpr uint32_t kMapBgfxResetFlags =
+    BGFX_RESET_VSYNC | BGFX_RESET_MSAA_X4 | BGFX_RESET_FLIP_AFTER_RENDER;
 #endif
 // Fallback when the platform reports no usable refresh rate.
 constexpr double kFallbackRefreshHz = 60.0;

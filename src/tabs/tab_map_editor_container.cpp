@@ -912,6 +912,17 @@ bool MapEditorContainer::eventFilter(QObject *watched, QEvent *event)
             event->accept();
             return true;
         }
+        // A rectangle drag that began on the map owns its right-button
+        // release, even when the pointer ends above a HUD panel. Otherwise
+        // the HUD can swallow the release and strand the rubber band onscreen.
+        if (event->type() == QEvent::MouseButtonRelease
+            && static_cast<QMouseEvent *>(event)->button() == Qt::RightButton
+            && this->editor_controller->rectangleDragging())
+        {
+            // We are already filtering an event delivered to the canvas:
+            // don't send it a second time. Let QWidget dispatch it there.
+            return QWidget::eventFilter(watched, event);
+        }
         // The HUD sits on top of the map: it sees pointer, wheel and Escape
         // first, and what it consumes never reaches the editor.
         if (routeBgfxHudEvent(event))

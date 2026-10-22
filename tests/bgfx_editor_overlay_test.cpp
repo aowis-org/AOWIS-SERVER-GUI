@@ -155,6 +155,19 @@ bool hasColorNear(const MapBgfxHudCanvas &canvas, quint32 argb, double x, double
     return false;
 }
 
+// Check one frame-specific colour without assuming the whole editor overlay
+// is empty: network icons and pipe vertices must remain after selection ends.
+bool hasColor(const MapBgfxHudCanvas &canvas, quint32 argb)
+{
+    const quint32 abgr = MapBgfxHudCanvas::premultipliedAbgr(argb);
+    for (const MapBgfxHudVertex &vertex : canvas.vertices())
+    {
+        if (vertex.abgr == abgr)
+            return true;
+    }
+    return false;
+}
+
 // A sprite vertex (white tint, not the white texel) at (x, y).
 bool hasSpriteCorner(const MapBgfxHudCanvas &canvas, const MapBgfxHudTextCache &cache,
                      double x, double y)
@@ -430,6 +443,20 @@ void testFramesAndAttachments()
     }
     req(frame_vertices > 50, "rectangle selection draws its frame");
     req(inside, "rectangle selection stays around its rectangle (glow included)");
+    // The blue edge is specific to the drag rectangle, unlike the persistent
+    // node icons and pipe-vertex details also drawn by this overlay.
+    constexpr quint32 RectangleEdgeColor = 0xb456d7ffu;
+    req(hasColor(harness.canvas, RectangleEdgeColor),
+        "drag rectangle includes its blue edge");
+
+    // Release: rebuild the same overlay without the drag rectangle. Its edge
+    // must disappear; the ordinary network details must remain visible.
+    s.viewport.rectangle_selection_visible = false;
+    harness.build(s, view);
+    req(!hasColor(harness.canvas, RectangleEdgeColor),
+        "released entity selection rectangle disappears from the overlay");
+    req(harness.probe.calls.size() == 4 && !harness.canvas.vertices().isEmpty(),
+        "network editor details remain visible after rectangle release");
 
     // Tile selection: the tile under the camera at zoom 18, drawn green.
     Scene tiles = scene();
@@ -449,6 +476,18 @@ void testFramesAndAttachments()
     // The inner grid line between the two tiles.
     req(hasColorNear(harness.canvas, 0x6968ff68u, tile_left + 256.0, 300.0, 300.0),
         "tile selection grid line between tiles");
+
+    // The editor still retains the completed selection range for the
+    // Delete Tiles action, but the overlay is hidden after mouse release.
+    tiles.viewport.tile_selection_visible = false;
+    harness.build(tiles, view);
+    req(!hasColor(harness.canvas, 0xe69bff91u) &&
+        !hasColor(harness.canvas, 0x6968ff68u),
+        "released cache selection rectangle and grid disappear from the overlay");
+    req(harness.probe.calls.size() == 4 && !harness.canvas.vertices().isEmpty(),
+        "network editor details remain visible after cache selection release");
+    req(tiles.viewport.tile_x_max == tiles.viewport.tile_x_min + 1,
+        "released cache selection keeps its tile bounds");
 
     // Demand-point attachment: dashed (several separate dashes).
     Scene attachment = scene();
