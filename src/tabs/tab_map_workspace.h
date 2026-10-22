@@ -40,6 +40,7 @@ public:
                                 MapMonitorContainer *monitor,
                                 QWidget *parent = nullptr);
 
+    ~MapWorkspaceWidget() override;
     Mode currentMode() const;
     bool isDistributionEditorActive() const;
     bool isDistributionMonitorActive() const;
@@ -64,6 +65,10 @@ private:
     QWidget *createModeSelector(Mode mode);
     QWidget *createEmptyModePage(Mode mode);
 
+    Mode selected_mode = DistributionMonitor;
+    MapMonitorContainer *monitor_controller = nullptr;
+    MapEditorContainer *editor_controller = nullptr;
+    QStackedWidget *distribution_tools = nullptr;
     MapWidget *monitor_map = nullptr;
     MapWidget *editor_map = nullptr;
     MapModeToolPanel *monitor_tools = nullptr;

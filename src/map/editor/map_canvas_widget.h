@@ -42,6 +42,7 @@ public:
     MapEditorViewportRenderState viewportRenderState() const;
     // Whatever the editor shows changed: signalRenderUpdateRequested().
     void requestRenderUpdate();
+    void setSharedEditorActive(bool active);
 
 signals:
     // Whatever the editor shows changed (visual state, selection frames,
@@ -76,6 +77,7 @@ private:
     QPointer<MapEditorController> editor_controller;
     QPointF last_pointer_position;
     bool last_pointer_position_valid = false;
+    bool shared_editor_active = false;
 
     // 0 = transparent, 100 = fully system background
     int map_background_opacity = 0;

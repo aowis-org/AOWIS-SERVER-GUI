@@ -49,16 +49,11 @@ class QWindow;
 // (click selection and hover), selection/error highlights and the native HUD
 // (crosshair, GPS, scale, downloads, view switch, fullscreen, map legend) and
 // map labels (entity IDs / values, map_bgfx_labels.h).
-// The map editor uses a second instance (Phase 2): hidden entities and the
-// network screen translation for its move preview, and an overlay pass
-// (setOverlayBuilder()) for its icons and interaction feedback. Both
-// instances also draw the globe (roadmap Phase 3); the editor's adds a
-// globe overlay pass (setGlobeOverlayBuilder()) for its tile selections.
-//
-// One bgfx device per process: it belongs to the visible surface. Hiding a
-// surface (tab switch) shuts bgfx down; showing one starts it again, so the
-// Map Monitor and the Map Editor take turns on the same device (and, in the
-// browser, the same canvas).
+// The same persistent surface renders Distribution Monitor and Editor. The
+// workspace selects which mode supplies input handlers, symbology, overlays,
+// and HUD callbacks; changing modes never changes the native window.
+// bgfx remains process-global: a genuinely lost/recreated native surface may
+// still require device reinitialization, but mode switches must not.
 class MapBgfxSurface final : public QWidget
 {
     Q_OBJECT

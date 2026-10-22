@@ -10,6 +10,7 @@
 #include "map/bgfx/map_bgfx_globe_hud_controller.h"
 #include "map/bgfx/map_bgfx_pan_reuse.h"
 #include "map/bgfx/map_bgfx_surface.h"
+#include "tabs/tab_map_monitor_container.h"
 #include "map/render/map_entity_pixmap_renderer.h"
 
 #include <QCoreApplication>
@@ -98,17 +99,18 @@ private:
 MapEditorContainer::MapEditorContainer(MapModel *map_model, MapTileRepository *tile_repository,
                                        MapTerrainRepository *terrain_repository,
                                        HydraulicData *hydraulic_data, GpsProvider *gps,
-                                       EntityInspectorDock *map_inspector, QWidget *parent)
+                                       EntityInspectorDock *map_inspector, MapMonitorContainer *monitor, QWidget *parent)
     : QWidget{parent},
     hydraulic_data( hydraulic_data ),
     gps( gps ),
     map_inspector( map_inspector ),
+    monitor( monitor ),
     map_model( map_model ),
     tile_repository( tile_repository ),
     terrain_repository( terrain_repository ),
     map_stack( new QWidget(this) ),
     map_stack_layout( new QStackedLayout(this->map_stack) ),
-    map( new MapWidget(this->map_model, this->tile_repository, this->gps, this->map_stack) ),
+    map( monitor->getMap() ),
     map_canvas( new MapCanvasWidget(this->map_model, this->map, this->hydraulic_data, this->map_stack) ),
     renderer_status( new QLabel(this->map_stack) ),
     editor_controller( new MapEditorController(this->map_model, this->map_canvas->mapCanvasEntities(), this) ),
@@ -126,18 +128,18 @@ MapEditorContainer::MapEditorContainer(MapModel *map_model, MapTileRepository *t
         this->map_menu, Sizes::SidebarMapEditLeftWidth,
         MapModeToolPanel::ScrollbarWidthPolicy::Fixed, true, this);
 
-    // Stack (StackAll, all at the map's size): MapWidget (navigation owner,
-    // paints only its background), the canvas (editor input, paints
-    // nothing), the bgfx surface and the status label.
+    // Legacy offscreen stack: editor input and state only. The visible map,
+    // navigation and bgfx surface are owned by the shared Maps viewport.
     this->map_stack_layout->setContentsMargins(0, 0, 0, 0);
     this->map_stack_layout->setSpacing(0);
     this->map_stack_layout->setStackingMode(QStackedLayout::StackAll);
     
-    this->map_stack_layout->addWidget(this->map);
+    // The editor canvas is an offscreen event target. The live map is always
+    // in the workspace-owned monitor viewport.
     this->map_stack_layout->addWidget(this->map_canvas);
     this->map_stack_layout->setCurrentWidget(this->map_canvas);
-    // Text only, never an opaque cover (the monitor's rule): the surface
-    // must keep receiving paint/expose events to present its first frame.
+    // Renderer status stays here for compatibility with the existing menu;
+    // the monitor controller owns the only actual renderer status.
     this->renderer_status->setAlignment(Qt::AlignCenter);
     this->renderer_status->setWordWrap(true);
     this->renderer_status->setAutoFillBackground(false);
@@ -181,10 +183,11 @@ MapEditorContainer::MapEditorContainer(MapModel *map_model, MapTileRepository *t
 
 MapEditorContainer::~MapEditorContainer()
 {
+    // The shortcut is hosted by the visible viewport, not this hidden controller.
+    delete this->bgfx_fullscreen_shortcut;
+    this->bgfx_fullscreen_shortcut = nullptr;
     // The resolvers capture the bgfx surface (the monitor's destructor).
-    this->map->setRenderSurfaceScreenCoordinateResolver(MapWidget::ScreenCoordinateResolver());
-    this->map->setRenderSurfaceGlobeSurfacePointResolver(MapWidget::GlobeSurfacePointResolver());
-    this->map->setCachedTerrainElevationResolver(MapWidget::CachedTerrainElevationResolver());
+    // The shared MapWidget resolvers belong to the workspace monitor.
     this->editor_controller->setGlobeCoordinateResolver(MapEditorController::ScreenCoordinateResolver());
 }
 
@@ -219,19 +222,19 @@ void MapEditorContainer::connectRenderSurfaceSync()
     connect(this->hydraulic_data, &HydraulicData::signalNodeChanged,
             this, [this](InfrastructureEntity, const QUuid &)
     {
-        if (this->bgfx_surface != nullptr)
+        if (this->shared_editor_mode && this->bgfx_surface != nullptr)
             this->bgfx_surface->setNetworkSnapshot(this->hydraulic_data->networkRenderSnapshot());
     });
     connect(this->hydraulic_data, &HydraulicData::signalLinkChanged,
             this, [this](InfrastructureEntity, const QUuid &)
     {
-        if (this->bgfx_surface != nullptr)
+        if (this->shared_editor_mode && this->bgfx_surface != nullptr)
             this->bgfx_surface->setNetworkSnapshot(this->hydraulic_data->networkRenderSnapshot());
     });
     connect(this->hydraulic_data, &HydraulicData::signalDemandPointChanged,
             this, [this](const QUuid &)
     {
-        if (this->bgfx_surface != nullptr)
+        if (this->shared_editor_mode && this->bgfx_surface != nullptr)
             this->bgfx_surface->setNetworkSnapshot(this->hydraulic_data->networkRenderSnapshot());
     });
     connect(this->map_canvas->mapCanvasEntities(),
@@ -253,7 +256,8 @@ void MapEditorContainer::connectRenderSurfaceSync()
 
 void MapEditorContainer::syncRenderSurfaceNetworkSnapshot()
 {
-    if (this->bgfx_surface == nullptr || this->hydraulic_data == nullptr)
+    if (!this->shared_editor_mode || this->bgfx_surface == nullptr
+        || this->hydraulic_data == nullptr)
         return;
 
     this->bgfx_surface->setNetworkSnapshot(this->hydraulic_data->networkRenderSnapshot());
@@ -263,7 +267,8 @@ void MapEditorContainer::syncRenderSurfaceNetworkSnapshot()
 
 void MapEditorContainer::syncRenderSurfaceEditorState()
 {
-    if (this->bgfx_surface == nullptr || this->hydraulic_data == nullptr)
+    if (!this->shared_editor_mode || this->bgfx_surface == nullptr
+        || this->hydraulic_data == nullptr)
         return;
 
     // Called on every editor state change (pointer moves included) and on
@@ -350,7 +355,8 @@ void MapEditorContainer::syncRenderSurfaceEditorState()
 
 void MapEditorContainer::applyRenderSurfaceEditorSymbology()
 {
-    if (this->bgfx_surface == nullptr || this->hydraulic_data == nullptr)
+    if (!this->shared_editor_mode || this->bgfx_surface == nullptr
+        || this->hydraulic_data == nullptr)
         return;
 
     // The editor look: black pipes and node dots, brown device links, no
@@ -387,19 +393,20 @@ void MapEditorContainer::setupBgfxEditor()
     // network in the editor look, every editor overlay, map labels and the
     // HUD; MapCanvasWidget stays the input owner (editor controller first,
     // then MapWidget navigation) and paints nothing.
-    MapBgfxSurface *surface = new MapBgfxSurface(this->map_model, this->map_stack);
+    MapBgfxSurface *surface = this->monitor->sharedBgfxSurface();
+    Q_ASSERT(surface != nullptr);
     // The globe is offered (MapBgfxSurface's default): 3D shows the terrain
     // and the network; of the editor, only the cache sections' tile
     // selection works there (see the class comment).
-    surface->setObjectName(QStringLiteral("aowis-bgfx-editor-surface"));
+    // Never rename, reparent, hide or restart the workspace-owned surface.
     this->bgfx_surface = surface;
     // Editor HUD: crosshair, scale bar, the fullscreen button with the
     // 2D/3D switch (3D is offered once the bgfx globe initialized), the pan
     // joystick and the zoom buttons; in 3D the globe HUD (compass, camera
     // sliders, terrain toggles) as in the monitor.
-    surface->setHudViewSwitchVisible(true);
+    // HUD mode settings are activated in activateSharedSurface().
     this->bgfx_globe_hud = new MapBgfxGlobeHudController(this->map_model, this);
-    surface->setHudActionHandler([this](const MapBgfxHud::Command &command)
+    this->editor_hud_action_handler = [this](const MapBgfxHud::Command &command)
     {
         switch (command.action)
         {
@@ -416,7 +423,7 @@ void MapEditorContainer::setupBgfxEditor()
                 handleBgfxHudAction(static_cast<int>(command.action), command.value);
                 break;
         }
-    });
+    };
     // The joystick's knob follows MapWidget's captured drag, its arrows also
     // the held keyboard pan keys.
     connect(this->map, &MapWidget::joystickChanged, surface,
@@ -424,57 +431,20 @@ void MapEditorContainer::setupBgfxEditor()
     connect(this->map, &MapWidget::keyboardPanChanged, surface,
             [surface](QPointF direction) { surface->setHudKeyboardPan(direction); });
     // Keys stay on the canvas (editor keys, window shortcuts of the tools).
-    surface->setKeyboardFocusWidget(this->map_canvas);
+    // The native window remains focusable; key handlers forward editor keys.
     // Node dots at their true positions, exactly under the overlay icons and
     // the editor's hit testing (the monitor spreads coincident nodes).
-    surface->setNodeDeclutteringEnabled(false);
+    // Exact-position geometry is selected when editor mode becomes active.
 
-    // Desktop: the embedded native window receives the pointer; deliver
-    // every event to the canvas as if it had received it (same geometry),
-    // where this container's event filter lets the HUD see it first.
-    // WASM: the bgfx canvas has pointer-events:none, the canvas widget on
-    // top of the Qt stack receives them directly (same filter).
-    const std::function<bool(QMouseEvent *)> to_canvas = [this](QMouseEvent *event)
-    {
-        return QCoreApplication::sendEvent(this->map_canvas, event);
-    };
-    surface->setNavigationMouseHandlers(to_canvas, to_canvas, to_canvas);
-    surface->setNavigationHandlers(
-        [this](QKeyEvent *event)
-        {
-            QCoreApplication::sendEvent(this->map_canvas, event);
-            return event->isAccepted();
-        },
-        [this](QKeyEvent *event)
-        {
-            QCoreApplication::sendEvent(this->map_canvas, event);
-            return event->isAccepted();
-        },
-        [this]() { this->map->clearKeyboardPanInput(); });
-    surface->setNavigationWheelHandler([this](QWheelEvent *event) { this->map->handleWheelEvent(event); });
-    surface->setNavigationFrameHandler(
-        [this](double elapsed_seconds) { this->map->advanceNavigationFrame(elapsed_seconds); });
+    // Desktop events are forwarded to the editor canvas by the shared bgfx
+    // surface. WASM events arrive through the monitor MapWidget event filter.
+    // Shared input handlers are installed on entering editor mode.
 
     surface->setTileRepository(this->tile_repository);
     // DEM tiles for the globe's relief, and terrain-aware navigation and
     // picking as in the monitor: pointer coordinates with DEM altitude,
     // globe pans on the drawn terrain, the tile selection's corners on it.
     surface->setTerrainRepository(this->terrain_repository);
-    this->map->setRenderSurfaceScreenCoordinateResolver(
-        [surface](const QPointF &screen_position, CoordinateWGS84 *coordinate)
-    {
-        return surface->terrainCoordinateAtScreen(screen_position, coordinate, true);
-    });
-    this->map->setCachedTerrainElevationResolver(
-        [surface](const CoordinateWGS84 &coordinate, double *elevation_m)
-    {
-        return surface->cachedTerrainElevationAtCoordinate(coordinate, elevation_m);
-    });
-    this->map->setRenderSurfaceGlobeSurfacePointResolver(
-        [surface](const QPointF &screen_position, GeoWgs84Ellipsoid::EcefPositionD *point)
-    {
-        return surface->globeSurfacePointAtScreen(screen_position, point);
-    });
     this->editor_controller->setGlobeCoordinateResolver(
         [surface](const QPointF &screen_position, CoordinateWGS84 *coordinate)
     {
@@ -488,9 +458,9 @@ void MapEditorContainer::setupBgfxEditor()
         applyRenderSurfaceEditorSymbology();
         this->bgfx_visual_state_dirty = true;
     });
-    surface->setBackgroundOpacity(this->map_canvas->backgroundOpacity());
+    // Set editor opacity only while editor is active.
     connect(this->map_menu, &MapEditorMenuWidget::signalSlideOpacityChanged,
-            surface, [surface](int opacity) { surface->setBackgroundOpacity(opacity); });
+            surface, [this, surface](int opacity) { if (this->shared_editor_mode) surface->setBackgroundOpacity(opacity); });
 
 #ifndef Q_OS_WASM
     // GPS position dot on the HUD (formerly painted by MapWidget's CPU map;
@@ -514,22 +484,22 @@ void MapEditorContainer::setupBgfxEditor()
     // Map labels: IDs from the left menu's switches, placed around the
     // editor's icons (the GPU network only has dots here).
     MapNavigationWidget *navigation = this->map_menu->mapNavigationWidget();
-    surface->setLabelSettings(navigation->labelSettings());
+    // Editor label settings are installed on mode activation.
     connect(navigation, &MapNavigationWidget::signalLabelSettingsChanged,
-            surface, [surface](const MapLabelSettings &settings)
+            surface, [this, surface](const MapLabelSettings &settings)
     {
-        surface->setLabelSettings(settings);
+        if (this->shared_editor_mode)
+            surface->setLabelSettings(settings);
     });
     const std::shared_ptr<EditorLabelSymbols> label_symbols = std::make_shared<EditorLabelSymbols>();
-    surface->setLabelSymbolRects(
-        [this, label_symbols](InfrastructureEntity entity_type)
+    this->editor_node_label_rect = [this, label_symbols](InfrastructureEntity entity_type)
         {
             return label_symbols->node(entity_type, qMax(1, this->bgfx_visual_state.entity_width));
-        },
-        [this, label_symbols](InfrastructureEntity entity_type)
+        };
+    this->editor_link_label_rect = [this, label_symbols](InfrastructureEntity entity_type)
         {
             return label_symbols->link(entity_type, qMax(1, this->bgfx_visual_state.entity_width));
-        });
+        };
 
     // Editor overlay: built per frame from the cached visual state.
     const std::shared_ptr<MapBgfxEditorIcons> icons = std::make_shared<MapBgfxEditorIcons>();
@@ -561,8 +531,7 @@ void MapEditorContainer::setupBgfxEditor()
         quint64 tile_selection_revision = 0;
     };
     const std::shared_ptr<OverlayFrame> overlay_frame = std::make_shared<OverlayFrame>();
-    surface->setOverlayBuilder(
-        [this, overlay, overlay_frame](MapBgfxHudCanvas *canvas, MapBgfxHudTextCache *cache,
+    this->editor_overlay_builder = [this, overlay, overlay_frame](MapBgfxHudCanvas *canvas, MapBgfxHudTextCache *cache,
                                        const MapBgfx2d::Camera &camera, const QSizeF &viewport)
         {
             const double ratio = cache->devicePixelRatio();
@@ -630,23 +599,22 @@ void MapEditorContainer::setupBgfxEditor()
             overlay_frame->atlas_generation = cache->generation();
             overlay_frame->tile_selection_revision = this->editor_controller->tileSelectionRevision();
             return build.offset;
-        });
+        };
     // Globe: the cache sections' tile selection on the drawn surface, built
     // every globe frame (cheap: a bounded lattice, no network content).
-    surface->setGlobeOverlayBuilder(
-        [this, overlay](MapBgfxHudCanvas *canvas, MapBgfxHudTextCache *cache,
+    this->editor_globe_overlay_builder = [this, overlay](MapBgfxHudCanvas *canvas, MapBgfxHudTextCache *cache,
                         const MapBgfxSurface::GlobeProjector &projector, const QSizeF &)
         {
             const MapEditorViewportRenderState viewport_state =
                 this->map_canvas->viewportRenderState();
             overlay->buildGlobe(canvas, cache, viewport_state, projector);
-        });
+        };
     connect(this->map_canvas, &MapCanvasWidget::signalRenderUpdateRequested, this, [this]()
     {
         this->bgfx_visual_state_dirty = true;
         // The surface renders on demand; the overlay's content is not one of
         // its own inputs.
-        if (this->bgfx_surface != nullptr)
+        if (this->shared_editor_mode && this->bgfx_surface != nullptr)
             this->bgfx_surface->requestRedraw();
     });
     connect(this->map_canvas, &MapCanvasWidget::signalCameraChanged, this, [this]()
@@ -664,7 +632,7 @@ void MapEditorContainer::setupBgfxEditor()
     // enabled while bgfx presents frames and no shortcut is being captured.
     // Its parent is the map stack, so only the visible map's shortcut fires.
     this->bgfx_fullscreen_shortcut = new QShortcut(
-        guiShortcutRegistry().keySequence(GuiShortcutId::MapMonitorFullscreen), this->map_stack);
+        guiShortcutRegistry().keySequence(GuiShortcutId::MapMonitorFullscreen), this->monitor->mapViewport());
     this->bgfx_fullscreen_shortcut->setContext(Qt::ApplicationShortcut);
     this->bgfx_fullscreen_shortcut->setAutoRepeat(false);
     this->bgfx_fullscreen_shortcut->setEnabled(false);
@@ -672,7 +640,7 @@ void MapEditorContainer::setupBgfxEditor()
     {
         if (!this->bgfx_editor_active)
             return;
-        if (!this->bgfx_fullscreen_active && !isVisible())
+        if (!this->bgfx_fullscreen_active && !this->shared_editor_mode)
             return;
         setBgfxFullscreen(!this->bgfx_fullscreen_active);
     });
@@ -688,73 +656,94 @@ void MapEditorContainer::setupBgfxEditor()
             this, [this](bool active)
     {
         if (this->bgfx_fullscreen_shortcut != nullptr)
-            this->bgfx_fullscreen_shortcut->setEnabled(this->bgfx_editor_active && !active);
+            this->bgfx_fullscreen_shortcut->setEnabled(this->shared_editor_mode && !active);
     });
 
     syncRenderSurfaceNetworkSnapshot();
     connectRenderSurfaceSync();
 
-    connect(surface, &MapBgfxSurface::signalRendererReady, this, [this, surface]()
+    // Surface lifecycle belongs exclusively to MapMonitorContainer. The
+    // editor only installs mode-dependent callbacks; no second init, window
+    // or startup watchdog is permitted.
+    connect(surface, &MapBgfxSurface::signalRendererReady, this, [this]()
     {
-        this->bgfx_editor_active = true;
-        this->renderer_status->hide();
-        // bgfx presents the frames, so it is the only navigation clock.
-        this->map->setNavigationFrameDriver(true);
-        if (this->bgfx_fullscreen_shortcut != nullptr)
-        {
-            this->bgfx_fullscreen_shortcut->setEnabled(
-                !guiShortcutRegistry().shortcutCaptureActive());
-        }
-#ifndef Q_OS_WASM
-        this->map_stack_layout->setCurrentWidget(surface);
-        // The joystick's pointer lock (Wayland) also on the native window.
-        this->map->setOrbitPointerLockWindow(surface->nativeInputWindow());
-#else
-        // The canvas widget stays on top of the Qt stack for the pointer.
-        this->map_stack_layout->setCurrentWidget(this->map_canvas);
-        this->map_canvas->raise();
-#endif
-        this->map_canvas->setFocus(Qt::OtherFocusReason);
-        this->bgfx_visual_state_dirty = true;
-        applyEditorCursor();
-        qInfo() << "Editor map renderer: bgfx (" << surface->graphicsApiName()
-                << ") with imagery, network, editor overlay, labels and HUD";
-    });
-    connect(surface, &MapBgfxSurface::signalRendererFailed, this,
-            [this, surface](const QString &reason)
-    {
-        qWarning().noquote()
-            << QStringLiteral("Editor bgfx surface failed; no map renderer is available: %1")
-                   .arg(reason);
-        if (this->bgfx_fullscreen_active)
-            setBgfxFullscreen(false);
-        if (this->bgfx_fullscreen_shortcut != nullptr)
-            this->bgfx_fullscreen_shortcut->setEnabled(false);
-#ifndef Q_OS_WASM
-        this->map->setOrbitPointerLockWindow(nullptr);
-#endif
-        this->bgfx_editor_active = false;
-        this->bgfx_hud_cursor = Qt::ArrowCursor;
-        this->map->setNavigationFrameDriver(false);
-        surface->hide();
-        showRendererStatus(tr("The bgfx map renderer could not start:\n%1").arg(reason));
+        if (this->shared_editor_mode)
+            this->map_canvas->requestRenderUpdate();
     });
 
-    // The StackAll layout keeps the surface at the real map size; the
-    // status label covers the start (text only, see above).
-    this->map_stack_layout->addWidget(surface);
-    surface->show();
-    showRendererStatus(tr("Starting map renderer…"));
-    // Startup watchdog (the monitor's): never an endless "Starting...".
-    QTimer::singleShot(10000, surface, [this, surface]()
+}
+
+QWidget *MapEditorContainer::inputCanvas() const
+{
+    return this->map_canvas;
+}
+
+void MapEditorContainer::activateSharedSurface(bool active)
+{
+    if (this->shared_editor_mode == active)
+        return;
+    this->shared_editor_mode = active;
+    this->bgfx_editor_active = active;
+    this->map_canvas->resize(this->map->size());
+    this->map_canvas->setSharedEditorActive(active);
+    if (this->bgfx_fullscreen_shortcut != nullptr)
+        this->bgfx_fullscreen_shortcut->setEnabled(
+            active && !guiShortcutRegistry().shortcutCaptureActive());
+    if (!active)
     {
-        if (this->bgfx_editor_active || !surface->isVisible())
-            return;
-        const QString diagnostics = surface->startupDiagnostics();
-        qWarning().noquote() << "bgfx map editor did not start within 10 s:" << diagnostics;
-        showRendererStatus(tr("The bgfx map renderer has not presented a frame "
-                              "after 10 s.\n%1").arg(diagnostics));
+        this->map->clearKeyboardPanInput();
+        this->map_canvas->mapCanvasEntities()->cancelActiveMove();
+        this->editor_controller->cancelRectangleSelection();
+        this->render_move_session_id = 0;
+        this->render_full_network_move = false;
+        this->render_move_translation = QPointF();
+        this->bgfx_hud_cursor = Qt::ArrowCursor;
+        this->map_menu->clearCacheSelections();
+        return;
+    }
+    MapBgfxSurface *surface = this->bgfx_surface;
+    if (surface == nullptr)
+        return;
+    surface->closeHudPopup();
+    surface->setKeyboardFocusWidget(nullptr);
+    surface->setNavigationHandlers(
+        [this](QKeyEvent *event)
+        {
+            QCoreApplication::sendEvent(this->map_canvas, event);
+            return event->isAccepted();
+        },
+        [this](QKeyEvent *event)
+        {
+            QCoreApplication::sendEvent(this->map_canvas, event);
+            return event->isAccepted();
+        },
+        [this]() { this->map->clearKeyboardPanInput(); });
+    surface->setNavigationMouseHandlers(
+        [this](QMouseEvent *event) { return QCoreApplication::sendEvent(this->map_canvas, event); },
+        [this](QMouseEvent *event) { return QCoreApplication::sendEvent(this->map_canvas, event); },
+        [this](QMouseEvent *event) { return QCoreApplication::sendEvent(this->map_canvas, event); });
+    surface->setNavigationWheelHandler([this](QWheelEvent *event)
+    {
+        QCoreApplication::sendEvent(this->map_canvas, event);
     });
+    surface->setNavigationFrameHandler(
+        [this](double elapsed_seconds) { this->map->advanceNavigationFrame(elapsed_seconds); });
+    surface->setHudActionHandler(this->editor_hud_action_handler);
+    surface->setNodeDeclutteringEnabled(false);
+    surface->setLabelSettings(this->map_menu->mapNavigationWidget()->labelSettings());
+    surface->setLabelSymbolRects(this->editor_node_label_rect, this->editor_link_label_rect);
+    surface->setBackgroundOpacity(this->map_canvas->backgroundOpacity());
+    surface->setOverlayBuilder(this->editor_overlay_builder);
+    surface->setGlobeOverlayBuilder(this->editor_globe_overlay_builder);
+    surface->setSelectedEntity(InfrastructureEntity::Unknown, QUuid());
+    surface->setHudLegend(MapBgfxHud::Legend());
+    surface->setLabelValueFormats(MapBgfxLabelValueFormat(), MapBgfxLabelValueFormat());
+    surface->setHudFullscreen(this->bgfx_fullscreen_active);
+    applyRenderSurfaceEditorSymbology();
+    syncRenderSurfaceEditorState();
+    this->bgfx_visual_state_dirty = true;
+    surface->requestRedraw();
+    applyEditorCursor();
 }
 
 void MapEditorContainer::applyEditorCursor()
@@ -777,8 +766,15 @@ void MapEditorContainer::applyEditorCursor()
         this->map_canvas->setCursor(shape);
     else
         this->map_canvas->unsetCursor();
-    if (this->bgfx_surface != nullptr)
-        this->bgfx_surface->setMapCursor(shape);
+    if (this->shared_editor_mode)
+    {
+        if (shape != Qt::ArrowCursor)
+            this->map->setCursor(shape);
+        else
+            this->map->unsetCursor();
+        if (this->bgfx_surface != nullptr)
+            this->bgfx_surface->setMapCursor(shape);
+    }
 }
 
 bool MapEditorContainer::routeBgfxHudEvent(QEvent *event)

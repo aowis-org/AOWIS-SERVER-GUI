@@ -21,14 +21,14 @@ MainWindow::MainWindow(QWidget *parent)
     map_tile_repository( new MapTileRepository(this) ),
     map_terrain_repository( new MapTerrainRepository(this) ),
     map_model_monitor( new MapModel(this) ),
-    map_model_editor( new MapModel(this) ),
+    map_model_editor( this->map_model_monitor ),
     settings( new SettingsWidget(this) ),
     map_monitor( new MapMonitorContainer(this->map_model_monitor, this->map_tile_repository,
                                          this->map_terrain_repository, this->hydraulic_data,
                                          this->gps, this) ),
     map_editor( new MapEditorContainer(this->map_model_editor, this->map_tile_repository,
                                        this->map_terrain_repository, this->hydraulic_data,
-                                       this->gps, this->dock_entity_inspector, this) ),
+                                       this->gps, this->dock_entity_inspector, this->map_monitor, this) ),
     energy( new EnergyWidget(this) ),
     reservoirs( new ReservoirsWidget(this->hydraulic_data, this) ),
     tanks( new TanksWidget(this->hydraulic_data, this) ),
@@ -295,10 +295,7 @@ MainWindow::MainWindow(QWidget *parent)
     connect(this->map_mon, &MapWidget::signalCoordsChangedUTM, this->footer, &FooterStatusBar::setMapCoordinatesUTM);
     connect(this->map_mon, &MapWidget::signalCoordsUnavailable, this->footer, &FooterStatusBar::clearMapCoordinates);
     
-    connect(this->map_edit, &MapWidget::signalZoomLevelChanged, this->footer, &FooterStatusBar::setMapZoom);
-    connect(this->map_edit, &MapWidget::signalCoordsChangedWgs84, this->footer, &FooterStatusBar::setMapCoordinatesWGS84);
-    connect(this->map_edit, &MapWidget::signalCoordsChangedUTM, this->footer, &FooterStatusBar::setMapCoordinatesUTM);
-    connect(this->map_edit, &MapWidget::signalCoordsUnavailable, this->footer, &FooterStatusBar::clearMapCoordinates);
+    // Editor and monitor use this same MapWidget and its footer connections.
 
     // Writes a footer zoom edit only to the currently visible distribution map.
     // Empty drainage modes and other main-navigation pages have no active map.
@@ -319,8 +316,7 @@ MainWindow::MainWindow(QWidget *parent)
     MapNavigationWidget *map_edit_nav = this->map_editor->mapNavigationWidget();
     MapNavigationWidget *map_mon_nav = this->map_monitor->mapNavigationWidget();
 
-    connect(this->map_model_editor, &MapModel::providerIdChanged, this->map_model_monitor, &MapModel::setProviderId);
-    connect(this->map_model_monitor, &MapModel::providerIdChanged, this->map_model_editor, &MapModel::setProviderId);
+    // No cross-model synchronization: only one MapModel exists.
     connect(this->map_model_editor, &MapModel::providerChanged, map_edit_nav, &MapNavigationWidget::mapProviderChange);
     connect(this->map_model_monitor, &MapModel::providerChanged, map_mon_nav, &MapNavigationWidget::mapProviderChange);
 
@@ -539,7 +535,8 @@ MainWindow::MainWindow(QWidget *parent)
 
 void MainWindow::syncMapMovement(MapWidget *source, MapWidget *target)
 {
-    if (!this->sync_map_movement || this->syncing_map_movement || !source || !target)
+    if (!this->sync_map_movement || this->syncing_map_movement || !source || !target
+        || source->model() == target->model())
         return;
 
     MapModel *source_model = source->model();

@@ -5,6 +5,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPointer>
+#include <QStackedWidget>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -92,6 +93,29 @@ int main(int argc, char **argv)
             return 1;
         tools->setMapFullscreen(false);
         if (!require(tools->isVisible(), "sidebar did not return from fullscreen"))
+            return 1;
+
+        // Stage 4: changing distribution mode moves only the tools; the
+        // viewport remains attached and exposed (no native GPU restart).
+        QStackedWidget *mode_tools = new QStackedWidget(page);
+        page->layout()->removeWidget(tools);
+        MapModeToolPanel *editor_tools = new MapModeToolPanel(
+            new QLabel(QStringLiteral("Editor tools")), 220,
+            MapModeToolPanel::ScrollbarWidthPolicy::Fixed, false, mode_tools);
+        mode_tools->addWidget(tools);
+        mode_tools->addWidget(editor_tools);
+        static_cast<QHBoxLayout *>(page->layout())->insertWidget(0, mode_tools);
+        mode_tools->setCurrentIndex(1);
+        app.processEvents();
+        if (!require(viewport->isVisible() && editor_tools->isVisible()
+                        && !tools->isVisible(),
+                     "switching to editor should affect only the tool panel"))
+            return 1;
+        mode_tools->setCurrentIndex(0);
+        app.processEvents();
+        if (!require(viewport->isVisible() && tools->isVisible()
+                        && !editor_tools->isVisible(),
+                     "switching back to monitor must keep viewport exposed"))
             return 1;
 
         delete page;

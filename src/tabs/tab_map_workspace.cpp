@@ -23,8 +23,11 @@ MapWorkspaceWidget::MapWorkspaceWidget(MapEditorContainer *editor,
 {
     Q_ASSERT(editor != nullptr);
     Q_ASSERT(monitor != nullptr);
+    this->monitor_controller = monitor;
+    this->editor_controller = editor;
     this->monitor_map = monitor->getMap();
     this->editor_map = editor->getMap();
+    Q_ASSERT(this->monitor_map == this->editor_map);
     this->monitor_tools = monitor->toolPanel();
     this->editor_tools = editor->toolPanel();
     Q_ASSERT(this->monitor_tools != nullptr);
@@ -37,20 +40,28 @@ MapWorkspaceWidget::MapWorkspaceWidget(MapEditorContainer *editor,
     layout->setSpacing(0);
     layout->addWidget(this->pages);
 
-    // Stage 3: monitor's map stack, including its native bgfx window, is
-    // now hosted by the workspace. The monitor controller is a hidden
-    // logic-only child of this page and is destroyed before its viewport.
-    // The editor remains a self-contained legacy page until Stage 4.
+    // The persistent viewport stays in this page across editor/monitor switches.
+    // The monitor controller remains a hidden logic-only widget.
     MapWorkspaceViewportPage *monitor_page = new MapWorkspaceViewportPage(
         monitor, this->monitor_tools, monitor->mapViewport(), this->pages);
     this->pages->addWidget(monitor_page);
-    this->pages->addWidget(editor);
+    // Keep the map viewport on the SAME page for both distribution modes.
+    // Only the left panel switches. Never remove/reparent the native surface.
+    this->distribution_tools = new QStackedWidget(monitor_page);
+    monitor_page->layout()->removeWidget(this->monitor_tools);
+    editor->QWidget::layout()->removeWidget(this->editor_tools);
+    this->distribution_tools->addWidget(this->monitor_tools);
+    this->distribution_tools->addWidget(this->editor_tools);
+    static_cast<QHBoxLayout *>(monitor_page->layout())->insertWidget(0, this->distribution_tools);
+    this->distribution_tools->setCurrentIndex(0);
+    // The editor is a hidden interaction controller; it owns no visible map.
+    editor->setParent(this);
+    editor->hide();
+    monitor->setEditorInputCanvas(editor->inputCanvas());
     this->pages->addWidget(createEmptyModePage(DrainageMonitor));
     this->pages->addWidget(createEmptyModePage(DrainageEditor));
 
-    // The authoritative monitor navigation model follows its workspace
-    // viewport, not MainWindow. The editor's model remains separate until
-    // its controller is migrated in Stage 4.
+    // One authoritative MapModel follows its workspace-owned viewport.
     this->monitor_map->model()->setParent(this);
 
     this->editor_tools->setModeSelector(createModeSelector(DistributionEditor));
@@ -58,9 +69,25 @@ MapWorkspaceWidget::MapWorkspaceWidget(MapEditorContainer *editor,
     this->pages->setCurrentIndex(DistributionMonitor);
 }
 
+MapWorkspaceWidget::~MapWorkspaceWidget()
+{
+    // Editor closures contain pointers into the shared monitor viewport.
+    // Dispose of the editor controller before the viewport and its bgfx
+    // native window, irrespective of QObject child insertion order.
+    if (this->editor_controller != nullptr && this->monitor_controller != nullptr)
+    {
+        this->editor_controller->activateSharedSurface(false);
+        this->monitor_controller->setEditorMode(false);
+    }
+    if (this->monitor_controller != nullptr)
+        this->monitor_controller->setEditorInputCanvas(nullptr);
+    delete this->editor_controller;
+    this->editor_controller = nullptr;
+}
+
 MapWorkspaceWidget::Mode MapWorkspaceWidget::currentMode() const
 {
-    return static_cast<Mode>(this->pages->currentIndex());
+    return this->selected_mode;
 }
 
 bool MapWorkspaceWidget::isDistributionEditorActive() const
@@ -80,7 +107,7 @@ MapWidget *MapWorkspaceWidget::activeMap() const
     case DistributionMonitor:
         return this->monitor_map;
     case DistributionEditor:
-        return this->editor_map;
+        return this->monitor_map;
     case DrainageMonitor:
     case DrainageEditor:
         return nullptr;
@@ -113,7 +140,7 @@ void MapWorkspaceWidget::setCurrentMode(int index)
 {
     if (MapWorkspace::modeInfo(index) == nullptr)
         return;
-    if (this->pages->currentIndex() == index)
+    if (static_cast<int>(this->selected_mode) == index)
         return;
 
     {
@@ -121,7 +148,26 @@ void MapWorkspaceWidget::setCurrentMode(int index)
         // frame latency. A renderer restart is tracked separately.
         const MapRenderDiagnostics::Scope timing(
             MapRenderDiagnostics::Counter::WorkspaceModeSwitch);
-        this->pages->setCurrentIndex(index);
+        const bool was_editor = this->selected_mode == DistributionEditor;
+        const bool now_editor = index == DistributionEditor;
+        if (was_editor && !now_editor)
+            this->editor_controller->activateSharedSurface(false);
+        // The distribution viewport stays at index 0 in either mode.
+        this->pages->setCurrentIndex(index == DistributionEditor ? 0 : index - (index > DistributionEditor ? 1 : 0));
+        if (now_editor != was_editor)
+        {
+            if (now_editor)
+            {
+                this->monitor_controller->setEditorMode(true);
+                this->editor_controller->activateSharedSurface(true);
+            }
+            else
+            {
+                this->monitor_controller->setEditorMode(false);
+            }
+        }
+        this->distribution_tools->setCurrentIndex(now_editor ? 1 : 0);
+        this->selected_mode = static_cast<Mode>(index);
         for (QTabBar *tab_bar : this->mode_tabs)
         {
             if (tab_bar->currentIndex() != index)

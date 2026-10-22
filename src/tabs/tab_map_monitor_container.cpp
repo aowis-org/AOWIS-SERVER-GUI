@@ -451,18 +451,19 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
         // Globe network (slice 3): tanks and reservoirs as 3D models.
         connect(this->map_menu->mapNavigationWidget(),
                 &MapNavigationWidget::signal3dIconsChanged,
-                surface, [surface](bool enabled) { surface->setGlobe3dIconsEnabled(enabled); });
+                surface, [this, surface](bool enabled) { this->monitor_globe_3d_icons = enabled; if (!this->editor_mode) surface->setGlobe3dIconsEnabled(enabled); });
         surface->setBackgroundOpacity(this->network_background_opacity);
         connect(this->map_menu->mapNavigationWidget(),
                 &MapNavigationWidget::signalSlideOpacityChanged,
-                surface, [surface](int opacity) { surface->setBackgroundOpacity(opacity); });
+                surface, [this, surface](int opacity) { if (!this->editor_mode) surface->setBackgroundOpacity(opacity); });
         // Map labels (IDs / values) from the left menu's switches.
         surface->setLabelSettings(this->map_menu->mapNavigationWidget()->labelSettings());
         connect(this->map_menu->mapNavigationWidget(),
                 &MapNavigationWidget::signalLabelSettingsChanged,
-                surface, [surface](const MapLabelSettings &settings)
+                surface, [this, surface](const MapLabelSettings &settings)
         {
-            surface->setLabelSettings(settings);
+            if (!this->editor_mode)
+                surface->setLabelSettings(settings);
         });
         this->map_stack_layout->addWidget(surface);
         connect(this->hydraulic_data, &HydraulicData::signalNetworkLoaded,
@@ -608,7 +609,7 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
                 this, [this](bool active)
         {
             if (this->bgfx_fullscreen_shortcut != nullptr)
-                this->bgfx_fullscreen_shortcut->setEnabled(this->bgfx_render_surface_active && !active);
+                this->bgfx_fullscreen_shortcut->setEnabled(this->bgfx_render_surface_active && !this->editor_mode && !active);
         });
 
         // Selection from anywhere (map click, tables, inspector) is drawn as
@@ -716,7 +717,8 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
             emit signalShowMapLegendNode(VisualNode::None);
             emit signalShowMapLegendLink(VisualLink::None);
             emit signalShowMapLegendHeatmap(VisualHeatmap::None);
-            refreshBgfxLegend();
+            if (!this->editor_mode)
+                refreshBgfxLegend();
             // HUD inputs: current download numbers now, then the poll.
             refreshBgfxDownloadActivity();
             if (this->bgfx_download_poll_timer != nullptr)
@@ -724,7 +726,7 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
             if (this->bgfx_fullscreen_shortcut != nullptr)
             {
                 this->bgfx_fullscreen_shortcut->setEnabled(
-                    !guiShortcutRegistry().shortcutCaptureActive());
+                    !this->editor_mode && !guiShortcutRegistry().shortcutCaptureActive());
             }
             // WASM: MapWidget keeps pointer input on the Qt layer (the bgfx
             // canvas has pointer-events:none); picking and the HUD are routed
@@ -804,7 +806,8 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
     connect(this->map_menu, &MapMonitorMenuWidget::signalNodeDeclutteringChanged, this,
         [this](bool enabled)
     {
-        if (this->bgfx_surface != nullptr)
+        this->monitor_node_decluttering = enabled;
+        if (this->bgfx_surface != nullptr && !this->editor_mode)
             this->bgfx_surface->setNodeDeclutteringEnabled(enabled);
     });
     connect(this->map_menu, &MapMonitorMenuWidget::signalLinkVisualClicked, this,
@@ -971,6 +974,32 @@ void MapMonitorContainer::showMapLegendHeatmap(VisualHeatmap visual_heatmap)
 
 bool MapMonitorContainer::eventFilter(QObject *watched, QEvent *event)
 {
+    // The controller canvas is not a visual child of the live viewport:
+    // keep its logical size synchronized for hit-testing and overlays.
+    if (watched == this->map && event->type() == QEvent::Resize
+        && this->editor_input_canvas != nullptr)
+        this->editor_input_canvas->resize(this->map->size());
+    // WASM sends map input through the Qt MapWidget. Desktop events enter
+    // through MapBgfxSurface's native-window handlers instead.
+    if (this->editor_mode && watched == this->map && this->editor_input_canvas != nullptr)
+    {
+        switch (event->type())
+        {
+            case QEvent::MouseButtonPress:
+            case QEvent::MouseButtonDblClick:
+            case QEvent::MouseButtonRelease:
+            case QEvent::MouseMove:
+            case QEvent::Wheel:
+            case QEvent::KeyPress:
+            case QEvent::KeyRelease:
+            case QEvent::FocusOut:
+                QCoreApplication::sendEvent(this->editor_input_canvas, event);
+                return true;
+            default:
+                break;
+        }
+    }
+
     // Map fullscreen: the hidden left menu's button shortcuts, for keys the
     // map widget receives itself (WASM; desktop keys of the native window
     // take the navigation key handler, see setNavigationHandlers()).
@@ -1370,6 +1399,8 @@ void MapMonitorContainer::applyMapFullscreen(bool fullscreen)
 
 void MapMonitorContainer::applySymbology()
 {
+    if (this->editor_mode)
+        return;
     this->symbology_settings = this->symbology_settings.bounded();
 
     const NetworkSymbologyRanges ranges =
@@ -1387,6 +1418,8 @@ void MapMonitorContainer::applySymbology()
 
 void MapMonitorContainer::pushBgfxLegend(const NetworkSymbologyRanges &ranges)
 {
+    if (this->editor_mode)
+        return;
     if (this->bgfx_surface == nullptr || this->hydraulic_data == nullptr)
         return;
     MapBgfxHud::Legend legend = mapBgfxLegendContent(
@@ -1401,6 +1434,8 @@ void MapMonitorContainer::pushBgfxLegend(const NetworkSymbologyRanges &ranges)
 
 void MapMonitorContainer::refreshBgfxLegend()
 {
+    if (this->editor_mode)
+        return;
     if (this->bgfx_surface == nullptr || this->hydraulic_data == nullptr)
         return;
     this->symbology_settings = this->symbology_settings.bounded();
@@ -1409,6 +1444,8 @@ void MapMonitorContainer::refreshBgfxLegend()
 
 void MapMonitorContainer::applyPaletteSymbology()
 {
+    if (this->editor_mode)
+        return;
     // Palettes are GPU state (MapBgfxEntityStyle's palette texture): a
     // palette or flip change re-resolves nothing, only the legend's ramps
     // are drawn again.
@@ -1430,10 +1467,14 @@ void MapMonitorContainer::applyVisualControlSymbology()
     if (this->visual_control_symbology_apply_pending)
         return;
 
+    if (this->editor_mode)
+        return;
     this->visual_control_symbology_apply_pending = true;
     QTimer::singleShot(16, this, [this]
     {
         this->visual_control_symbology_apply_pending = false;
+        if (this->editor_mode)
+            return;
         this->symbology_settings = this->symbology_settings.bounded();
 
         // Sizes, junction visibility, flow-arrow size, palettes and the
@@ -1468,6 +1509,98 @@ void MapMonitorContainer::setNetworkBackgroundOpacity(int opacity)
     this->network_background_opacity = bounded_opacity;
 }
 
+
+MapBgfxSurface *MapMonitorContainer::sharedBgfxSurface() const
+{
+    return this->bgfx_surface;
+}
+
+bool MapMonitorContainer::surfaceReady() const
+{
+    return this->bgfx_render_surface_active;
+}
+
+void MapMonitorContainer::setEditorInputCanvas(QWidget *canvas)
+{
+    this->editor_input_canvas = canvas;
+}
+
+void MapMonitorContainer::setEditorMode(bool enabled)
+{
+    if (this->editor_mode == enabled)
+        return;
+    this->editor_mode = enabled;
+    this->network_hovered = false;
+    if (this->bgfx_fullscreen_shortcut != nullptr)
+        this->bgfx_fullscreen_shortcut->setEnabled(
+            !enabled && this->bgfx_render_surface_active
+            && !guiShortcutRegistry().shortcutCaptureActive());
+    if (!enabled)
+        activateMonitorSurface();
+}
+
+void MapMonitorContainer::activateMonitorSurface()
+{
+    MapBgfxSurface *surface = this->bgfx_surface;
+    if (surface == nullptr)
+        return;
+    surface->closeHudPopup();
+    surface->setKeyboardFocusWidget(nullptr);
+    surface->setNavigationHandlers(
+        [this](QKeyEvent *event)
+        {
+            if (event->type() == QEvent::KeyPress && this->bgfx_fullscreen_active
+                && MapNavigationWidget::triggerButtonShortcut(this->map_menu, event))
+            {
+                event->accept();
+                return true;
+            }
+            return this->map->handleKeyPressEvent(event);
+        },
+        [this](QKeyEvent *event) { return this->map->handleKeyReleaseEvent(event); },
+        [this]() { this->map->clearKeyboardPanInput(); });
+    surface->setNavigationMouseHandlers(
+        [this](QMouseEvent *event) { return QCoreApplication::sendEvent(this->map, event); },
+        [this](QMouseEvent *event) { return QCoreApplication::sendEvent(this->map, event); },
+        [this](QMouseEvent *event) { return QCoreApplication::sendEvent(this->map, event); });
+    surface->setNavigationWheelHandler(
+        [this](QWheelEvent *event) { this->map->handleWheelEvent(event); });
+    surface->setNavigationFrameHandler(
+        [this](double elapsed_seconds) { this->map->advanceNavigationFrame(elapsed_seconds); });
+    surface->setHudActionHandler([this](const MapBgfxHud::Command &command)
+    {
+        switch (command.action)
+        {
+            case MapBgfxHud::Action::GlobeSlider:
+            case MapBgfxHud::Action::GlobeSliderReset:
+            case MapBgfxHud::Action::CompassDrag:
+            case MapBgfxHud::Action::CompassWheel:
+                this->bgfx_globe_hud->handleCommand(command);
+                break;
+            case MapBgfxHud::Action::JoystickDrag:
+                this->map->beginJoystickPan(command.position);
+                break;
+            default:
+                handleBgfxHudAction(static_cast<int>(command.action), command.group,
+                                    command.value, command.flipped);
+                break;
+        }
+    });
+    surface->setOverlayBuilder(MapBgfxSurface::OverlayBuilder());
+    surface->setGlobeOverlayBuilder(MapBgfxSurface::GlobeOverlayBuilder());
+    surface->setLabelSymbolRects(MapBgfxLabels::SymbolRect(), MapBgfxLabels::SymbolRect());
+    surface->setNodeDeclutteringEnabled(this->monitor_node_decluttering);
+    surface->setGlobe3dIconsEnabled(this->monitor_globe_3d_icons);
+    surface->setBackgroundOpacity(this->network_background_opacity);
+    surface->setLabelSettings(this->map_menu->mapNavigationWidget()->labelSettings());
+    surface->setNetworkScreenTranslation(QPointF());
+    surface->setHiddenEntityUuids(QSet<QUuid>());
+    surface->setHudFullscreen(this->bgfx_fullscreen_active);
+    applySymbology();
+    refreshBgfxLegend();
+    applyMapHoverCursor();
+    surface->focusNavigationInput();
+}
 
 MapWidget *MapMonitorContainer::getMap()
 {

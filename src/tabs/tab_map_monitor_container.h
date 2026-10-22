@@ -120,6 +120,11 @@ public:
     ~MapMonitorContainer() override;
     
     MapWidget *getMap();
+    MapBgfxSurface *sharedBgfxSurface() const;
+    bool surfaceReady() const;
+    void setEditorInputCanvas(QWidget *canvas);
+    void activateMonitorSurface();
+    void setEditorMode(bool enabled);
     MapModeToolPanel *toolPanel() const;
     QWidget *mapViewport() const;
     
@@ -167,6 +172,10 @@ private:
     // The bgfx map surface (created in the constructor). It receives the
     // resolved symbology through applySymbology().
     MapBgfxSurface *bgfx_surface = nullptr;
+    QWidget *editor_input_canvas = nullptr;
+    bool editor_mode = false;
+    bool monitor_node_decluttering = true;
+    bool monitor_globe_3d_icons = true;
     // The surface presents frames: picking and hover only run against a
     // live surface.
     bool bgfx_render_surface_active = false;

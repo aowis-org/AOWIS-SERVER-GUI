@@ -20,30 +20,36 @@ networks or run distribution editing.
 
 ## Ownership and boundaries
 
-**Present implementation (Stage 3):** `MapWorkspaceWidget` now owns the
-Distribution Monitor `MapModel` and hosts its **existing** map stack (including
-`MapWidget`, `MapBgfxSurface`, and the native bgfx window) beside its independent
-`MapModeToolPanel`. `MapWorkspaceViewportPage` performs this single, pre-show
-transfer without recreating or reparenting the renderer surface itself.
-The existing `MapMonitorContainer` survives as a hidden *behavior/controller*
-widget in that page: its event filters, HUD, picking, symbology, fullscreen,
-timers and signal connections remain connected to the same map and controls.
-The controller is made the page's **first child** so its destructor can safely
-clear map resolvers before the viewport is destroyed. The old controller
-`QHBoxLayout` retains neither migrated widget.
+**Current implementation (Stage 4):** `MapWorkspaceWidget` owns the single
+Distribution `MapModel` and hosts the persistent `MapWidget` and
+`MapBgfxSurface` in `MapWorkspaceViewportPage`. The renderer is constructed
+by the monitor controller once; the editor receives non-owning pointers to
+that same map and surface. The editor keeps its `MapCanvasWidget` as an
+input-only, offscreen QWidget. It does not create another navigation widget,
+native window or bgfx surface. Its canvas is resized with the live viewport
+and receives forwarded pointer/keyboard/wheel events from the surface on
+desktop or from the `MapWidget` event filter on WASM.
 
-`MainWindow` still constructs the two models for now, but immediately after
-constructing the workspace the monitor model becomes its child. The Distribution
-Editor still has its separate `MapModel`, `MapWidget`, `MapBgfxSurface`, tool panel,
-and editor interaction/controller system. The editor page retains its existing
-widget hierarchy. The drainage modes are empty placeholders.
+Distribution Monitor ↔ Editor changes only the visible sidebar in a nested
+`QStackedWidget`, plus active navigation handlers, HUD actions, editor overlay
+builders, network symbology and labels. The right viewport is never hidden
+or reparented during these switches. `MapMonitorContainer` owns the GPU
+lifecycle; `MapEditorContainer` supplies editor behavior and keeps its editor
+callbacks until shutdown. The workspace explicitly destroys the editor
+controller before the monitor's renderer to avoid dangling captured pointers.
 
-**This is deliberately not the final one-renderer state.** The workspace's
-`QStackedWidget` still hides the monitor viewport when showing the legacy editor
-page. Because bgfx is process-global and there are still two GPU surfaces,
-the normal editor/monitor switch continues to stop/restart bgfx until Stage 4.
-Moving the monitor *once at construction* is safe; moving a live native surface
-between pages during mode switches is explicitly prohibited.
+The two drainage modes remain blank pages for now (Stage 7). Switching from
+a distribution mode to a drainage placeholder can therefore hide and stop
+the viewport; this is not a distribution editor/monitor mode restart.
+Node decluttering currently changes derived 2D display geometry when
+switching Monitor ↔ Editor; its preparation/reuse optimization belongs to
+Stage 5, not the Stage 4 device-lifecycle change.
+
+`MainWindow` has only one distribution `MapModel`. Camera movement and
+provider changes are inherently shared across distribution modes; the old
+cross-view synchronization controls remain temporarily but no longer drive
+second-model updates. Their removal and fullscreen/navigation cleanup belong
+to Stage 6.
 
 `MapModeToolPanel` owns scrolling and the mode-selector UI but never owns a
 map model, native window or renderer. Mode tools and the monitor viewport are
@@ -53,10 +59,9 @@ non-widget controller when completing the single-viewport migration.
 
 `MapWorkspaceWidget::activeMap()` and `activeModel()` provide *non-owning*
 navigation access, returning `nullptr` for the currently empty drainage modes.
-MainWindow uses these accessors to route footer zoom edits. They will point to
-the same shared map for both distribution modes after the editor migrates.
+MainWindow uses these accessors to route footer zoom edits. They point to the same shared map for both distribution modes.
 
-**Intended shared viewport:** the Maps workspace exclusively owns one
+**Shared viewport contract:** the Maps workspace exclusively owns one
 `MapModel` (camera and provider), one `MapWidget` (continuous navigation), one
 `MapBgfxSurface` (GPU resources, retained network, terrain, basemap and HUD),
 and shared repositories are supplied from MainWindow. This hierarchy must
@@ -85,11 +90,11 @@ renderers:
 - **Lifecycle:** destruction/recreation of the native surface can still
   require an explicit bgfx device restart. Merely switching modes must not.
 
-Do not merge these ownership changes into one large untestable patch. The
-tool-panel extraction (Stage 2) and the monitor viewport ownership transfer
-(Stage 3) are complete. Next migrate the editor's rendering and interaction to
-the workspace's monitor-origin viewport (Stage 4), then isolate mode-specific
-HUD/symbology, and finally remove obsolete sync/device-handover logic.
+The tool-panel extraction (Stage 2), monitor viewport ownership transfer
+(Stage 3), and single-surface distribution renderer migration (Stage 4) are
+complete in the source architecture. Further work isolates profile settings
+(Stage 5), removes legacy sync and fullscreen paths (Stage 6), and integrates
+drainage modes (Stage 7).
 Fullscreen and WASM input must remain working at every intermediate stage.
 
 ## Diagnostics and regression baseline
@@ -116,13 +121,13 @@ cumulative process-wide counters, including both legacy bgfx surfaces.
 | `globe_geometry_rebuilt`, `globe_flow_rebuilt` | Existing globe preparation diagnostics |
 | `frames` | Submitted frames and their CPU time, **not** GPU execution time |
 
-These diagnostics establish a baseline. In Stage 3 the monitor's viewport is
-workspace-owned, but there are still two GPU surfaces; device shutdown/start
-counts on monitor/editor switches are still **expected**. Once consolidated,
-a mode switch should increase
-`workspace_mode_switch` but **not** `bgfx_device_started`,
-`bgfx_device_stopped` or network geometry counters. Initial startup, a true
-model change, or native surface loss may legitimately affect those counters.
+In Stage 4 the distribution viewport is shared: ordinary Monitor ↔ Editor
+mode switches should increment `workspace_mode_switch` **without incrementing**
+`bgfx_device_started` or `bgfx_device_stopped`. The derived
+`bgfx_2d_scene_prepared` count may still increase when node decluttering
+switches presentation modes; Stage 5 will isolate/cache these variants.
+Initial startup, true network changes, switching to a blank drainage page,
+and native surface loss can legitimately change renderer lifecycle counters.
 
 Automated checks (including the new Qt Widgets panel ownership test):
 
@@ -146,7 +151,7 @@ invalidation and retained-network-scene tests cover zoom/LOD and geometry
 revision independence. A real GPU/window lifecycle check additionally
 requires interactive validation on the target system.
 
-Manual acceptance baseline before moving ownership:
+Manual Stage 4 acceptance checks:
 
 1. Open Distribution Monitor; pan and zoom continuously, change basemap and
    2D/3D view; observe one consistent camera and no geometry rebuild during
@@ -162,6 +167,7 @@ Manual acceptance baseline before moving ownership:
 5. Repeat on Linux desktop, Windows and WASM during each relevant migration.
    A unit test without a GPU cannot prove native-window behavior.
 
-The end state, *not yet achieved in Stage 3*, is **one persistent GPU renderer, one authoritative camera and
-four selectable modes**; no CPU-era zoom buckets or geometry rebuilds tied
-to fractional zoom are permitted.
+The distribution modes now share **one persistent GPU renderer and camera**.
+The full four-mode shared-map end state is still pending Stage 7's drainage
+integration. No CPU-era zoom buckets or geometry rebuilds tied to fractional
+zoom are permitted.

@@ -29,6 +29,7 @@
 #include "map/core/map_widget.h"
 #include "map/core/map_navigation_widget.h"
 #include "map/editor/map_canvas_widget.h"
+#include "map/bgfx/map_bgfx_surface.h"
 #include "map/editor/map_editor_controller.h"
 #include "entity_inspector/entity_inspector_dock.h"
 #include "network/hydraulic_data.h"
@@ -55,6 +56,7 @@
 // tiles on the globe as well.
 class MapModeToolPanel;
 class MapBgfxSurface;
+class MapMonitorContainer;
 class MapBgfxGlobeHudController;
 class QKeyEvent;
 class QShortcut;
@@ -150,10 +152,13 @@ public:
     explicit MapEditorContainer(MapModel *map_model, MapTileRepository *tile_repository,
                                 MapTerrainRepository *terrain_repository,
                                 HydraulicData *hydraulic_data, GpsProvider *gps,
-                                EntityInspectorDock *map_inspector, QWidget *parent = nullptr);
+                                EntityInspectorDock *map_inspector,
+                                MapMonitorContainer *monitor, QWidget *parent = nullptr);
     ~MapEditorContainer() override;
     
     MapWidget *getMap();
+    void activateSharedSurface(bool active);
+    QWidget *inputCanvas() const;
     // Independent left tools and map viewport, still hosted side by side by
     // this legacy container until the shared viewport migration.
     MapModeToolPanel *toolPanel() const;
@@ -179,6 +184,13 @@ private:
     
     EntityInspectorDock *map_inspector;
     
+    MapMonitorContainer *monitor = nullptr;
+    bool shared_editor_mode = false;
+    std::function<void(const MapBgfxHud::Command &)> editor_hud_action_handler;
+    MapBgfxSurface::OverlayBuilder editor_overlay_builder;
+    MapBgfxSurface::GlobeOverlayBuilder editor_globe_overlay_builder;
+    MapBgfxLabels::SymbolRect editor_node_label_rect;
+    MapBgfxLabels::SymbolRect editor_link_label_rect;
     MapModel *map_model;
     MapTileRepository *tile_repository;
     MapTerrainRepository *terrain_repository;

@@ -28,13 +28,15 @@ MapCanvasWidget::MapCanvasWidget(MapModel *map_model, MapWidget *map,
     // coordinate: signalCameraChanged(), not a full render update.
     connect(this->map_model, &MapModel::view2dContinuousZoomChanged, this, [this](double)
     {
-        if (isVisible() && this->editor_controller && this->last_pointer_position_valid)
+        if ((isVisible() || this->shared_editor_active) && this->editor_controller
+            && this->last_pointer_position_valid)
             this->editor_controller->mouseMove(this->last_pointer_position, size(), false);
         emit signalCameraChanged();
     });
     connect(this->map_model, &MapModel::centerChangedWGS84, this, [this]
     {
-        if (isVisible() && this->editor_controller && this->last_pointer_position_valid)
+        if ((isVisible() || this->shared_editor_active) && this->editor_controller
+            && this->last_pointer_position_valid)
             this->editor_controller->mouseMove(this->last_pointer_position, size(), false);
         emit signalCameraChanged();
     });
@@ -45,7 +47,8 @@ MapCanvasWidget::MapCanvasWidget(MapModel *map_model, MapWidget *map,
     {
         if (this->map_model->viewMode() != MapViewMode::Globe)
             return;
-        if (isVisible() && this->editor_controller && this->last_pointer_position_valid)
+        if ((isVisible() || this->shared_editor_active) && this->editor_controller
+            && this->last_pointer_position_valid)
             this->editor_controller->mouseMove(this->last_pointer_position, size(), false);
         emit signalCameraChanged();
     });
@@ -61,6 +64,12 @@ MapCanvasWidget::MapCanvasWidget(MapModel *map_model, MapWidget *map,
             requestRenderUpdate();
         });
     }
+}
+
+void MapCanvasWidget::setSharedEditorActive(bool active)
+{
+    this->shared_editor_active = active;
+    requestRenderUpdate();
 }
 
 void MapCanvasWidget::setEditorController(MapEditorController *editor_controller)
