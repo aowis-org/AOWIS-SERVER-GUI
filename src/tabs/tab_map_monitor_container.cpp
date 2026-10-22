@@ -1398,8 +1398,13 @@ void MapMonitorContainer::applySymbology()
         this->hydraulic_data->symbologyRanges(this->symbology_settings);
     if (this->bgfx_surface != nullptr)
     {
-        this->bgfx_surface->setSymbology(this->symbology_resolver.resolve(
-            *this->hydraulic_data, this->symbology_settings, ranges));
+        MapNetworkRenderSymbology monitor_symbology = this->symbology_resolver.resolve(
+            *this->hydraulic_data, this->symbology_settings, ranges);
+        // Restore the light icon interiors (notably demand-point stars) in
+        // Monitor. The editor sets its own symbology on this shared surface.
+        // Metric-coloured icons still use their selected palette.
+        monitor_symbology.icon_default_fill_color = qRgb(255, 255, 255);
+        this->bgfx_surface->setSymbology(monitor_symbology);
         pushBgfxLegend(ranges);
         this->resolved_symbology_settings = this->symbology_settings;
         this->symbology_resolved = true;

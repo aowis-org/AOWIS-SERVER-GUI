@@ -2523,6 +2523,11 @@ MapNetworkRenderSymbology MapBgfxSurface::globeSymbology() const
     // As the former QRhi monitor: a neutral icon fill
     // on dark windows, a soft pink on light ones (visibility on imagery).
     MapNetworkRenderSymbology themed = this->symbology;
+    // An explicit per-mode icon fill (e.g. Monitor's white demand-point
+    // stars) must survive 2D/3D switching. Only the unconfigured/default
+    // colour is replaced by the globe's window-theme colour.
+    if (themed.icon_default_fill_color != MapNetworkRenderSymbology().icon_default_fill_color)
+        return themed;
     const QColor window_color = palette().color(QPalette::Window);
     themed.icon_default_fill_color = networkSymbologyIconDefaultFillColor(window_color);
     const double luminance = 0.2126 * window_color.red() + 0.7152 * window_color.green()
