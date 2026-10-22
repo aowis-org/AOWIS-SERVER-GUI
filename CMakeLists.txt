@@ -488,6 +488,7 @@ target_sources(aowis-server-gui PRIVATE
     src/map/bgfx/map_bgfx_legend_content.h
     src/map/bgfx/map_bgfx_legend_content.cpp
     src/map/bgfx/map_bgfx_globe_icon_index.h
+    src/map/bgfx/map_bgfx_globe_height_cache.h
     src/map/bgfx/map_bgfx_editor_overlay.h
     src/map/bgfx/map_bgfx_editor_overlay.cpp
     src/map/bgfx/map_bgfx_labels.h
@@ -627,6 +628,11 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_map_workspace_log_checker.py)
         set_tests_properties(aowis-map-workspace-log-checker PROPERTIES
             LABELS "aowis")
+        add_test(NAME aowis-map-globe-editor-performance-report
+            COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_globe_editor_performance_report.py)
+        set_tests_properties(aowis-map-globe-editor-performance-report PROPERTIES
+            LABELS "aowis")
     endif()
 
     add_executable(aowis-map-provider-fallback-tests
@@ -747,6 +753,29 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
     add_test(NAME aowis-map-bgfx-globe-icon-index
         COMMAND aowis-map-bgfx-globe-icon-index-tests)
     set_tests_properties(aowis-map-bgfx-globe-icon-index PROPERTIES
+        LABELS "aowis;performance")
+
+    # Stage 11: cache terrain heights by drawn surface revision, never by camera.
+    add_executable(aowis-map-bgfx-globe-height-cache-tests
+        tests/map_bgfx_globe_height_cache_test.cpp)
+    target_include_directories(aowis-map-bgfx-globe-height-cache-tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    add_test(NAME aowis-map-bgfx-globe-height-cache
+        COMMAND aowis-map-bgfx-globe-height-cache-tests)
+    set_tests_properties(aowis-map-bgfx-globe-height-cache PROPERTIES
+        LABELS "aowis;performance")
+
+    # Stage 10: synthetic 10k/50k/100k Editor icon projection/ordering
+    # workloads, measured separately from actual GUI/GPU/DEM frame timings.
+    # The --smoke CTest uses tiny workloads and correctness checks only;
+    # run the executable without arguments for the full benchmark suite.
+    add_executable(aowis-map-bgfx-globe-icon-benchmark
+        tests/map_bgfx_globe_icon_benchmark.cpp)
+    target_include_directories(aowis-map-bgfx-globe-icon-benchmark PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    add_test(NAME aowis-map-bgfx-globe-icon-benchmark-smoke
+        COMMAND aowis-map-bgfx-globe-icon-benchmark --smoke)
+    set_tests_properties(aowis-map-bgfx-globe-icon-benchmark-smoke PROPERTIES
         LABELS "aowis;performance")
 
     # Map labels on the bgfx 2D map without a GPU: decluttered placement,
@@ -914,7 +943,9 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
     add_custom_target(aowis-benchmarks
         DEPENDS
             aowis-unit-presentation-benchmark
-            aowis-map-bgfx-globe-icon-index-tests)
+            aowis-map-bgfx-globe-icon-index-tests
+            aowis-map-bgfx-globe-height-cache-tests
+            aowis-map-bgfx-globe-icon-benchmark)
 
     # Step 2: camera changes and imagery LOD do not invalidate the retained
     # network scene. These are fast deterministic policy checks, not timings.
@@ -1229,6 +1260,8 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
             aowis-bgfx-hud-tests
             aowis-bgfx-editor-overlay-tests
             aowis-map-bgfx-globe-icon-index-tests
+            aowis-map-bgfx-globe-height-cache-tests
+            aowis-map-bgfx-globe-icon-benchmark
             aowis-bgfx-labels-tests
             aowis-unit-cross-surface-acceptance-tests
             aowis-valve-setting-sort-policy-tests

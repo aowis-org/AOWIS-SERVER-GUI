@@ -609,6 +609,7 @@ void MapBgfxSurface::setTerrainRepository(MapTerrainRepository *terrain_reposito
     if (this->terrain_repository != nullptr)
         QObject::disconnect(this->terrain_repository, nullptr, this, nullptr);
     this->terrain_repository = terrain_repository;
+    this->globe_overlay_height_cache.clear();
     this->globe_surface->setTerrainRepository(terrain_repository);
     this->terrain_navigation.setTerrainRepository(terrain_repository);
     if (this->terrain_repository == nullptr)
@@ -974,6 +975,7 @@ void MapBgfxSurface::shutdownBackend()
     if (!this->initialized)
         return;
     stopFrameLoop();
+    this->globe_overlay_height_cache.clear();
     releaseGpuResources();
     bgfx::shutdown();
     MapRenderDiagnostics::add(MapRenderDiagnostics::Counter::BgfxDeviceStopped);
@@ -1397,8 +1399,10 @@ void MapBgfxSurface::renderGlobeOverlay(const QSizeF &logical)
     const double ray_start_height_m = 9000.0 * MapModel::MaxView3dVerticalExaggeration + 1000.0;
     const MapGlobeTerrainNavigation &navigation = this->terrain_navigation;
     const double vertical_exaggeration = this->map_model->view3dVerticalExaggeration();
+    this->globe_overlay_height_cache.synchronize(
+        this->globe_surface->surfaceRevision(), vertical_exaggeration);
     const GlobeProjector projector =
-        [&view_projection, &origin, &preparation, &navigation, ray_start_height_m,
+        [this, &view_projection, &origin, &preparation, &navigation, ray_start_height_m,
          vertical_exaggeration, eye_x, eye_y, eye_z, viewport](
             double longitude_deg, double latitude_deg, QPointF *screen_position,
             double *distance_m) -> bool
@@ -1437,25 +1441,29 @@ void MapBgfxSurface::renderGlobeOverlay(const QSizeF &logical)
         coordinate.longitude_deg = longitude_deg;
         coordinate.latitude_deg = latitude_deg;
         double height_m = 0.0;
-        bool height_known =
-            preparation.drawnSurfaceHeightAt(coordinate, ray_start_height_m, &height_m)
-                == MapGlobeSurfacePreparation::DrawnSurfaceHeight::Relief
-            && std::isfinite(height_m);
-        int visible_terrain_zoom = -1;
-        double visible_cell_size_m = 0.0;
-        if (!height_known
-            && preparation.visibleTerrainSamplingAtCoordinate(
-                   coordinate, &visible_terrain_zoom, &visible_cell_size_m))
+        const bool height_known = this->globe_overlay_height_cache.height(
+            longitude_deg, latitude_deg, &height_m,
+            [&preparation, &navigation, &coordinate, ray_start_height_m,
+             vertical_exaggeration](double *sampled_height_m) -> bool
         {
+            if (preparation.drawnSurfaceHeightAt(coordinate, ray_start_height_m,
+                                                  sampled_height_m)
+                    == MapGlobeSurfacePreparation::DrawnSurfaceHeight::Relief
+                && std::isfinite(*sampled_height_m))
+                return true;
+            int visible_terrain_zoom = -1;
+            double visible_cell_size_m = 0.0;
+            if (!preparation.visibleTerrainSamplingAtCoordinate(
+                    coordinate, &visible_terrain_zoom, &visible_cell_size_m))
+                return false;
             double elevation_m = 0.0;
             double cell_size_m = 0.0;
-            if (navigation.terrainElevationAtCoordinate(coordinate, &elevation_m, &cell_size_m)
-                && std::isfinite(elevation_m))
-            {
-                height_m = elevation_m * vertical_exaggeration;
-                height_known = true;
-            }
-        }
+            if (!navigation.terrainElevationAtCoordinate(coordinate, &elevation_m, &cell_size_m)
+                || !std::isfinite(elevation_m))
+                return false;
+            *sampled_height_m = elevation_m * vertical_exaggeration;
+            return std::isfinite(*sampled_height_m);
+        });
         if (height_known)
             point = GeoWgs84Ellipsoid::geodeticToEcefD(longitude_deg, latitude_deg, height_m);
         // Relative to the render origin before the float conversion
@@ -1513,8 +1521,14 @@ void MapBgfxSurface::renderGlobeOverlay(const QSizeF &logical)
                      + sign * double(view_projection(row, 3))
                      - plane.x * origin.x - plane.y * origin.y - plane.z * origin.z;
     }
+    const std::uint64_t cache_hits_before = this->globe_overlay_height_cache.hits();
+    const std::uint64_t terrain_samples_before = this->globe_overlay_height_cache.samples();
     this->globe_overlay_builder(&this->overlay_canvas, &this->overlay_text_cache,
                                 projector, logical, frustum);
+    MapRenderDiagnostics::add(MapRenderDiagnostics::Counter::GlobeTerrainHeightCacheHit,
+                              quint64(this->globe_overlay_height_cache.hits() - cache_hits_before));
+    MapRenderDiagnostics::add(MapRenderDiagnostics::Counter::GlobeTerrainHeightSample,
+                              quint64(this->globe_overlay_height_cache.samples() - terrain_samples_before));
     this->overlay_gpu.uploadAtlas(&this->overlay_text_cache);
     this->overlay_gpu.draw(kMapBgfxView, this->overlay_canvas, logical, QPointF());
 }

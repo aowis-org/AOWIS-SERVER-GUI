@@ -842,6 +842,8 @@ void MapBgfxEditorOverlay::globeNetworkIcons(const NetworkRenderSnapshot &snapsh
     // elevation bound prevents a visible relief-draped sprite from being
     // culled merely because its sea-level anchor is outside the viewport.
     // The final projection and actual pixel cull remain authoritative.
+    MapRenderDiagnostics::Scope icon_frame_scope(
+        MapRenderDiagnostics::Counter::GlobeEditorIconFrame);
     (void)snapshot;
     struct VisibleIcon
     {
@@ -849,9 +851,14 @@ void MapBgfxEditorOverlay::globeNetworkIcons(const NetworkRenderSnapshot &snapsh
         InfrastructureEntity entity = InfrastructureEntity::Unknown;
         double distance_m = 0.0;
         bool bottom_anchored = false;
+        std::size_t source_index = 0;
     };
     std::vector<std::size_t> candidates;
-    this->globe_icon_index.query(frustum, &candidates);
+    {
+        MapRenderDiagnostics::Scope index_query_scope(
+            MapRenderDiagnostics::Counter::GlobeEditorIconIndexQuery);
+        this->globe_icon_index.queryUnordered(frustum, &candidates);
+    }
     MapRenderDiagnostics::add(MapRenderDiagnostics::Counter::GlobeEditorIconAnchors,
                               quint64(this->globe_icon_anchors.size()));
     MapRenderDiagnostics::add(MapRenderDiagnostics::Counter::GlobeEditorIconCandidates,
@@ -866,21 +873,31 @@ void MapBgfxEditorOverlay::globeNetworkIcons(const NetworkRenderSnapshot &snapsh
             && point.x() <= viewport_size.width() + margin
             && point.y() <= viewport_size.height() + margin;
     };
-    for (std::size_t index : candidates)
     {
-        const GlobeIconAnchor &anchor = this->globe_icon_anchors.at(qsizetype(index));
-        QPointF point;
-        double distance_m = 0.0;
-        if (!projector(anchor.coordinate.longitude_deg, anchor.coordinate.latitude_deg,
-                       &point, &distance_m) || !visible(point))
-            continue;
-        icons.append({point, anchor.entity, distance_m, anchor.bottom_anchored});
+        MapRenderDiagnostics::Scope projection_scope(
+            MapRenderDiagnostics::Counter::GlobeEditorIconProjection);
+        for (std::size_t index : candidates)
+        {
+            const GlobeIconAnchor &anchor = this->globe_icon_anchors.at(qsizetype(index));
+            QPointF point;
+            double distance_m = 0.0;
+            if (!projector(anchor.coordinate.longitude_deg, anchor.coordinate.latitude_deg,
+                           &point, &distance_m) || !visible(point))
+                continue;
+            icons.append({point, anchor.entity, distance_m, anchor.bottom_anchored, index});
+        }
     }
     MapRenderDiagnostics::add(MapRenderDiagnostics::Counter::GlobeEditorIconVisible,
                               quint64(icons.size()));
-    std::stable_sort(icons.begin(), icons.end(), [](const VisibleIcon &a, const VisibleIcon &b)
+    MapRenderDiagnostics::Scope drawing_scope(
+        MapRenderDiagnostics::Counter::GlobeEditorIconDraw);
+    // Sorting by distance with original snapshot index as a tie breaker
+    // reproduces the previous stable-sort painter order even though the
+    // spatial query now returns kd-tree traversal order.
+    std::sort(icons.begin(), icons.end(), [](const VisibleIcon &a, const VisibleIcon &b)
     {
-        return a.distance_m > b.distance_m;
+        return a.distance_m != b.distance_m ? a.distance_m > b.distance_m
+                                             : a.source_index < b.source_index;
     });
     for (const VisibleIcon &entry : icons)
     {

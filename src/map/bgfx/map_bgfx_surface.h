@@ -7,6 +7,7 @@
 #include "map/bgfx/map_bgfx_2d_symbology.h"
 #include "map/bgfx/map_bgfx_globe_network.h"
 #include "map/bgfx/map_bgfx_globe_icon_index.h"
+#include "map/bgfx/map_bgfx_globe_height_cache.h"
 #include "map/bgfx/map_bgfx_globe_surface.h"
 #include "map/bgfx/map_bgfx_hud.h"
 #include "map/bgfx/map_bgfx_hud_canvas.h"
@@ -392,6 +393,8 @@ private:
     MapTerrainRepository *terrain_repository = nullptr;
     // Terrain-aware navigation over globe_surface's retained DEM meshes.
     MapGlobeTerrainNavigation terrain_navigation;
+    // Cache stable drawn-terrain heights, never screen-space icon positions.
+    MapBgfxGlobeHeightCache globe_overlay_height_cache;
     // The network on the globe (slice 3); its inputs are applied lazily on
     // globe frames. Ready: its programs exist on this device. Mutable:
     // hitTest() (const) applies pending inputs before picking (slice 4).

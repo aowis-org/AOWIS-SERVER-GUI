@@ -469,6 +469,67 @@ cumulative values. The ratio of candidate delta to anchor delta indicates
 how many terrain projections spatial culling avoids. Dense networks where
 most anchors remain plausible candidates should be benchmarked separately.
 
+### Large-network performance validation (Stage 10)
+
+For reproducible *CPU-only synthetic workloads*, first build the test target
+with `./compile_linux_tests.sh --both`, then run the Release executable:
+
+```bash
+./build-linux-tests-release/aowis-map-bgfx-globe-icon-benchmark \
+    > /tmp/aowis-globe-icon-synthetic.jsonl
+```
+
+This uses the actual retained ECEF kd-tree on deterministic 10k, 50k and 100k
+anchor networks and three views each: **regional** (100 km extent, fixed
+camera footprint), **urban_dense** (4.5 km extent, the same camera footprint),
+and **fully_visible** (all icons projected). It pans, rotates and changes zoom
+over 90 queries per scenario; checks that the culled icon result matches a
+complete projection and draw-order pass; records index construction time,
+capacity-based memory estimate, median and p95 CPU cost, mean candidates and
+leaf points examined, and unintended index rebuilds. `--smoke` checks correctness
+quickly as part of `aowis-tests`. Benchmark output is one JSON object per
+scenario suitable for comparisons across Linux/Windows/WASM builds.
+
+These are **simulated projection calculations and CPU depth sorting** (no real
+DEM sampling, sprite rasterization, GPU, Qt renderer or actual network importer).
+A kd-tree can be slower than a full scan when most anchors are visible; never
+use synthetic speedups as proof of full-frame throughput or WASM FPS.
+
+For **actual GUI CPU costs**, load 10k, 50k and 100k demand-point networks in
+Distribution Editor on the target machine, enable 3D, allow terrain and icon
+assets to load, and capture diagnostic snapshots while panning, rotating and
+zooming at a fixed viewport size. Run each network size and graphics backend
+as a **separate process/log**:
+
+```bash
+AOWIS_MAP_RENDER_DIAGNOSTICS=1 ./build-linux/aowis-server-gui \
+    2>&1 | tee /tmp/aowis-editor-3d-10k.log
+# Exercise the Editor 3D camera for at least 15-30 seconds, then close GUI.
+python3 tools/report_globe_editor_performance.py \
+    /tmp/aowis-editor-3d-10k.log --min-icon-frames 30 --min-anchors 10000 --json
+```
+
+The Stage 10 counters `globe_editor_icon_frame`,
+`globe_editor_icon_index_query`, `globe_editor_icon_projection`, and
+`globe_editor_icon_draw` time the **real** CPU phases of 3D icon display. The
+report uses **successive cumulative-counter differences**, excludes idle
+snapshots, and weighs intervals by their actual icon-overlay invocation counts.
+It also reports mean anchors, frustum candidates, visible icons, mean CPU time
+per `frames` diagnostic (bgfx submit work, **not GPU completion or FPS**), and
+index builds during each window. If the icon atlas gets evicted, an icon pass
+may repeat within one presented frame. Pixel-size, view angle, terrain cache
+warmth and browser threading should be logged alongside results for meaningful
+comparisons. Reported median/highest **interval means** are not per-frame p95.
+
+For the **real** FPS and memory acceptance measurements, additionally record
+Chromium's frame metrics/performance profile in WASM and the OS process RSS/GPU
+metrics on Linux and Windows; the opt-in diagnostic JSON cannot report GPU time,
+VRAM usage, browser frame scheduling or complete process memory. Keep separate
+cold-start (index build/texture loading) and warmed-navigation measurements.
+Performance is judged against the previous commit on the **same machine**, not
+against absolute CPU time limits embedded in CTest. Stage 10 does not introduce
+zoom-bucket invalidation or a network geometry rebuild on camera movement.
+
 Slice 1, the terrain surface (`map_bgfx_globe_surface.*`):
 
 * CPU work is the backend-neutral `MapGlobeSurfacePreparation` the QRhi globe
@@ -886,11 +947,13 @@ Docker image no longer builds a shader compiler.
 ## Shared Maps workspace: distribution and drainage
 
 The Maps workspace retains one `MapBgfxSurface` and one `MapModel` while
-switching between Distribution Monitor, Distribution Editor, Drainage Monitor
-and Drainage Editor. The two drainage sidebars are deliberately empty, but
+switching between Distribution Monitor, Distribution Editor, Drainage Monitor,
+Drainage Editor and Map Management. The two drainage sidebars are deliberately
+empty; Map Management retains map/terrain tile selection and cache tools, but
 the map, 2D imagery, 3D terrain, camera, navigation and common HUD stay live.
 `setDistributionNetworkVisible(false)` hides distribution network draws,
-labels, editor overlays, 3D network entities, heatmap and picking; it does not
+labels, network-editing overlays, 3D network entities, heatmap and picking;
+Map Management's green/brown cache-selection overlay remains visible. It does not
 clear the retained scene or discard GPU network geometry. On returning to a
 distribution mode, the appropriate monitor/editor symbology and input handlers
 are restored. A mode change must not call `bgfx::shutdown()` or `bgfx::init()`.
@@ -901,6 +964,27 @@ Transparent icon quads are drawn back-to-front relative to the active globe
 camera. Monitor retains the per-entity globe vertex buffer and updates only a
 32-bit draw-index stream when camera eye or icon geometry changes. Editor
 projects its full-colour entity icons onto the HUD canvas and depth-sorts those
-sprites before building the canvas. Both paths keep their existing terrain
-visibility and rendering styles; neither rebuilds the network geometry when
-panning or orbiting.
+sprites before building the canvas. Its spatial index returns candidates in
+kd-tree order (without a redundant index sort); a source-index tie-breaker
+retains the same painter order for equal-distance icons. A fully enclosed
+frustum uses a linear candidate range without visiting every tree leaf.
+Both paths retain their existing terrain visibility and rendering styles;
+neither rebuilds network geometry when panning or orbiting.
+
+### 3D Editor icon terrain-height reuse
+
+The 3D Editor projects icons onto the drawn terrain. The expensive mesh-ray
+and DEM fallback sample is reused across camera frames by
+`map_bgfx_globe_height_cache.h`, keyed by the exact geographic coordinate.
+Only finite, available heights are cached. Missing terrain is retried on the
+next projection. Cache entries are cleared when the **drawn surface revision**
+changes, vertical exaggeration changes, the terrain repository changes, or
+the bgfx backend shuts down. The screen position, distance/depth order and
+visibility are still recalculated for every presented camera frame.
+Diagnostics report `globe_terrain_height_cache_hit` and
+`globe_terrain_height_sample` so repeated DEM work can be distinguished from
+projection math; run `tools/report_globe_editor_performance.py` against
+`AOWIS_MAP_RENDER_DIAGNOSTICS=1` output to measure actual icon-frame CPU time.
+The cached values refer to the terrain **as drawn**, not a permanent DEM
+snapshot or the model's terrain-data revision. Neither this cache nor the
+spatial index is tied to zoom buckets or network geometry re-preparation.

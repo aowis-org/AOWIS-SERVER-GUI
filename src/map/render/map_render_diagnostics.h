@@ -41,6 +41,12 @@ enum class Counter : size_t
     GlobeEditorIconAnchors,     // total anchors across 3D Editor icon frames
     GlobeEditorIconCandidates,  // anchors surviving the cheap frustum query
     GlobeEditorIconVisible,     // projected sprites inside the viewport
+    GlobeEditorIconFrame,       // CPU time of one complete 3D Editor icon overlay
+    GlobeEditorIconIndexQuery,  // CPU time selecting frustum candidates
+    GlobeEditorIconProjection,  // CPU time including terrain-aware projection
+    GlobeEditorIconDraw,        // CPU time sorting and submitting HUD sprites
+    GlobeTerrainHeightCacheHit, // drawn terrain reused without another ray query
+    GlobeTerrainHeightSample,   // terrain lookup (known and missing results)
     Count
 };
 
@@ -50,7 +56,10 @@ inline constexpr std::array<const char *, static_cast<std::size_t>(Counter::Coun
     "bgfx_device_started", "bgfx_device_stopped", "bgfx_2d_scene_prepared",
     "workspace_mode_switch", "globe_editor_icon_index_build",
     "globe_editor_icon_anchors", "globe_editor_icon_candidates",
-    "globe_editor_icon_visible"
+    "globe_editor_icon_visible", "globe_editor_icon_frame",
+    "globe_editor_icon_index_query", "globe_editor_icon_projection",
+    "globe_editor_icon_draw", "globe_terrain_height_cache_hit",
+    "globe_terrain_height_sample"
 }};
 
 using Clock = std::chrono::steady_clock;

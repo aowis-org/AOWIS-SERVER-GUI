@@ -53,6 +53,11 @@ int main()
     require(visible.size() < 100 && stats.examined_points < 2000,
             "100k sparse network queries visit only nearby candidate anchors");
     require(std::is_sorted(visible.cbegin(), visible.cend()), "candidate ordering is stable");
+    std::vector<std::size_t> unordered;
+    index.queryUnordered(view, &unordered);
+    require(unordered.size() == visible.size(), "unordered query has identical candidates");
+    std::sort(unordered.begin(), unordered.end());
+    require(unordered == visible, "render query cannot lose or add icon anchors");
     for (std::size_t id : visible)
     {
         require(std::abs(points[id].x) <= 500.0 && std::abs(points[id].y) <= 500.0,
@@ -70,6 +75,16 @@ int main()
             saw_raised_candidate = true;
     }
     require(saw_raised_candidate, "terrain relief expands frustum conservatively");
+
+    // Dense views whose entire indexed bounds lie inside the expanded
+    // camera frustum take the linear path without kd-tree traversal.
+    MapBgfxGlobeIconIndex::QueryStats dense_stats;
+    index.queryUnordered(frustum(100000.0, 0.0), &unordered, &dense_stats);
+    require(unordered.size() == points.size() && dense_stats.examined_points == 0
+            && dense_stats.visited_nodes == 1,
+            "fully visible networks skip unnecessary kd-tree traversal");
+    require(std::is_sorted(unordered.cbegin(), unordered.cend()),
+            "dense fast path preserves source order");
 
     // Missing frustum data deliberately falls back to full projection.
     MapBgfxGlobeIconIndex::Frustum absent;

@@ -723,6 +723,25 @@ void testGlobeEditorIcons()
         && harness.probe.calls.at(0).entity == InfrastructureEntity::Pump
         && harness.probe.calls.at(1).entity == InfrastructureEntity::DemandPoint,
         "3D editor icons use far-to-near painter ordering, not snapshot order");
+    // Equal-depth sprites still respect source order after switching the
+    // candidate query to kd-tree traversal order (no O(n log n) index sort).
+    const MapBgfxEditorOverlay::GlobeProjector same_depth = [](
+        double longitude, double latitude, QPointF *point, double *distance_m)
+    {
+        *point = QPointF(400.0 + (longitude - 9.0) * 1.0e5,
+                         300.0 - (latitude - 47.0) * 1.0e5);
+        if (distance_m != nullptr)
+            *distance_m = 100.0;
+        return true;
+    };
+    harness.probe.calls.clear();
+    harness.overlay.buildGlobe(&harness.canvas, &harness.cache, s.viewport,
+                               same_depth, &s.snapshot, EntityWidth,
+                               QSizeF(ViewportWidth, ViewportHeight));
+    req(harness.probe.calls.size() == 2
+        && harness.probe.calls.at(0).entity == InfrastructureEntity::DemandPoint
+        && harness.probe.calls.at(1).entity == InfrastructureEntity::Pump,
+        "equal-distance globe icon painter order matches source order");
 
     const MapBgfxEditorOverlay::GlobeProjector hidden = [](
         double, double, QPointF *, double *) { return false; };

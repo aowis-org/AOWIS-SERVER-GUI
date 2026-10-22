@@ -33,6 +33,18 @@ int main()
     add(Counter::GlobeEditorIconAnchors, 100000);
     add(Counter::GlobeEditorIconCandidates, 740);
     add(Counter::GlobeEditorIconVisible, 350);
+    {
+        const Scope icon_frame(Counter::GlobeEditorIconFrame);
+        {
+            const Scope query(Counter::GlobeEditorIconIndexQuery);
+        }
+        {
+            const Scope projection(Counter::GlobeEditorIconProjection);
+        }
+        {
+            const Scope drawing(Counter::GlobeEditorIconDraw);
+        }
+    }
 
     const QJsonObject result = snapshot();
     const QJsonObject counts = result.value(QStringLiteral("counts")).toObject();
@@ -53,6 +65,16 @@ int main()
                     "icon spatial-culling candidates not reported")
         || !require(counts.value(QStringLiteral("globe_editor_icon_visible")).toDouble() == 350.0,
                     "actual projected icons not reported")
+        || !require(counts.value(QStringLiteral("globe_editor_icon_frame")).toDouble() == 1.0,
+                    "icon frame count not reported")
+        || !require(counts.value(QStringLiteral("globe_editor_icon_index_query")).toDouble() == 1.0,
+                    "icon query count not reported")
+        || !require(counts.value(QStringLiteral("globe_editor_icon_projection")).toDouble() == 1.0,
+                    "icon projection count not reported")
+        || !require(counts.value(QStringLiteral("globe_editor_icon_draw")).toDouble() == 1.0,
+                    "icon draw count not reported")
+        || !require(totals.contains(QStringLiteral("globe_editor_icon_frame")),
+                    "3D icon frame timing not reported")
         || !require(totals.contains(QStringLiteral("workspace_mode_switch")),
                     "mode switch timing not reported"))
         return 1;
