@@ -4,11 +4,28 @@
 #include "config/unit_profile_manager.h"
 #include "config/shortcut_registry.h"
 #include "config/map_server_client_configuration.h"
+#include "map/render/map_render_diagnostics.h"
+#include <QDebug>
 #include <QPushButton>
 #include <QShortcut>
 #include <qapplication.h>
 
 #include <optional>
+
+MainWindow::~MainWindow()
+{
+    // The tile and terrain repositories, GPS provider and hydraulic model
+    // were created before the navigation page. QObject's default child
+    // destruction order would dispose of those dependencies first, while
+    // the shared bgfx viewport is still alive inside the navigation page.
+    // Destroy the workspace first, while every service it uses still exists.
+    if (MapRenderDiagnostics::enabled())
+        qInfo() << "AOWIS map shutdown: workspace teardown starting";
+    delete this->map_workspace;
+    this->map_workspace = nullptr;
+    if (MapRenderDiagnostics::enabled())
+        qInfo() << "AOWIS map shutdown: workspace teardown completed";
+}
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent),

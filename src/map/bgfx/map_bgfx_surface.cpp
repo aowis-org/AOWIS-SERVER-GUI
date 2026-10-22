@@ -383,6 +383,8 @@ MapBgfxSurface::MapBgfxSurface(MapModel *model, QWidget *parent)
 
 MapBgfxSurface::~MapBgfxSurface()
 {
+    if (MapRenderDiagnostics::enabled())
+        qInfo() << "AOWIS map shutdown: bgfx surface destructor starting";
     stopFrameLoop();
 #ifdef Q_OS_WASM
     if (g_bgfx_frame_loop_surface == this)
@@ -403,6 +405,8 @@ MapBgfxSurface::~MapBgfxSurface()
     if (g_bgfx_device_owner == nullptr)
         aowisBgfxMapRemove();
 #endif
+    if (MapRenderDiagnostics::enabled())
+        qInfo() << "AOWIS map shutdown: bgfx surface destructor completed";
 }
 
 void MapBgfxSurface::setNavigationHandlers(NavigationKeyHandler press,
