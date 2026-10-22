@@ -14,9 +14,8 @@ class MapModel;
 class QStackedWidget;
 class QTabBar;
 
-// One main-navigation Maps page. Distribution Monitor and Editor share
-// the same persistent viewport and map model; only their tools, input
-// handlers and rendering profiles switch. Drainage tools remain placeholders.
+// Four map modes share one persistent viewport and camera. Distribution
+// uses monitor/editor rendering profiles; drainage uses basemap-only mode.
 class MapWorkspaceWidget final : public QWidget
 {
     Q_OBJECT
@@ -46,13 +45,12 @@ public:
     bool isDistributionEditorActive() const;
     bool isDistributionMonitorActive() const;
 
-    // Non-owning access to the active navigation model. The workspace owns
-    // the monitor model and viewport; the editor's model/viewport remain
-    // temporary legacy instances. Drainage modes return nullptr.
+    // Non-owning access to the one persistent map and navigation model,
+    // including while a drainage mode is active.
     MapWidget *activeMap() const;
     MapModel *activeModel() const;
-    // Tools are independent of their map renderer. The workspace directly
-    // hosts monitor controls; the legacy editor page still hosts its controls.
+    // Distribution tools are independent of the renderer. Drainage tools
+    // intentionally remain empty until domain functionality is implemented.
     MapModeToolPanel *activeToolPanel() const;
 
 
@@ -65,7 +63,7 @@ signals:
 
 private:
     QWidget *createModeSelector(Mode mode);
-    QWidget *createEmptyModePage(Mode mode);
+    QWidget *createEmptyModeTools(Mode mode);
 
     Mode selected_mode = DistributionMonitor;
     MapMonitorContainer *monitor_controller = nullptr;
@@ -73,9 +71,7 @@ private:
     QStackedWidget *distribution_tools = nullptr;
     MapWorkspaceViewportPage *distribution_page = nullptr;
     MapWidget *monitor_map = nullptr;
-    MapWidget *editor_map = nullptr;
     MapModeToolPanel *monitor_tools = nullptr;
     MapModeToolPanel *editor_tools = nullptr;
-    QStackedWidget *pages = nullptr;
     QList<QTabBar *> mode_tabs;
 };

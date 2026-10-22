@@ -118,6 +118,29 @@ int main(int argc, char **argv)
                      "switching back to monitor must keep viewport exposed"))
             return 1;
 
+        // Stage 7: four modes select four independent sidebars, but the
+        // native viewport never changes parent, identity, or visibility.
+        QWidget *drain_monitor_tools = new QWidget(mode_tools);
+        QWidget *drain_editor_tools = new QWidget(mode_tools);
+        QVBoxLayout *drain_monitor_layout = new QVBoxLayout(drain_monitor_tools);
+        drain_monitor_layout->addWidget(new QLabel(QStringLiteral("Drainage Monitor")));
+        QVBoxLayout *drain_editor_layout = new QVBoxLayout(drain_editor_tools);
+        drain_editor_layout->addWidget(new QLabel(QStringLiteral("Drainage Editor")));
+        mode_tools->addWidget(drain_monitor_tools);
+        mode_tools->addWidget(drain_editor_tools);
+        for (int index = 0; index < 4; ++index)
+        {
+            mode_tools->setCurrentIndex(index);
+            app.processEvents();
+            if (!require(viewport->isVisible() && viewport->parentWidget() == page
+                            && page->viewport() == viewport
+                            && mode_tools->currentWidget()->isVisible(),
+                         "all four map modes must retain the same visible viewport"))
+                return 1;
+        }
+        mode_tools->setCurrentIndex(0);
+        app.processEvents();
+
         // Stage 6: fullscreen hides the ENTIRE sidebar stack. Hiding only
         // its selected panel leaves a grey strip where QStackedWidget keeps
         // reserving its maximum width. Mode switches must not reveal it.

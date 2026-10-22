@@ -53,6 +53,14 @@ constexpr const ModeInfo *modeInfo(int index)
     return &Modes[static_cast<std::size_t>(index)];
 }
 
+// A drainage mode reuses the map/camera but does not render or pick any
+// distribution entities. No geometry snapshot is cleared on mode changes.
+constexpr bool rendersDistributionNetwork(int index)
+{
+    const ModeInfo *mode = modeInfo(index);
+    return mode != nullptr && mode->domain == Domain::Distribution;
+}
+
 constexpr bool isImplemented(int index)
 {
     const ModeInfo *mode = modeInfo(index);
@@ -73,4 +81,8 @@ static_assert(Modes[DistributionMonitor].activity == Activity::Monitor);
 static_assert(Modes[DistributionEditor].activity == Activity::Editor);
 static_assert(Modes[DrainageMonitor].domain == Domain::Drainage);
 static_assert(Modes[DrainageEditor].domain == Domain::Drainage);
+static_assert(rendersDistributionNetwork(DistributionMonitor));
+static_assert(rendersDistributionNetwork(DistributionEditor));
+static_assert(!rendersDistributionNetwork(DrainageMonitor));
+static_assert(!rendersDistributionNetwork(DrainageEditor));
 }

@@ -283,15 +283,9 @@ MainWindow::MainWindow(QWidget *parent)
     connect(this->map_workspace, &MapWorkspaceWidget::currentModeChanged,
             this, [this](int)
     {
-        // In fullscreen, switching tool panels must not expose a sidebar
-        // or leave input/HUD focus on the previously active controller.
+        // All four modes retain the same map, including in fullscreen.
         if (this->map_fullscreen_active)
-        {
-            if (this->map_workspace->activeMap() == nullptr)
-                setMapFullscreen(false); // Stage 7: drainage pages are empty.
-            else
-                applyMapFullscreenToMode();
-        }
+            applyMapFullscreenToMode();
         updateActiveMapPanels();
         updateMapEdgePanning();
     });
@@ -304,8 +298,7 @@ MainWindow::MainWindow(QWidget *parent)
     
     // Editor and monitor use this same MapWidget and its footer connections.
 
-    // Writes a footer zoom edit only to the currently visible distribution map.
-    // Empty drainage modes and other main-navigation pages have no active map.
+    // Writes footer zoom edits to the shared camera in any Maps mode.
     connect(this->footer, &FooterStatusBar::zoomEdited, this, [this](double zoom)
     {
         if (this->main_navigation->currentWidget() != this->map_workspace)
@@ -649,8 +642,10 @@ void MainWindow::setMapFullscreen(bool fullscreen)
 
 void MainWindow::applyMapFullscreenToMode()
 {
+    // Drainage uses the common map navigation/HUD controller, not the
+    // distribution editing controller. Fullscreen stays active in drainage.
     const bool monitor_active = this->map_fullscreen_active
-        && this->map_workspace->isDistributionMonitorActive();
+        && !this->map_workspace->isDistributionEditorActive();
     const bool editor_active = this->map_fullscreen_active
         && this->map_workspace->isDistributionEditorActive();
 
@@ -931,6 +926,6 @@ void MainWindow::updateMapEdgePanning()
 
     const bool map_visible = this->main_navigation->currentWidget() == this->map_workspace
         && this->map_workspace->activeMap() == this->map_mon;
-    // The same MapWidget handles edge panning in both distribution modes.
+    // The same MapWidget handles edge panning in all four modes.
     this->map_mon->setEdgePanningEnabled(fullscreen && map_visible);
 }

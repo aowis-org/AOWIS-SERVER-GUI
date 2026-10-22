@@ -50,6 +50,18 @@ int main()
                 "invalid modes cannot own tools"))
         return 1;
 
+    // Stage 7: drainage has a viewport but never exposes distribution
+    // network rendering, selection or simulation overlays.
+    for (int index = 0; index < static_cast<int>(Modes.size()); ++index)
+    {
+        if (!expect(rendersDistributionNetwork(index) == (index < 2),
+                    "distribution network visibility differs from mode domain"))
+            return 1;
+    }
+    if (!expect(!rendersDistributionNetwork(-1) && !rendersDistributionNetwork(4),
+                "invalid modes must never enable the distribution network"))
+        return 1;
+
     // Regression: a persistent globe must not carry the monitor's configurable
     // 3D models into Distribution Editor. The monitor restores its preference.
     if (!expect(!useGlobe3dIconModels(DistributionEditor, true),

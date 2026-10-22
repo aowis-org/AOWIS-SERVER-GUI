@@ -111,6 +111,10 @@ public:
     void focusNavigationInput(Qt::FocusReason reason = Qt::OtherFocusReason);
 
     void setNetworkSnapshot(const NetworkRenderSnapshot &snapshot);
+    // Hide distribution network/heatmaps/labels/picking in drainage modes.
+    // Retains CPU/GPU geometry, imagery, terrain and navigation unchanged.
+    void setDistributionNetworkVisible(bool visible);
+    bool distributionNetworkVisible() const { return this->distribution_network_visible; }
     // Editor move preview: these entities are drawn transparent (colour
     // stream only, no geometry upload) while the overlay draws them moving.
     void setHiddenEntityUuids(const QSet<QUuid> &uuids);
@@ -351,6 +355,7 @@ private:
     NavigationMouseHandler navigation_mouse_move;
     MapModel *map_model = nullptr;
     MapRetainedNetworkScene retained_scene;
+    bool distribution_network_visible = true;
     MapBgfx2dSceneVariants prepared_2d_scenes;
     MapBgfx2dGpu gpu_2d_scene;
     MapBgfx2dGpu::FrameStats network_frame_stats;

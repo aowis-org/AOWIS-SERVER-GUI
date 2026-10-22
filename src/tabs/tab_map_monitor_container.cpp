@@ -455,21 +455,21 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
                 surface, [this, surface](bool enabled)
                 {
                     this->monitor_globe_3d_icons = enabled;
-                    if (!this->editor_mode)
+                    if (!this->editor_mode && !this->basemap_only)
                         surface->setGlobe3dIconsEnabled(MapWorkspace::useGlobe3dIconModels(
                             MapWorkspace::DistributionMonitor, enabled));
                 });
         surface->setBackgroundOpacity(this->network_background_opacity);
         connect(this->map_menu->mapNavigationWidget(),
                 &MapNavigationWidget::signalSlideOpacityChanged,
-                surface, [this, surface](int opacity) { if (!this->editor_mode) surface->setBackgroundOpacity(opacity); });
+                surface, [this, surface](int opacity) { if (!this->editor_mode && !this->basemap_only) surface->setBackgroundOpacity(opacity); });
         // Map labels (IDs / values) from the left menu's switches.
         surface->setLabelSettings(this->map_menu->mapNavigationWidget()->labelSettings());
         connect(this->map_menu->mapNavigationWidget(),
                 &MapNavigationWidget::signalLabelSettingsChanged,
                 surface, [this, surface](const MapLabelSettings &settings)
         {
-            if (!this->editor_mode)
+            if (!this->editor_mode && !this->basemap_only)
                 surface->setLabelSettings(settings);
         });
         this->map_stack_layout->addWidget(surface);
@@ -707,7 +707,7 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
             emit signalShowMapLegendNode(VisualNode::None);
             emit signalShowMapLegendLink(VisualLink::None);
             emit signalShowMapLegendHeatmap(VisualHeatmap::None);
-            if (!this->editor_mode)
+            if (!this->editor_mode && !this->basemap_only)
                 refreshBgfxLegend();
             // HUD inputs: current download numbers now, then the poll.
             refreshBgfxDownloadActivity();
@@ -1045,7 +1045,7 @@ bool MapMonitorContainer::eventFilter(QObject *watched, QEvent *event)
 #endif
     }
 
-    if (watched == this->map)
+    if (watched == this->map && !this->basemap_only)
     {
         if (event->type() == QEvent::MouseButtonPress)
         {
@@ -1080,7 +1080,7 @@ bool MapMonitorContainer::eventFilter(QObject *watched, QEvent *event)
 
 bool MapMonitorContainer::selectBgfxNetworkEntityAt(const QPointF &position)
 {
-    if (!this->bgfx_render_surface_active || this->bgfx_surface == nullptr
+    if (this->basemap_only || !this->bgfx_render_surface_active || this->bgfx_surface == nullptr
         || !this->bgfx_surface->isVisible())
         return false;
     // A hit selects the entity (the highlight follows HydraulicData's selection signal), a miss clears it.
@@ -1390,7 +1390,7 @@ void MapMonitorContainer::applyMapFullscreen(bool fullscreen)
 
 void MapMonitorContainer::applySymbology()
 {
-    if (this->editor_mode)
+    if (this->editor_mode || this->basemap_only)
         return;
     this->symbology_settings = this->symbology_settings.bounded();
 
@@ -1414,7 +1414,7 @@ void MapMonitorContainer::applySymbology()
 
 void MapMonitorContainer::pushBgfxLegend(const NetworkSymbologyRanges &ranges)
 {
-    if (this->editor_mode)
+    if (this->editor_mode || this->basemap_only)
         return;
     if (this->bgfx_surface == nullptr || this->hydraulic_data == nullptr)
         return;
@@ -1430,7 +1430,7 @@ void MapMonitorContainer::pushBgfxLegend(const NetworkSymbologyRanges &ranges)
 
 void MapMonitorContainer::refreshBgfxLegend()
 {
-    if (this->editor_mode)
+    if (this->editor_mode || this->basemap_only)
         return;
     if (this->bgfx_surface == nullptr || this->hydraulic_data == nullptr)
         return;
@@ -1440,7 +1440,7 @@ void MapMonitorContainer::refreshBgfxLegend()
 
 void MapMonitorContainer::applyPaletteSymbology()
 {
-    if (this->editor_mode)
+    if (this->editor_mode || this->basemap_only)
         return;
     // Palettes are GPU state (MapBgfxEntityStyle's palette texture): a
     // palette or flip change re-resolves nothing, only the legend's ramps
@@ -1463,13 +1463,13 @@ void MapMonitorContainer::applyVisualControlSymbology()
     if (this->visual_control_symbology_apply_pending)
         return;
 
-    if (this->editor_mode)
+    if (this->editor_mode || this->basemap_only)
         return;
     this->visual_control_symbology_apply_pending = true;
     QTimer::singleShot(16, this, [this]
     {
         this->visual_control_symbology_apply_pending = false;
-        if (this->editor_mode)
+        if (this->editor_mode || this->basemap_only)
             return;
         this->symbology_settings = this->symbology_settings.bounded();
 
@@ -1521,13 +1521,13 @@ void MapMonitorContainer::rememberMonitorSelection(InfrastructureEntity entity_t
 {
     this->monitor_selected_type = entity_type;
     this->monitor_selected_uuid = uuid;
-    if (!this->editor_mode && this->bgfx_surface != nullptr)
+    if (!this->editor_mode && !this->basemap_only && this->bgfx_surface != nullptr)
         this->bgfx_surface->setSelectedEntity(entity_type, uuid);
 }
 
 void MapMonitorContainer::applyMonitorDiagnostics()
 {
-    if (this->editor_mode || this->bgfx_surface == nullptr || this->hydraulic_data == nullptr)
+    if (this->editor_mode || this->basemap_only || this->bgfx_surface == nullptr || this->hydraulic_data == nullptr)
         return;
     this->bgfx_surface->setSimulationErrorEntities(
         this->hydraulic_data->simulationErrorEntities(),
@@ -1537,6 +1537,37 @@ void MapMonitorContainer::applyMonitorDiagnostics()
 void MapMonitorContainer::setEditorInputCanvas(QWidget *canvas)
 {
     this->editor_input_canvas = canvas;
+}
+
+void MapMonitorContainer::setBasemapOnly(bool enabled)
+{
+    if (this->basemap_only == enabled)
+        return;
+    this->basemap_only = enabled;
+    if (this->bgfx_surface == nullptr)
+        return;
+
+    if (enabled)
+    {
+        // No renderer shutdown and no change to retained geometry. The
+        // surface hides distribution meshes, labels and 3D heatmaps itself.
+        setNetworkHovered(false);
+        this->bgfx_surface->closeHudPopup();
+        this->bgfx_surface->setDistributionNetworkVisible(false);
+        // Drainage should show the unfaded basemap even if Monitor or Editor
+        // has configured a background-opacity preview.
+        this->bgfx_surface->setBackgroundOpacity(0);
+        this->bgfx_surface->setHudLegend(MapBgfxHud::Legend());
+        this->bgfx_surface->setSimulationErrorEntities({}, {});
+        this->bgfx_surface->setSelectedEntity(InfrastructureEntity::Unknown, QUuid());
+        this->bgfx_surface->setLabelSettings(MapLabelSettings());
+    }
+    else
+    {
+        this->bgfx_surface->setDistributionNetworkVisible(true);
+        if (!this->editor_mode)
+            activateMonitorSurface();
+    }
 }
 
 void MapMonitorContainer::setEditorMode(bool enabled)

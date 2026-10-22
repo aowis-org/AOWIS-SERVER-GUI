@@ -1,6 +1,5 @@
 #include "tabs/tab_map_workspace.h"
 
-#include "common/_sizes.h"
 #include "map/render/map_render_diagnostics.h"
 #include "tabs/tab_map_editor_container.h"
 #include "tabs/map_mode_tool_panel.h"
@@ -18,16 +17,14 @@
 
 MapWorkspaceWidget::MapWorkspaceWidget(MapEditorContainer *editor,
                                        MapMonitorContainer *monitor, QWidget *parent)
-    : QWidget(parent),
-      pages(new QStackedWidget(this))
+    : QWidget(parent)
 {
     Q_ASSERT(editor != nullptr);
     Q_ASSERT(monitor != nullptr);
     this->monitor_controller = monitor;
     this->editor_controller = editor;
     this->monitor_map = monitor->getMap();
-    this->editor_map = editor->getMap();
-    Q_ASSERT(this->monitor_map == this->editor_map);
+    Q_ASSERT(this->monitor_map == editor->getMap());
     this->monitor_tools = monitor->toolPanel();
     this->editor_tools = editor->toolPanel();
     Q_ASSERT(this->monitor_tools != nullptr);
@@ -38,20 +35,21 @@ MapWorkspaceWidget::MapWorkspaceWidget(MapEditorContainer *editor,
     QVBoxLayout *layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
-    layout->addWidget(this->pages);
 
-    // The persistent viewport stays in this page across editor/monitor switches.
-    // The monitor controller remains a hidden logic-only widget.
+    // The single native map viewport stays visible across all four map modes.
+    // The legacy monitor controller remains a hidden logic-only widget.
     this->distribution_page = new MapWorkspaceViewportPage(
-        monitor, this->monitor_tools, monitor->mapViewport(), this->pages);
-    this->pages->addWidget(this->distribution_page);
-    // Keep the map viewport on the SAME page for both distribution modes.
+        monitor, this->monitor_tools, monitor->mapViewport(), this);
+    layout->addWidget(this->distribution_page);
+    // Keep the map viewport on the SAME page for all four modes.
     // Only the left panel switches. Never remove/reparent the native surface.
     this->distribution_tools = new QStackedWidget(this->distribution_page);
     this->distribution_page->layout()->removeWidget(this->monitor_tools);
     editor->QWidget::layout()->removeWidget(this->editor_tools);
     this->distribution_tools->addWidget(this->monitor_tools);
     this->distribution_tools->addWidget(this->editor_tools);
+    this->distribution_tools->addWidget(createEmptyModeTools(DrainageMonitor));
+    this->distribution_tools->addWidget(createEmptyModeTools(DrainageEditor));
     static_cast<QHBoxLayout *>(this->distribution_page->layout())->insertWidget(0, this->distribution_tools);
     this->distribution_page->setSidebarWidget(this->distribution_tools);
     this->distribution_tools->setCurrentIndex(0);
@@ -59,15 +57,12 @@ MapWorkspaceWidget::MapWorkspaceWidget(MapEditorContainer *editor,
     editor->setParent(this);
     editor->hide();
     monitor->setEditorInputCanvas(editor->inputCanvas());
-    this->pages->addWidget(createEmptyModePage(DrainageMonitor));
-    this->pages->addWidget(createEmptyModePage(DrainageEditor));
 
     // One authoritative MapModel follows its workspace-owned viewport.
     this->monitor_map->model()->setParent(this);
 
     this->editor_tools->setModeSelector(createModeSelector(DistributionEditor));
     this->monitor_tools->setModeSelector(createModeSelector(DistributionMonitor));
-    this->pages->setCurrentIndex(DistributionMonitor);
 }
 
 MapWorkspaceWidget::~MapWorkspaceWidget()
@@ -111,17 +106,7 @@ bool MapWorkspaceWidget::isDistributionMonitorActive() const
 
 MapWidget *MapWorkspaceWidget::activeMap() const
 {
-    switch (currentMode())
-    {
-    case DistributionMonitor:
-        return this->monitor_map;
-    case DistributionEditor:
-        return this->monitor_map;
-    case DrainageMonitor:
-    case DrainageEditor:
-        return nullptr;
-    }
-    return nullptr;
+    return this->monitor_map;
 }
 
 MapModel *MapWorkspaceWidget::activeModel() const
@@ -153,29 +138,33 @@ void MapWorkspaceWidget::setCurrentMode(int index)
         return;
 
     {
-        // Scope reports synchronous QWidget/tab switching CPU time, not GPU
-        // frame latency. A renderer restart is tracked separately.
         const MapRenderDiagnostics::Scope timing(
             MapRenderDiagnostics::Counter::WorkspaceModeSwitch);
         const bool was_editor = this->selected_mode == DistributionEditor;
         const bool now_editor = index == DistributionEditor;
+        const bool drainage = !MapWorkspace::rendersDistributionNetwork(index);
+
+        // Synchronously retire editor callbacks before another mode can use
+        // the shared native window. The monitor controller owns navigation
+        // in both drainage placeholders, but not distribution picking there.
         if (was_editor && !now_editor)
             this->editor_controller->activateSharedSurface(false);
-        // The distribution viewport stays at index 0 in either mode.
-        this->pages->setCurrentIndex(index == DistributionEditor ? 0 : index - (index > DistributionEditor ? 1 : 0));
-        if (now_editor != was_editor)
+        if (now_editor)
         {
-            if (now_editor)
-            {
-                this->monitor_controller->setEditorMode(true);
+            this->monitor_controller->setBasemapOnly(false);
+            this->monitor_controller->setEditorMode(true);
+            if (!was_editor)
                 this->editor_controller->activateSharedSurface(true);
-            }
-            else
-            {
-                this->monitor_controller->setEditorMode(false);
-            }
         }
-        this->distribution_tools->setCurrentIndex(now_editor ? 1 : 0);
+        else
+        {
+            this->monitor_controller->setEditorMode(false);
+            this->monitor_controller->setBasemapOnly(drainage);
+        }
+
+        // Changing modes moves only the tools, NEVER the viewport or its
+        // native surface. Drainage is an imagery/terrain-only render profile.
+        this->distribution_tools->setCurrentIndex(index);
         this->selected_mode = static_cast<Mode>(index);
         for (QTabBar *tab_bar : this->mode_tabs)
         {
@@ -229,23 +218,15 @@ QWidget *MapWorkspaceWidget::createModeSelector(Mode mode)
     return selector;
 }
 
-QWidget *MapWorkspaceWidget::createEmptyModePage(Mode mode)
+QWidget *MapWorkspaceWidget::createEmptyModeTools(Mode mode)
 {
-    QWidget *page = new QWidget(this->pages);
-    QHBoxLayout *layout = new QHBoxLayout(page);
+    // Drainage controls intentionally remain empty, but all four selectors
+    // occupy the same sidebar stack so the persistent map never disappears.
+    QWidget *sidebar = new QWidget(this->distribution_tools);
+    QVBoxLayout *layout = new QVBoxLayout(sidebar);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
-
-    QWidget *sidebar = new QWidget(page);
-    sidebar->setFixedWidth(Sizes::SidebarMapEditLeftWidth);
-    QVBoxLayout *sidebar_layout = new QVBoxLayout(sidebar);
-    sidebar_layout->setContentsMargins(0, 0, 0, 0);
-    sidebar_layout->setSpacing(0);
-    sidebar_layout->addWidget(createModeSelector(mode));
-    sidebar_layout->addStretch(1);
-    layout->addWidget(sidebar);
-
-    // Drainage tools and their map views will be integrated separately.
-    layout->addWidget(new QWidget(page), 1);
-    return page;
+    layout->addWidget(createModeSelector(mode));
+    layout->addStretch(1);
+    return sidebar;
 }

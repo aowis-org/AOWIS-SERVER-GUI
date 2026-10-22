@@ -848,3 +848,15 @@ regenerates the committed shaders (see "bgfx build").
 
 WASM: `sudo ./compile_wasm.sh`. It embeds the committed essl shaders; the
 Docker image no longer builds a shader compiler.
+
+## Shared Maps workspace: distribution and drainage
+
+The Maps workspace retains one `MapBgfxSurface` and one `MapModel` while
+switching between Distribution Monitor, Distribution Editor, Drainage Monitor
+and Drainage Editor. The two drainage sidebars are deliberately empty, but
+the map, 2D imagery, 3D terrain, camera, navigation and common HUD stay live.
+`setDistributionNetworkVisible(false)` hides distribution network draws,
+labels, editor overlays, 3D network entities, heatmap and picking; it does not
+clear the retained scene or discard GPU network geometry. On returning to a
+distribution mode, the appropriate monitor/editor symbology and input handlers
+are restored. A mode change must not call `bgfx::shutdown()` or `bgfx::init()`.

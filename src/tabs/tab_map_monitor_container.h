@@ -125,6 +125,7 @@ public:
     void setEditorInputCanvas(QWidget *canvas);
     void activateMonitorSurface();
     void setEditorMode(bool enabled);
+    void setBasemapOnly(bool enabled);
     MapModeToolPanel *toolPanel() const;
     QWidget *mapViewport() const;
     
@@ -174,6 +175,7 @@ private:
     MapBgfxSurface *bgfx_surface = nullptr;
     QWidget *editor_input_canvas = nullptr;
     bool editor_mode = false;
+    bool basemap_only = false;
     // The logical selection belongs to monitoring even when its GPU
     // highlight is temporarily hidden in the editor profile.
     InfrastructureEntity monitor_selected_type = InfrastructureEntity::Unknown;

@@ -20,7 +20,7 @@ networks or run distribution editing.
 
 ## Ownership and boundaries
 
-**Current implementation (Stage 6):** `MapWorkspaceWidget` owns the single
+**Current implementation:** `MapWorkspaceWidget` owns the single
 Distribution `MapModel` and hosts the persistent `MapWidget` and
 `MapBgfxSurface` in `MapWorkspaceViewportPage`. The renderer is constructed
 by the monitor controller once; the editor receives non-owning pointers to
@@ -38,9 +38,13 @@ lifecycle; `MapEditorContainer` supplies editor behavior and keeps its editor
 callbacks until shutdown. The workspace explicitly destroys the editor
 controller before the monitor's renderer to avoid dangling captured pointers.
 
-The two drainage modes remain blank pages for now (Stage 7). Switching from
-a distribution mode to a drainage placeholder can therefore hide and stop
-the viewport; this is not a distribution editor/monitor mode restart.
+Both drainage modes use the same live map viewport and camera, with empty
+sidebar tool placeholders. Their basemap-only presentation hides distribution
+network geometry, symbology, selected/highlighted entities, labels, globe
+network meshes, editor overlays and monitoring legends. The renderer's
+`setDistributionNetworkVisible()` switch changes presentation without clearing
+or reallocating retained network geometry. The terrain, imagery and general
+map HUD remain visible, and the map can still pan, zoom and switch 2D/3D.
 Node decluttering uses two cached camera-independent 2D scene presentations:
 monitor may separate coincident nodes while editor displays exact coordinates.
 The variants share one retained geometry revision and each is prepared once
@@ -74,15 +78,17 @@ Globe; both views already use the same center coordinates, so no second
 synchronization controller is needed. Switching Editor/Monitor changes neither
 camera nor native surface.
 
-Map fullscreen uses one MainWindow state. On a distribution mode change, the
+Map fullscreen uses one MainWindow state. On a map mode change, the
 previous controller relinquishes fullscreen/HUD focus before the newly active
 controller receives it. `MapWorkspaceViewportPage` hides the entire outer
 sidebar stack during fullscreen, rather than its active `MapModeToolPanel`:
 hiding a stacked child alone leaves the parent `QStackedWidget` reserving its
 full width and produces an empty strip instead of an expanded map. The native
 map stays parented and visible; exiting fullscreen restores the sidebar.
-Switching to an empty drainage page exits map-only fullscreen rather than
-leaving a blank fullscreen map.
+Switching to drainage retains map-only fullscreen because the same viewport
+remains visible; drainage navigation uses the monitor controller without
+distribution selection or editing. All four modes share footer zoom and
+edge-panning routes.
 
 `MapModeToolPanel` owns scrolling and the mode-selector UI but never owns a
 map model, native window or renderer. Mode tools and the monitor viewport are
@@ -91,8 +97,8 @@ of the old monitor until its responsibilities can be extracted into a
 non-widget controller when completing the single-viewport migration.
 
 `MapWorkspaceWidget::activeMap()` and `activeModel()` provide *non-owning*
-navigation access, returning `nullptr` for the currently empty drainage modes.
-MainWindow uses these accessors to route footer zoom edits. They point to the same shared map for both distribution modes.
+navigation access to the single shared map in **all four** modes. MainWindow
+uses these accessors to route footer zoom edits, including in drainage.
 
 **Shared viewport contract:** the Maps workspace exclusively owns one
 `MapModel` (camera and provider), one `MapWidget` (continuous navigation), one
@@ -123,12 +129,10 @@ renderers:
 - **Lifecycle:** destruction/recreation of the native surface can still
   require an explicit bgfx device restart. Merely switching modes must not.
 
-The tool-panel extraction (Stage 2), monitor viewport ownership transfer
-(Stage 3), single-surface distribution renderer migration (Stage 4), and
-presentation isolation plus 2D variant caching (Stage 5), and shared
-camera/navigation/fullscreen cleanup (Stage 6) are complete in the
-source architecture. Further work integrates drainage modes (Stage 7).
-Fullscreen and WASM input must remain working at every intermediate stage.
+The single persistent map viewport serves four modes. Only the tool panel,
+input routing and rendering policy switch. Native-window changes, rather than
+mode changes, are the only reason to use bgfx lifecycle restart machinery.
+Fullscreen and WASM input retain the same viewport and navigation model.
 
 ## Diagnostics and regression baseline
 
@@ -141,8 +145,7 @@ AOWIS_MAP_RENDER_DIAGNOSTICS=1 ./build-linux/aowis-server-gui
 `MapRenderDiagnostics` emits compact JSON snapshots at most every five seconds
 while the map renders, **plus an immediate snapshot after each mode change**.
 The immediate snapshot is taken after the synchronous QWidget changes; an
-asynchronous bgfx restart may appear in the *next* snapshot. These are
-cumulative process-wide counters, including both legacy bgfx surfaces.
+asynchronous bgfx restart may appear in the *next* snapshot. These are cumulative process-wide counters for the shared bgfx surface.
 
 | Counter | Meaning |
 | --- | --- |
@@ -161,8 +164,8 @@ mode switches should increment `workspace_mode_switch` **without incrementing**
 node-declutter presentation. Subsequent editor/monitor switches on the same
 network must not increase it. Real network geometry revisions prepare the
 current presentation and invalidate the other one.
-Initial startup, true network changes, switching to a blank drainage page,
-and native surface loss can legitimately change renderer lifecycle counters.
+Initial startup and native surface loss can change renderer lifecycle counters;
+**none of the four map modes** should change them.
 
 Automated checks (including the new Qt Widgets panel ownership test):
 
@@ -187,7 +190,7 @@ invalidation and retained-network-scene tests cover zoom/LOD and geometry
 revision independence. A real GPU/window lifecycle check additionally
 requires interactive validation on the target system.
 
-Manual Stage 5 acceptance checks:
+Manual shared-viewport acceptance checks:
 
 1. Open Distribution Monitor; pan and zoom continuously, change basemap and
    2D/3D view; observe one consistent camera and no geometry rebuild during
@@ -199,19 +202,21 @@ Manual Stage 5 acceptance checks:
    actual network geometry changes.
 3. Repeat rapid monitor/editor switching, including with a large network.
    Check the HUD, editor tools, native-window focus, configurable F1–F4
-   provider shortcuts and any camera synchronization setting currently used.
+   provider shortcuts and the shared-camera navigation behavior.
    Change the selected entity and simulation timeline while the editor is
    active: its overlays and blank monitor legend must persist, while the
    latest monitor selection/diagnostics reappear on switching back.
-4. Open both drainage placeholders: neither may enter a distribution editing
-   mode. Returning to Distribution Monitor must restore its controls.
+4. Open both drainage placeholders in 2D and 3D: the satellite/terrain
+   basemap and camera must remain usable, while distribution nodes, pipes,
+   demand points, simulation heatmaps and editor overlays disappear.
+   Return to Distribution Monitor: network styling and selection are restored.
+   Neither `bgfx_device_started` nor `bgfx_device_stopped` should increase.
+   Fullscreen remains active during drainage mode switches.
 5. Repeat on Linux desktop, Windows and WASM during each relevant migration.
    A unit test without a GPU cannot prove native-window behavior.
 
-The distribution modes now share **one persistent GPU renderer and camera**,
-with separate editor/monitor presentation settings and cached 2D display
-geometries. A renderer shutdown while opening blank drainage placeholders is
-still expected until the drainage modes use the same viewport (Stage 7).
-The full four-mode shared-map end state is still pending Stage 7's drainage
-integration. No CPU-era zoom buckets or geometry rebuilds tied to fractional
-zoom are permitted.
+All four map modes share **one persistent GPU renderer and camera**, with
+monitor/editor presentation settings, two cached distribution 2D scene
+variants and basemap-only drainage placeholders. No mode change may shut down
+bgfx, destroy the native window, or clear the network snapshot. No CPU-era
+zoom buckets or geometry rebuilds tied to fractional zoom are permitted.

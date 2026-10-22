@@ -846,7 +846,8 @@ void MapBgfxSurface::setSimulationErrorEntities(
 MapRenderHit MapBgfxSurface::hitTest(const QPointF &screen_position) const
 {
     MapRenderHit no_hit;
-    if (this->map_model == nullptr || !this->prepared_2d_scenes.active().isPrepared())
+    if (!this->distribution_network_visible || this->map_model == nullptr
+        || !this->prepared_2d_scenes.active().isPrepared())
         return no_hit;
     const QSizeF logical = logicalSize();
     if (!std::isfinite(screen_position.x()) || !std::isfinite(screen_position.y())
@@ -1339,7 +1340,8 @@ void MapBgfxSurface::renderGlobe(const QSizeF &logical)
     inputs.background = palette().color(QPalette::Window);
     inputs.background_opacity = double(this->background_opacity) / 100.0;
     inputs.upload_budget = kGlobeImageryUploadsPerFrame;
-    inputs.heatmap_opacity = this->symbology.visual_heatmap != VisualHeatmap::None
+    inputs.heatmap_opacity = this->distribution_network_visible
+        && this->symbology.visual_heatmap != VisualHeatmap::None
         ? double(this->symbology.heatmap_opacity) / 100.0 : 0.0;
     const MapBgfxGlobeSurface::FrameResult result =
         this->globe_surface->render(kMapBgfxView, this->globe_camera, &this->imagery_gpu, inputs);
@@ -1349,7 +1351,7 @@ void MapBgfxSurface::renderGlobe(const QSizeF &logical)
     this->imagery_quad_count = result.tiles_drawn;
     // The network on top of the terrain, in the same view (its depth
     // tests run against the terrain's depth).
-    if (this->globe_network_ready)
+    if (this->distribution_network_visible && this->globe_network_ready)
     {
         // The terrain as drawn this frame (demand points are draped on it).
         this->globe_network.setTerrainSurfaceRevision(this->globe_surface->surfaceRevision());
@@ -2067,7 +2069,8 @@ void MapBgfxSurface::renderFrameAt(double elapsed_seconds)
     const bool animating = !this->ready_reported || this->debug_overlay_enabled
         || this->hud.animating() || this->imagery_uploads_pending
         || (globe_shown && this->globe_pending)
-        || (this->label_settings.anyEnabled() && this->labels_dirty);
+        || (this->distribution_network_visible && this->label_settings.anyEnabled()
+            && this->labels_dirty);
     if (!this->redraw_requested && !camera_moved && !size_changed && !animating)
         return;
     // Cleared before rendering: whatever asks for a frame from now on
@@ -2095,62 +2098,65 @@ void MapBgfxSurface::renderFrameAt(double elapsed_seconds)
     if (this->camera_state.mode == MapViewMode::TwoD) {
         // Imagery first (opaque), network on top; the view is Sequential.
         renderImagery(logical);
-        // Icon placement comes from the shared QRhi atlas layout. Atlas v
-        // runs downwards (uv_rect.top() < bottom()); see appendIcon().
-        const MapBgfx2dMesh::IconLookup icon_lookup = [](InfrastructureEntity entity_type)
+        if (this->distribution_network_visible)
         {
-            const MapIconAtlasEntry entry = mapIconAtlasEntry(entity_type);
-            MapBgfx2dIconSprite sprite;
-            sprite.valid = entry.valid;
-            sprite.u0 = float(entry.uv_rect.left());
-            sprite.v0 = float(entry.uv_rect.top());
-            sprite.u1 = float(entry.uv_rect.right());
-            sprite.v1 = float(entry.uv_rect.bottom());
-            sprite.half_width_ratio = float(entry.width_ratio * 0.5);
-            sprite.half_height_ratio = float(entry.height_ratio * 0.5);
-            return sprite;
-        };
-        if (!this->gpu_2d_scene.synchronize(this->prepared_2d_scenes.active(), icon_lookup)) {
-            fail(QStringLiteral("bgfx network vertex-buffer upload failed"));
-            return;
+            // Icon placement comes from the shared QRhi atlas layout. Atlas v
+            // runs downwards (uv_rect.top() < bottom()); see appendIcon().
+            const MapBgfx2dMesh::IconLookup icon_lookup = [](InfrastructureEntity entity_type)
+            {
+                const MapIconAtlasEntry entry = mapIconAtlasEntry(entity_type);
+                MapBgfx2dIconSprite sprite;
+                sprite.valid = entry.valid;
+                sprite.u0 = float(entry.uv_rect.left());
+                sprite.v0 = float(entry.uv_rect.top());
+                sprite.u1 = float(entry.uv_rect.right());
+                sprite.v1 = float(entry.uv_rect.bottom());
+                sprite.half_width_ratio = float(entry.width_ratio * 0.5);
+                sprite.half_height_ratio = float(entry.height_ratio * 0.5);
+                return sprite;
+            };
+            if (!this->gpu_2d_scene.synchronize(this->prepared_2d_scenes.active(), icon_lookup)) {
+                fail(QStringLiteral("bgfx network vertex-buffer upload failed"));
+                return;
+            }
+            const MapBgfx2d::Camera view = MapBgfx2d::cameraFor(
+                this->camera_state.center_lon_deg, this->camera_state.center_lat_deg,
+                this->camera_state.continuous_2d_zoom,
+                logical.width(), logical.height());
+            // Colours: entity data textures, uploaded only when values,
+            // visibility, selection or diagnostics changed (never per frame, and
+            // never a vertex buffer).
+            this->entity_style.setIconDefaultFill(this->symbology.icon_default_fill_color);
+            synchronizeEntityStyle();
+            synchronizeHighlights();
+            // Sizes are uniforms from the continuous camera: metre-based widths
+            // scale smoothly with the zoom.
+            const MapBgfx2dSymbology::Sizes sizes = MapBgfx2dSymbology::sizes(
+                this->symbology, this->camera_state.center_lat_deg,
+                this->camera_state.continuous_2d_zoom);
+            MapBgfx2dGpu::Style style;
+            style.link_width_px = sizes.link_width_px;
+            style.attachment_width_px = sizes.attachment_width_px;
+            style.node_half_px = sizes.node_half_px;
+            style.icon_size_px = sizes.icon_size_px;
+            style.flow_length_px = this->symbology.show_flow_direction ? sizes.flow_length_px : 0.0;
+            style.flow_half_stroke_px = sizes.flow_half_stroke_px;
+            style.heatmap_radius_px = sizes.heatmap_radius_px;
+            style.heatmap_opacity = sizes.heatmap_opacity;
+            style.heatmap_solid_fraction = sizes.heatmap_solid_fraction;
+            // Editor full-network move: the network is drawn shifted (camera
+            // offset), the imagery underneath is not.
+            MapBgfx2d::Camera network_view = view;
+            if (!this->network_screen_translation.isNull() && view.world_pixels > 0.0)
+            {
+                network_view.center.x -= this->network_screen_translation.x() / view.world_pixels;
+                network_view.center.y -= this->network_screen_translation.y() / view.world_pixels;
+            }
+            this->network_frame_stats = this->gpu_2d_scene.draw(network_view, style, this->entity_style);
+            renderOverlay(logical, view);
+            // Labels above the network and the editor's icons, below the HUD.
+            renderLabels(logical, network_view, sizes);
         }
-        const MapBgfx2d::Camera view = MapBgfx2d::cameraFor(
-            this->camera_state.center_lon_deg, this->camera_state.center_lat_deg,
-            this->camera_state.continuous_2d_zoom,
-            logical.width(), logical.height());
-        // Colours: entity data textures, uploaded only when values,
-        // visibility, selection or diagnostics changed (never per frame, and
-        // never a vertex buffer).
-        this->entity_style.setIconDefaultFill(this->symbology.icon_default_fill_color);
-        synchronizeEntityStyle();
-        synchronizeHighlights();
-        // Sizes are uniforms from the continuous camera: metre-based widths
-        // scale smoothly with the zoom.
-        const MapBgfx2dSymbology::Sizes sizes = MapBgfx2dSymbology::sizes(
-            this->symbology, this->camera_state.center_lat_deg,
-            this->camera_state.continuous_2d_zoom);
-        MapBgfx2dGpu::Style style;
-        style.link_width_px = sizes.link_width_px;
-        style.attachment_width_px = sizes.attachment_width_px;
-        style.node_half_px = sizes.node_half_px;
-        style.icon_size_px = sizes.icon_size_px;
-        style.flow_length_px = this->symbology.show_flow_direction ? sizes.flow_length_px : 0.0;
-        style.flow_half_stroke_px = sizes.flow_half_stroke_px;
-        style.heatmap_radius_px = sizes.heatmap_radius_px;
-        style.heatmap_opacity = sizes.heatmap_opacity;
-        style.heatmap_solid_fraction = sizes.heatmap_solid_fraction;
-        // Editor full-network move: the network is drawn shifted (camera
-        // offset), the imagery underneath is not.
-        MapBgfx2d::Camera network_view = view;
-        if (!this->network_screen_translation.isNull() && view.world_pixels > 0.0)
-        {
-            network_view.center.x -= this->network_screen_translation.x() / view.world_pixels;
-            network_view.center.y -= this->network_screen_translation.y() / view.world_pixels;
-        }
-        this->network_frame_stats = this->gpu_2d_scene.draw(network_view, style, this->entity_style);
-        renderOverlay(logical, view);
-        // Labels above the network and the editor's icons, below the HUD.
-        renderLabels(logical, network_view, sizes);
     }
     else
     {
@@ -2159,7 +2165,8 @@ void MapBgfxSurface::renderFrameAt(double elapsed_seconds)
         if (globe_shown)
         {
             renderGlobe(logical);
-            renderGlobeOverlay(logical);
+            if (this->distribution_network_visible)
+                renderGlobeOverlay(logical);
         }
     }
     // The HUD is submitted last into the Sequential map view: always on top.
@@ -2399,6 +2406,16 @@ void MapBgfxSurface::renderImagery(const QSizeF &logical)
                            palette().color(QPalette::Window),
                            double(this->background_opacity) / 100.0);
     this->imagery_gpu.endFrame();
+}
+
+void MapBgfxSurface::setDistributionNetworkVisible(bool visible)
+{
+    if (this->distribution_network_visible == visible)
+        return;
+    this->distribution_network_visible = visible;
+    // Do not clear or recreate retained geometry, prepared scene variants,
+    // or GPU buffers. Only schedule another presentation frame.
+    requestRedraw();
 }
 
 void MapBgfxSurface::setSymbology(const MapNetworkRenderSymbology &symbology)
