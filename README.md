@@ -83,6 +83,8 @@ The WebAssembly build is a `Release` build. Two switches are taken from the envi
 - `AOWIS_WASM_SIMD` (default `ON`): compiles the GUI with WebAssembly SIMD (`-msimd128`), so the map's vertex generation runs vectorized. Every browser with WebGL 2 supports it (Chrome/Edge 91+, Firefox 89+, Safari 16.4+); `AOWIS_WASM_SIMD=OFF ./compile_wasm.sh` builds a module for browsers without it.
 - `AOWIS_WASM_FUNCTION_NAMES` (default `OFF`): keeps function names in the module for readable browser stack traces (a few MB larger download).
 
+The WebAssembly executable starts with 256 MiB of linear memory (the `QT_WASM_INITIAL_MEMORY` target property in `CMakeLists.txt`). This accommodates Qt, bgfx and the embedded resources at link time; Qt's default 50 MB is too small for this application. Memory growth remains enabled by the Qt/Emscripten toolchain so large projects can use more memory at runtime. This setting affects only the WebAssembly target and does not require rebuilding the Docker toolchain image.
+
 To run the result, you need to have a web server set up. Threaded WebAssembly additionally requires a secure context and the `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy: require-corp` response headers. The generated webroot includes an `.htaccess` with these headers for Apache deployments that allow overrides.
 
 ### Windows / macOS

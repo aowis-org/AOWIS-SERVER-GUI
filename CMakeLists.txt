@@ -533,6 +533,13 @@ if(EMSCRIPTEN)
         "-sMIN_WEBGL_VERSION=2"
         "-sMAX_WEBGL_VERSION=2"
     )
+
+    # Qt's default 50 MB initial wasm memory is too small for the linked
+    # Qt Widgets + bgfx application and its embedded resources. Use Qt's
+    # own target property (rather than a competing -sINITIAL_MEMORY flag)
+    # to allocate 256 MiB; the toolchain's heap growth remains enabled.
+    set_target_properties(aowis-server-gui PROPERTIES
+        QT_WASM_INITIAL_MEMORY "268435456")
 endif()
 
 if(NOT EMSCRIPTEN)
