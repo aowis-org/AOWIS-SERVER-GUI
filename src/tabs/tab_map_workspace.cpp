@@ -231,7 +231,7 @@ QWidget *MapWorkspaceWidget::createModeSelector(Mode mode)
 
 QWidget *MapWorkspaceWidget::createEmptyModeTools(Mode mode)
 {
-    // Drainage controls intentionally remain empty, but all four selectors
+    // Drainage controls intentionally remain empty, but all five selectors
     // occupy the same sidebar stack so the persistent map never disappears.
     QWidget *sidebar = new QWidget(this->mode_tool_stack);
     QVBoxLayout *layout = new QVBoxLayout(sidebar);

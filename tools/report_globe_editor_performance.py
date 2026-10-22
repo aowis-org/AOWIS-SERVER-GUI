@@ -19,6 +19,10 @@ COUNT_KEYS = (
     "globe_editor_icon_index_build", "globe_editor_icon_index_query",
     "globe_editor_icon_projection", "globe_editor_icon_draw",
 )
+TERRAIN_COUNT_KEYS = (
+    "globe_terrain_height_cache_hit", "globe_terrain_height_sample",
+    "globe_terrain_height_unavailable_reuse", "globe_terrain_height_eviction",
+)
 DURATION_KEYS = (
     "frames", "globe_editor_icon_frame", "globe_editor_icon_index_query",
     "globe_editor_icon_projection", "globe_editor_icon_draw",
@@ -62,7 +66,12 @@ def read_snapshots(text: str) -> list[dict]:
                 raise PerformanceError(f"line {number}: fractional count {key}")
         duration_values = {key: _number(durations.get(key, 0), key)
                            for key in DURATION_KEYS}
+        terrain_counts = {key: _number(counts[key], key)
+                          for key in TERRAIN_COUNT_KEYS if key in counts}
+        if any(int(value) != value for value in terrain_counts.values()):
+            raise PerformanceError(f"line {number}: fractional terrain counter")
         snapshots.append({"line": number, "counts": count_values,
+                          "terrain_counts": terrain_counts,
                           "durations": duration_values})
     if len(snapshots) < 2:
         raise PerformanceError("need at least two map diagnostics snapshots")
@@ -98,7 +107,15 @@ def analyze(text: str, min_icon_frames: int = 1, min_anchors: int = 0) -> dict:
             raise PerformanceError(f"line {current['line']}: candidates exceed anchors")
         if count_delta["globe_editor_icon_visible"] > candidate_count:
             raise PerformanceError(f"line {current['line']}: visible icons exceed candidates")
+        terrain_delta = {}
+        for key in TERRAIN_COUNT_KEYS:
+            if key in previous["terrain_counts"] and key in current["terrain_counts"]:
+                value = current["terrain_counts"][key] - previous["terrain_counts"][key]
+                if value < 0:
+                    raise PerformanceError(f"line {current['line']}: decreasing {key}")
+                terrain_delta[key] = value
         windows.append({
+            "terrain_delta": terrain_delta,
             "icon_frames": icon_frames,
             "presented_frames": int(count_delta["frames"]),
             "anchors": count_delta["globe_editor_icon_anchors"],
@@ -121,7 +138,7 @@ def analyze(text: str, min_icon_frames: int = 1, min_anchors: int = 0) -> dict:
     anchors = sum_value("anchors")
     candidates = sum_value("candidates")
     samples = sorted(window["average_icon_cpu_ms"] for window in windows)
-    return {
+    result = {
         "kind": "aowis_real_globe_editor_icon_cpu_report",
         "windows": len(windows),
         "editor_icon_frames": frames,
@@ -149,6 +166,15 @@ def analyze(text: str, min_icon_frames: int = 1, min_anchors: int = 0) -> dict:
             "Times include diagnostics instrumentation overhead when enabled",
         ],
     }
+    for key, label in (
+            ("globe_terrain_height_cache_hit", "mean_terrain_height_hits_per_icon_frame"),
+            ("globe_terrain_height_sample", "mean_terrain_height_samples_per_icon_frame"),
+            ("globe_terrain_height_unavailable_reuse", "mean_unavailable_retries_avoided_per_icon_frame"),
+            ("globe_terrain_height_eviction", "terrain_height_cache_evictions")):
+        if all(key in window["terrain_delta"] for window in windows):
+            count = sum(window["terrain_delta"][key] for window in windows)
+            result[label] = (round(count / frames, 4) if label.startswith("mean_") else count)
+    return result
 
 
 def main() -> int:

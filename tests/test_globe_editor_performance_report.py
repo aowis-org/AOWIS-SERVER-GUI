@@ -70,6 +70,31 @@ class PerformanceReportTest(unittest.TestCase):
         with self.assertRaisesRegex(PerformanceError, "only 10"):
             analyze(text, min_anchors=10000, min_icon_frames=11)
 
+    def test_stage12_terrain_stats_and_legacy_logs(self):
+        first = json.loads(row(0, 0, 0, 0, 0))
+        last = json.loads(row(20, 40000, 20000, 12000, 60))
+        fields = ("globe_terrain_height_cache_hit", "globe_terrain_height_sample",
+                  "globe_terrain_height_unavailable_reuse", "globe_terrain_height_eviction")
+        for field, value in zip(fields, (200, 200, 0, 0)):
+            first["counts"][field] = value
+        for field, value in zip(fields, (1200, 500, 700, 3)):
+            last["counts"][field] = value
+        result = analyze("\n".join((json.dumps(first), json.dumps(last))))
+        self.assertEqual(result["mean_terrain_height_hits_per_icon_frame"], 50)
+        self.assertEqual(result["mean_terrain_height_samples_per_icon_frame"], 15)
+        self.assertEqual(result["mean_unavailable_retries_avoided_per_icon_frame"], 35)
+        self.assertEqual(result["terrain_height_cache_evictions"], 3)
+        legacy = analyze("\n".join((row(0, 0, 0, 0, 0), row(20, 200, 100, 50, 60))))
+        self.assertNotIn("mean_unavailable_retries_avoided_per_icon_frame", legacy)
+
+    def test_stage12_decreasing_terrain_count_rejected(self):
+        first = json.loads(row(0, 0, 0, 0, 0))
+        last = json.loads(row(10, 100, 50, 40, 30))
+        first["counts"]["globe_terrain_height_sample"] = 30
+        last["counts"]["globe_terrain_height_sample"] = 29
+        with self.assertRaisesRegex(PerformanceError, "decreasing globe_terrain_height_sample"):
+            analyze("\n".join((json.dumps(first), json.dumps(last))))
+
     def test_empty_and_no_icon_frames(self):
         with self.assertRaisesRegex(PerformanceError, "at least two"):
             analyze("not diagnostics")

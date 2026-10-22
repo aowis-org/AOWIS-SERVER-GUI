@@ -2,7 +2,7 @@
 
 ## Modes
 
-The **Maps** main-navigation page exposes four modes, in tab/page order:
+The **Maps** main-navigation page exposes five modes, in tab/page order:
 
 | Mode | Domain | Interaction | Tools |
 | --- | --- | --- | --- |
@@ -10,6 +10,7 @@ The **Maps** main-navigation page exposes four modes, in tab/page order:
 | Distribution Editor | Distribution | Editor | Available |
 | Drainage Monitor | Drainage | Monitor | Empty placeholder |
 | Drainage Editor | Drainage | Editor | Empty placeholder |
+| Map Management | Management | Cache selection | Tile and terrain cache tools |
 
 `src/tabs/map_workspace_mode.h` is the Qt-independent source of mode labels,
 icons, domains, activities and tool availability. `MapWorkspaceWidget::Mode`
@@ -88,9 +89,9 @@ sidebar stack during fullscreen, rather than its active `MapModeToolPanel`:
 hiding a stacked child alone leaves the parent `QStackedWidget` reserving its
 full width and produces an empty strip instead of an expanded map. The native
 map stays parented and visible; exiting fullscreen restores the sidebar.
-Switching to drainage retains map-only fullscreen because the same viewport
+Switching to drainage or management retains map-only fullscreen because the same viewport
 remains visible; drainage navigation uses the monitor controller without
-distribution selection or editing. All four modes share footer zoom and
+distribution selection or editing. All five modes share footer zoom and
 edge-panning routes.
 
 `MapModeToolPanel` owns scrolling and the mode-selector UI but never owns a
@@ -132,7 +133,7 @@ renderers:
 - **Lifecycle:** destruction/recreation of the native surface can still
   require an explicit bgfx device restart. Merely switching modes must not.
 
-The single persistent map viewport serves four modes. Only the tool panel,
+The single persistent map viewport serves five modes. Only the tool panel,
 input routing and rendering policy switch. Native-window changes, rather than
 mode changes, are the only reason to use bgfx lifecycle restart machinery.
 Fullscreen and WASM input retain the same viewport and navigation model.
@@ -222,7 +223,7 @@ variants and basemap-only drainage placeholders. No mode change may shut down
 bgfx, destroy the native window, or clear the network snapshot. No CPU-era
 zoom buckets or geometry rebuilds tied to fractional zoom are permitted.
 
-### Stage 8 diagnostics acceptance
+### Renderer lifecycle diagnostics acceptance
 
 Capture both stdout and stderr (Qt writes messages to stderr):
 
@@ -264,3 +265,37 @@ use the existing editor input controller; management does not enable network
 editing operations. Distribution Editor shows its editing controls directly
 without a QToolBox. The 3D Editor icon scale ranges to 600% while 2D retains
 its former 250% limit.
+
+## 3D icon visibility, terrain sampling and performance acceptance
+
+The 3D Distribution Editor retains a geographic icon-anchor spatial index
+across pan, zoom, rotation and mode changes. For large regional networks it
+prunes offscreen anchors before the terrain-aware projection step; when most
+anchors are potentially visible, an unsorted/full-range candidate path avoids
+kd-tree traversal overhead. The projected icon list still depth-sorts every
+frame. Neither operation rebuilds model or GPU network geometry.
+
+The globe overlay caches finite drawn-terrain heights by geographic coordinate
+and by drawn-surface revision/vertical exaggeration. A missing terrain height
+is **never** returned as a known value. Instead, repeated failed sampling is
+throttled for at most eight overlay frames, then retried; a new drawn surface,
+vertical exaggeration or renderer lifecycle invalidates positive and negative
+entries immediately. The cache has a 262,144-entry FIFO bound so transient
+map/terrain tile-selection lattices cannot grow memory without limit. A cache
+miss uses the existing ellipsoid fallback until a height becomes available.
+
+For performance comparisons, collect separate diagnostics traces with the same
+network, camera path, viewport size, imagery/terrain availability and platform.
+Use `tools/report_globe_editor_performance.py` to inspect per-icon-frame time
+and, when present, `globe_terrain_height_cache_hit`,
+`globe_terrain_height_sample`, `globe_terrain_height_unavailable_reuse`, and
+`globe_terrain_height_eviction`. The last two counters distinguish deferred
+unavailable-terrain retries from actual sampler invocations, and bounded-cache
+evictions from terrain revisions. These are **CPU**, not GPU timings. A report
+from a different camera path is not a controlled speed comparison.
+
+The rarely occurring `std::bad_alloc` on application close has not been
+reproduced with a debugger backtrace. Workspace-before-repository teardown
+ordering is explicit, but the exception's root cause is **not confirmed fixed**.
+Keep shutdown testing (including after 2D/3D and mode transitions) in native
+Linux, Windows and WASM release acceptance, and capture a backtrace if it recurs.

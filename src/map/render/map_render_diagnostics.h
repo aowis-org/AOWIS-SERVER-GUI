@@ -46,7 +46,9 @@ enum class Counter : size_t
     GlobeEditorIconProjection,  // CPU time including terrain-aware projection
     GlobeEditorIconDraw,        // CPU time sorting and submitting HUD sprites
     GlobeTerrainHeightCacheHit, // drawn terrain reused without another ray query
-    GlobeTerrainHeightSample,   // terrain lookup (known and missing results)
+    GlobeTerrainHeightSample,   // actual terrain sampler invocation
+    GlobeTerrainHeightUnavailableReuse, // missing terrain retry deferred
+    GlobeTerrainHeightEviction, // bounded height cache evicted oldest entry
     Count
 };
 
@@ -59,7 +61,8 @@ inline constexpr std::array<const char *, static_cast<std::size_t>(Counter::Coun
     "globe_editor_icon_visible", "globe_editor_icon_frame",
     "globe_editor_icon_index_query", "globe_editor_icon_projection",
     "globe_editor_icon_draw", "globe_terrain_height_cache_hit",
-    "globe_terrain_height_sample"
+    "globe_terrain_height_sample", "globe_terrain_height_unavailable_reuse",
+    "globe_terrain_height_eviction"
 }};
 
 using Clock = std::chrono::steady_clock;

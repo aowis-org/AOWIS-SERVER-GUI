@@ -1527,12 +1527,20 @@ void MapBgfxSurface::renderGlobeOverlay(const QSizeF &logical)
     }
     const std::uint64_t cache_hits_before = this->globe_overlay_height_cache.hits();
     const std::uint64_t terrain_samples_before = this->globe_overlay_height_cache.samples();
+    const std::uint64_t unavailable_reuses_before = this->globe_overlay_height_cache.unavailableReuses();
+    const std::uint64_t evictions_before = this->globe_overlay_height_cache.evictionCount();
     this->globe_overlay_builder(&this->overlay_canvas, &this->overlay_text_cache,
                                 projector, logical, frustum);
     MapRenderDiagnostics::add(MapRenderDiagnostics::Counter::GlobeTerrainHeightCacheHit,
                               quint64(this->globe_overlay_height_cache.hits() - cache_hits_before));
     MapRenderDiagnostics::add(MapRenderDiagnostics::Counter::GlobeTerrainHeightSample,
                               quint64(this->globe_overlay_height_cache.samples() - terrain_samples_before));
+    MapRenderDiagnostics::add(MapRenderDiagnostics::Counter::GlobeTerrainHeightUnavailableReuse,
+                              quint64(this->globe_overlay_height_cache.unavailableReuses()
+                                      - unavailable_reuses_before));
+    MapRenderDiagnostics::add(MapRenderDiagnostics::Counter::GlobeTerrainHeightEviction,
+                              quint64(this->globe_overlay_height_cache.evictionCount()
+                                      - evictions_before));
     this->overlay_gpu.uploadAtlas(&this->overlay_text_cache);
     this->overlay_gpu.draw(kMapBgfxView, this->overlay_canvas, logical, QPointF());
 }

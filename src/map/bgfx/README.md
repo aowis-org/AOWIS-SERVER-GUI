@@ -469,7 +469,7 @@ cumulative values. The ratio of candidate delta to anchor delta indicates
 how many terrain projections spatial culling avoids. Dense networks where
 most anchors remain plausible candidates should be benchmarked separately.
 
-### Large-network performance validation (Stage 10)
+### Large-network performance validation
 
 For reproducible *CPU-only synthetic workloads*, first build the test target
 with `./compile_linux_tests.sh --both`, then run the Release executable:
@@ -509,7 +509,7 @@ python3 tools/report_globe_editor_performance.py \
     /tmp/aowis-editor-3d-10k.log --min-icon-frames 30 --min-anchors 10000 --json
 ```
 
-The Stage 10 counters `globe_editor_icon_frame`,
+The runtime counters `globe_editor_icon_frame`,
 `globe_editor_icon_index_query`, `globe_editor_icon_projection`, and
 `globe_editor_icon_draw` time the **real** CPU phases of 3D icon display. The
 report uses **successive cumulative-counter differences**, excludes idle
@@ -527,7 +527,7 @@ metrics on Linux and Windows; the opt-in diagnostic JSON cannot report GPU time,
 VRAM usage, browser frame scheduling or complete process memory. Keep separate
 cold-start (index build/texture loading) and warmed-navigation measurements.
 Performance is judged against the previous commit on the **same machine**, not
-against absolute CPU time limits embedded in CTest. Stage 10 does not introduce
+against absolute CPU time limits embedded in CTest. The benchmark does not introduce
 zoom-bucket invalidation or a network geometry rebuild on camera movement.
 
 Slice 1, the terrain surface (`map_bgfx_globe_surface.*`):
@@ -976,14 +976,19 @@ neither rebuilds network geometry when panning or orbiting.
 The 3D Editor projects icons onto the drawn terrain. The expensive mesh-ray
 and DEM fallback sample is reused across camera frames by
 `map_bgfx_globe_height_cache.h`, keyed by the exact geographic coordinate.
-Only finite, available heights are cached. Missing terrain is retried on the
-next projection. Cache entries are cleared when the **drawn surface revision**
-changes, vertical exaggeration changes, the terrain repository changes, or
-the bgfx backend shuts down. The screen position, distance/depth order and
+Finite, available heights are cached directly. Unavailable terrain is never
+cached as a valid height: repeated failed samples are deferred for at most
+eight overlay frames while rendering uses its existing ellipsoid fallback.
+An arriving drawn-terrain revision retries them immediately. Cache entries
+are cleared when the **drawn surface revision** changes, vertical exaggeration
+changes, the terrain repository changes, or the bgfx backend shuts down. A
+262,144-entry FIFO capacity bound prevents unbounded growth due to transient
+selection lattices and camera travel. The screen position, distance/depth order and
 visibility are still recalculated for every presented camera frame.
-Diagnostics report `globe_terrain_height_cache_hit` and
-`globe_terrain_height_sample` so repeated DEM work can be distinguished from
-projection math; run `tools/report_globe_editor_performance.py` against
+Diagnostics report `globe_terrain_height_cache_hit`,
+`globe_terrain_height_sample`, `globe_terrain_height_unavailable_reuse` and
+`globe_terrain_height_eviction` so actual DEM samples, successful reuse,
+avoided repeated failures and memory eviction can be distinguished; run `tools/report_globe_editor_performance.py` against
 `AOWIS_MAP_RENDER_DIAGNOSTICS=1` output to measure actual icon-frame CPU time.
 The cached values refer to the terrain **as drawn**, not a permanent DEM
 snapshot or the model's terrain-data revision. Neither this cache nor the
