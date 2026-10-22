@@ -18,10 +18,10 @@ class MapWorkspaceWidget final : public QWidget
 public:
     enum Mode
     {
-        DistributionEditor = 0,
-        DistributionMonitor = 1,
-        DrainageEditor = 2,
-        DrainageMonitor = 3
+        DistributionMonitor = 0,
+        DistributionEditor = 1,
+        DrainageMonitor = 2,
+        DrainageEditor = 3
     };
     Q_ENUM(Mode)
 

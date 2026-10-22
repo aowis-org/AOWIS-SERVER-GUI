@@ -206,7 +206,7 @@ MainWindow::MainWindow(QWidget *parent)
 
     this->main_navigation->addPage(this->map_workspace,
                                   QIcon(":/icon/map.png"),
-                                  "Map");
+                                  "Maps");
     this->main_navigation->addPage(this->energy,
                                   QIcon(":/icon/energy.png"),
                                   "Energy");
@@ -305,7 +305,8 @@ MainWindow::MainWindow(QWidget *parent)
     connect(this->footer, &FooterStatusBar::zoomEdited, this, [this](double zoom)
     {
         if (this->main_navigation->currentWidget() != this->map_workspace
-            || this->map_workspace->currentMode() > MapWorkspaceWidget::DistributionMonitor)
+            || (!this->map_workspace->isDistributionMonitorActive()
+                && !this->map_workspace->isDistributionEditorActive()))
             return;
         const bool editor_active = this->map_workspace->isDistributionEditorActive();
         MapWidget *active_widget = editor_active ? this->map_edit : this->map_mon;

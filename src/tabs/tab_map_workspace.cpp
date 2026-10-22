@@ -21,10 +21,10 @@ struct ModeDescription
 };
 
 constexpr ModeDescription descriptions[] = {
-    {"Distribution Editor", ":/icon/water_distribution_editor.png"},
     {"Distribution Monitor", ":/icon/water_distribution_monitor.png"},
-    {"Drainage Editor", ":/icon/water_drainage_editor.png"},
-    {"Drainage Monitor", ":/icon/water_drainage_monitor.png"}
+    {"Distribution Editor", ":/icon/water_distribution_editor.png"},
+    {"Drainage Monitor", ":/icon/water_drainage_monitor.png"},
+    {"Drainage Editor", ":/icon/water_drainage_editor.png"}
 };
 }
 
@@ -43,14 +43,14 @@ MapWorkspaceWidget::MapWorkspaceWidget(MapEditorContainer *editor,
 
     // Preserve the existing editor and monitor map/surface parent hierarchy.
     // Only the top-level containers change parent to QStackedWidget.
-    this->pages->addWidget(editor);
     this->pages->addWidget(monitor);
-    this->pages->addWidget(createEmptyModePage(DrainageEditor));
+    this->pages->addWidget(editor);
     this->pages->addWidget(createEmptyModePage(DrainageMonitor));
+    this->pages->addWidget(createEmptyModePage(DrainageEditor));
 
     editor->setModeSelector(createModeSelector(DistributionEditor));
     monitor->setModeSelector(createModeSelector(DistributionMonitor));
-    this->pages->setCurrentIndex(DistributionEditor);
+    this->pages->setCurrentIndex(DistributionMonitor);
 }
 
 MapWorkspaceWidget::Mode MapWorkspaceWidget::currentMode() const
@@ -70,7 +70,7 @@ bool MapWorkspaceWidget::isDistributionMonitorActive() const
 
 void MapWorkspaceWidget::setCurrentMode(int index)
 {
-    if (index < DistributionEditor || index > DrainageMonitor)
+    if (index < DistributionMonitor || index > DrainageEditor)
         return;
     if (this->pages->currentIndex() == index)
         return;
