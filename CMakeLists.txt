@@ -218,6 +218,7 @@ qt_add_executable(aowis-server-gui
     src/tabs/tab_logs_widget.h
     src/tabs/tab_map_workspace.cpp
     src/tabs/tab_map_workspace.h
+    src/tabs/map_workspace_mode.h
     src/tabs/tab_map_editor_container.cpp
     src/tabs/tab_map_editor_container.h
     src/tabs/tab_map_monitor_container.cpp
@@ -556,6 +557,25 @@ else()
 endif()
 
 if(BUILD_TESTING AND NOT EMSCRIPTEN)
+    # Shared-map migration stage 1: the mode contract has no Qt or GPU
+    # dependencies and can be validated before any surface is moved.
+    add_executable(aowis-map-workspace-contract-tests
+        tests/map_workspace_contract_test.cpp)
+    target_include_directories(aowis-map-workspace-contract-tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    add_test(NAME aowis-map-workspace-contract
+        COMMAND aowis-map-workspace-contract-tests)
+    set_tests_properties(aowis-map-workspace-contract PROPERTIES LABELS "aowis")
+
+    add_executable(aowis-map-workspace-diagnostics-tests
+        tests/map_workspace_diagnostics_test.cpp)
+    target_include_directories(aowis-map-workspace-diagnostics-tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(aowis-map-workspace-diagnostics-tests PRIVATE Qt6::Core)
+    add_test(NAME aowis-map-workspace-diagnostics
+        COMMAND aowis-map-workspace-diagnostics-tests)
+    set_tests_properties(aowis-map-workspace-diagnostics PROPERTIES LABELS "aowis")
+
     add_executable(aowis-map-provider-fallback-tests
         tests/map_provider_fallback_resolution_test.cpp)
     target_include_directories(aowis-map-provider-fallback-tests PRIVATE
@@ -1115,6 +1135,9 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
     # shows up as "Not Run" in CTest.
     add_custom_target(aowis-tests
         DEPENDS
+            aowis-map-workspace-contract-tests
+            aowis-map-workspace-diagnostics-tests
+            aowis-map-provider-fallback-tests
             aowis-bgfx-2d-projection-tests
             aowis-bgfx-2d-imagery-layout-tests
             aowis-bgfx-2d-imagery-atlas-tests

@@ -382,6 +382,7 @@ MapBgfxSurface::~MapBgfxSurface()
     if (this->initialized) {
         releaseGpuResources();
         bgfx::shutdown();
+        MapRenderDiagnostics::add(MapRenderDiagnostics::Counter::BgfxDeviceStopped);
         this->initialized = false;
         if (g_bgfx_device_owner == this)
             g_bgfx_device_owner = nullptr;
@@ -781,6 +782,7 @@ void MapBgfxSurface::setNetworkSnapshot(const NetworkRenderSnapshot &snapshot)
     }
     if (update.geometry_changed && this->prepared_2d_scene.prepare(this->retained_scene))
     {
+        MapRenderDiagnostics::add(MapRenderDiagnostics::Counter::Bgfx2dScenePrepared);
         qInfo() << "bgfx retained geometry prepared" << snapshot.geometry_revision
                 << "links" << this->prepared_2d_scene.linkPolylines().size()
                 << "link segments" << this->prepared_2d_scene.linkSegmentCount()
@@ -799,8 +801,11 @@ void MapBgfxSurface::setNodeDeclutteringEnabled(bool enabled)
     // Positions change without a geometry revision: re-prepare now; the GPU
     // mesh and the highlights follow MapBgfx2dScene::preparationId().
     this->prepared_2d_scene.setDeclutteringEnabled(enabled);
-    if (this->retained_scene.hasSnapshot())
-        this->prepared_2d_scene.prepare(this->retained_scene);
+    if (this->retained_scene.hasSnapshot()
+        && this->prepared_2d_scene.prepare(this->retained_scene))
+    {
+        MapRenderDiagnostics::add(MapRenderDiagnostics::Counter::Bgfx2dScenePrepared);
+    }
     this->globe_network.setNodeDeclutteringEnabled(enabled);
 }
 
@@ -962,6 +967,7 @@ void MapBgfxSurface::shutdownBackend()
     stopFrameLoop();
     releaseGpuResources();
     bgfx::shutdown();
+    MapRenderDiagnostics::add(MapRenderDiagnostics::Counter::BgfxDeviceStopped);
     this->initialized = false;
     if (g_bgfx_device_owner == this)
         g_bgfx_device_owner = nullptr;
@@ -1974,6 +1980,7 @@ bool MapBgfxSurface::initializeBackend()
             continue;
         }
         this->startup_step = "running";
+        MapRenderDiagnostics::add(MapRenderDiagnostics::Counter::BgfxDeviceStarted);
         qInfo() << "Map Monitor renderer:" << graphicsApiName();
         // bgfx's text overlay covers the HUD; diagnostics only on request.
         bgfx::setDebug(this->debug_overlay_enabled ? BGFX_DEBUG_TEXT : BGFX_DEBUG_NONE);

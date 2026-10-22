@@ -32,12 +32,20 @@ enum class Counter : size_t
     DemandAttachmentsPrepared,
     GlobeGeometryRebuilt,
     GlobeFlowRebuilt,
+    // Shared map migration diagnostics. These are measured on the *existing*
+    // two-surface architecture until the single-surface migration is complete.
+    BgfxDeviceStarted,     // successful GPU resource initialization
+    BgfxDeviceStopped,     // owning device was shut down
+    Bgfx2dScenePrepared,   // CPU display geometry actually re-prepared
+    WorkspaceModeSwitch,   // synchronous mode-switch CPU duration
     Count
 };
 
 inline constexpr std::array<const char *, static_cast<std::size_t>(Counter::Count)> CounterNames{{
     "zoom_change", "center_change", "frames",
-    "demand_attachments_prepared", "globe_geometry_rebuilt", "globe_flow_rebuilt"
+    "demand_attachments_prepared", "globe_geometry_rebuilt", "globe_flow_rebuilt",
+    "bgfx_device_started", "bgfx_device_stopped", "bgfx_2d_scene_prepared",
+    "workspace_mode_switch"
 }};
 
 using Clock = std::chrono::steady_clock;
@@ -140,6 +148,14 @@ inline QJsonObject snapshot()
         {QStringLiteral("total_duration_ms"), durations_ms},
         {QStringLiteral("max_duration_ms"), maximum_ms}
     };
+}
+
+// Capture an immediate snapshot after a mode switch. Ordinary frames retain
+// their existing at-most-once-per-five-seconds reporting cadence.
+inline void reportNow()
+{
+    if (enabled())
+        qInfo().noquote() << QJsonDocument(snapshot()).toJson(QJsonDocument::Compact);
 }
 
 inline void reportIfDue()

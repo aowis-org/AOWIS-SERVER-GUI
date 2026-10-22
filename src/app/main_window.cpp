@@ -304,13 +304,12 @@ MainWindow::MainWindow(QWidget *parent)
     // Empty drainage modes and other main-navigation pages have no active map.
     connect(this->footer, &FooterStatusBar::zoomEdited, this, [this](double zoom)
     {
-        if (this->main_navigation->currentWidget() != this->map_workspace
-            || (!this->map_workspace->isDistributionMonitorActive()
-                && !this->map_workspace->isDistributionEditorActive()))
+        if (this->main_navigation->currentWidget() != this->map_workspace)
             return;
-        const bool editor_active = this->map_workspace->isDistributionEditorActive();
-        MapWidget *active_widget = editor_active ? this->map_edit : this->map_mon;
-        MapModel *active_model = editor_active ? this->map_model_editor : this->map_model_monitor;
+        MapWidget *active_widget = this->map_workspace->activeMap();
+        MapModel *active_model = this->map_workspace->activeModel();
+        if (active_widget == nullptr || active_model == nullptr)
+            return;
         if (active_model->viewMode() == MapViewMode::Globe)
             active_model->setViewGlobeZoomLevel(zoom, active_widget->size());
         else

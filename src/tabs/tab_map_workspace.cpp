@@ -1,9 +1,11 @@
 #include "tabs/tab_map_workspace.h"
 
 #include "common/_sizes.h"
+#include "map/render/map_render_diagnostics.h"
 #include "tabs/tab_map_editor_container.h"
 #include "tabs/tab_map_monitor_container.h"
 
+#include <QDebug>
 #include <QHBoxLayout>
 #include <QIcon>
 #include <QLabel>
@@ -12,22 +14,6 @@
 #include <QTabBar>
 #include <QVBoxLayout>
 
-namespace
-{
-struct ModeDescription
-{
-    const char *title;
-    const char *icon;
-};
-
-constexpr ModeDescription descriptions[] = {
-    {"Distribution Monitor", ":/icon/water_distribution_monitor.png"},
-    {"Distribution Editor", ":/icon/water_distribution_editor.png"},
-    {"Drainage Monitor", ":/icon/water_drainage_monitor.png"},
-    {"Drainage Editor", ":/icon/water_drainage_editor.png"}
-};
-}
-
 MapWorkspaceWidget::MapWorkspaceWidget(MapEditorContainer *editor,
                                        MapMonitorContainer *monitor, QWidget *parent)
     : QWidget(parent),
@@ -35,6 +21,8 @@ MapWorkspaceWidget::MapWorkspaceWidget(MapEditorContainer *editor,
 {
     Q_ASSERT(editor != nullptr);
     Q_ASSERT(monitor != nullptr);
+    this->monitor_map = monitor->getMap();
+    this->editor_map = editor->getMap();
 
     QVBoxLayout *layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
@@ -68,20 +56,53 @@ bool MapWorkspaceWidget::isDistributionMonitorActive() const
     return currentMode() == DistributionMonitor;
 }
 
+MapWidget *MapWorkspaceWidget::activeMap() const
+{
+    switch (currentMode())
+    {
+    case DistributionMonitor:
+        return this->monitor_map;
+    case DistributionEditor:
+        return this->editor_map;
+    case DrainageMonitor:
+    case DrainageEditor:
+        return nullptr;
+    }
+    return nullptr;
+}
+
+MapModel *MapWorkspaceWidget::activeModel() const
+{
+    MapWidget *map = activeMap();
+    return map != nullptr ? map->model() : nullptr;
+}
+
 void MapWorkspaceWidget::setCurrentMode(int index)
 {
-    if (index < DistributionMonitor || index > DrainageEditor)
+    if (MapWorkspace::modeInfo(index) == nullptr)
         return;
     if (this->pages->currentIndex() == index)
         return;
 
-    this->pages->setCurrentIndex(index);
-    for (QTabBar *tab_bar : this->mode_tabs)
     {
-        if (tab_bar->currentIndex() != index)
-            tab_bar->setCurrentIndex(index);
+        // Scope reports synchronous QWidget/tab switching CPU time, not GPU
+        // frame latency. A renderer restart is tracked separately.
+        const MapRenderDiagnostics::Scope timing(
+            MapRenderDiagnostics::Counter::WorkspaceModeSwitch);
+        this->pages->setCurrentIndex(index);
+        for (QTabBar *tab_bar : this->mode_tabs)
+        {
+            if (tab_bar->currentIndex() != index)
+                tab_bar->setCurrentIndex(index);
+        }
+        emit currentModeChanged(index);
     }
-    emit currentModeChanged(index);
+    if (MapRenderDiagnostics::enabled())
+    {
+        qInfo() << "map workspace mode" << MapWorkspace::modeInfo(index)->title
+                << "(diagnostics: AOWIS_MAP_RENDER_DIAGNOSTICS=1)";
+        MapRenderDiagnostics::reportNow();
+    }
 }
 
 QWidget *MapWorkspaceWidget::createModeSelector(Mode mode)
@@ -99,17 +120,17 @@ QWidget *MapWorkspaceWidget::createModeSelector(Mode mode)
     tabs->setExpanding(true);
     tabs->setUsesScrollButtons(false);
     tabs->setIconSize(QSize(32, 32));
-    for (const ModeDescription &description : descriptions)
+    for (const MapWorkspace::ModeInfo &description : MapWorkspace::Modes)
     {
         const QString title = QString::fromUtf8(description.title);
-        const int index = tabs->addTab(QIcon(QString::fromUtf8(description.icon)), QString());
+        const int index = tabs->addTab(QIcon(QString::fromUtf8(description.icon_resource)), QString());
         tabs->setTabToolTip(index, title);
         tabs->setTabWhatsThis(index, title);
     }
     tabs->setCurrentIndex(mode);
     layout->addWidget(tabs);
 
-    QLabel *title = new QLabel(tr(descriptions[mode].title), selector);
+    QLabel *title = new QLabel(tr(MapWorkspace::Modes[mode].title), selector);
     title->setAlignment(Qt::AlignCenter);
     QFont title_font = title->font();
     title_font.setBold(true);
