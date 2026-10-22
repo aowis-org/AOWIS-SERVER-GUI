@@ -97,10 +97,11 @@ public:
 
     // Globe mode: use the same full-colour editor entity icons as 2D,
     // projected onto the terrain-aware globe, plus the tile-cache selection.
-    // Editing interactions themselves remain 2D-only. The network geometry
-    // is drawn by the persistent globe renderer, not rebuilt here.
+    // Icons are drawn far-to-near using the projector camera distance, not
+    // insertion order. Editing interactions remain 2D-only; the retained
+    // network geometry stays in the persistent globe renderer.
     using GlobeProjector = std::function<bool(double longitude_deg, double latitude_deg,
-                                              QPointF *screen_position)>;
+                                              QPointF *screen_position, double *distance_m)>;
     void buildGlobe(MapBgfxHudCanvas *canvas, MapBgfxHudTextCache *cache,
                     const MapEditorViewportRenderState &viewport_state,
                     const GlobeProjector &projector,

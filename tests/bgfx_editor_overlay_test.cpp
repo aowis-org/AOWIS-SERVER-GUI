@@ -537,7 +537,7 @@ void testTerrainAndGlobeTileSelection()
     const std::function<double(double)> screen_x = [](double longitude) { return 400.0 + (longitude - 9.0) * 1.0e5; };
     const std::function<double(double)> screen_y = [](double latitude) { return 300.0 - (latitude - 47.0) * 1.0e5; };
     const MapBgfxEditorOverlay::GlobeProjector flat =
-        [&screen_x, &screen_y](double longitude, double latitude, QPointF *screen)
+        [&screen_x, &screen_y](double longitude, double latitude, QPointF *screen, double *distance_m)
     {
         *screen = QPointF(screen_x(longitude), screen_y(latitude));
         return true;
@@ -553,9 +553,9 @@ void testTerrainAndGlobeTileSelection()
 
     // Points beyond the horizon break the lines and drop their fill cells.
     const MapBgfxEditorOverlay::GlobeProjector half =
-        [&flat, middle_longitude](double longitude, double latitude, QPointF *screen)
+        [&flat, middle_longitude](double longitude, double latitude, QPointF *screen, double *distance_m)
     {
-        return longitude <= middle_longitude + 1e-9 && flat(longitude, latitude, screen);
+        return longitude <= middle_longitude + 1e-9 && flat(longitude, latitude, screen, distance_m);
     };
     harness.overlay.buildGlobe(&harness.canvas, &harness.cache, tiles.viewport, half);
     req(harness.canvas.vertices().size() > 0 && harness.canvas.vertices().size() < full_vertices,
@@ -569,7 +569,7 @@ void testTerrainAndGlobeTileSelection()
         }
     }
 
-    const MapBgfxEditorOverlay::GlobeProjector hidden = [](double, double, QPointF *) { return false; };
+    const MapBgfxEditorOverlay::GlobeProjector hidden = [](double, double, QPointF *, double *) { return false; };
     harness.overlay.buildGlobe(&harness.canvas, &harness.cache, tiles.viewport, hidden);
     req(harness.canvas.vertices().isEmpty(), "a selection behind the globe draws nothing");
 
@@ -607,7 +607,7 @@ void testGlobeEditorIcons()
     s.snapshot.links.append(pump);
 
     const MapBgfxEditorOverlay::GlobeProjector visible = [](
-        double longitude, double latitude, QPointF *point)
+        double longitude, double latitude, QPointF *point, double *)
     {
         *point = QPointF(400.0 + (longitude - 9.0) * 1.0e5,
                          300.0 - (latitude - 47.0) * 1.0e5);
@@ -628,8 +628,28 @@ void testGlobeEditorIcons()
                         300.0 - IconHeight / 2.0),
         "globe device-link icon is centred like the 2D editor");
 
+    // Reverse the original snapshot order by supplying camera distances:
+    // the pump is farther away than the demand point, hence drawn first.
+    const MapBgfxEditorOverlay::GlobeProjector depth_order = [](
+        double longitude, double latitude, QPointF *point, double *distance_m)
+    {
+        *point = QPointF(400.0 + (longitude - 9.0) * 1.0e5,
+                         300.0 - (latitude - 47.0) * 1.0e5);
+        if (distance_m != nullptr)
+            *distance_m = longitude > 9.00005 ? 1000.0 : 100.0;
+        return true;
+    };
+    harness.probe.calls.clear();
+    harness.overlay.buildGlobe(&harness.canvas, &harness.cache, s.viewport,
+                               depth_order, &s.snapshot, EntityWidth,
+                               QSizeF(ViewportWidth, ViewportHeight));
+    req(harness.probe.calls.size() == 2
+        && harness.probe.calls.at(0).entity == InfrastructureEntity::Pump
+        && harness.probe.calls.at(1).entity == InfrastructureEntity::DemandPoint,
+        "3D editor icons use far-to-near painter ordering, not snapshot order");
+
     const MapBgfxEditorOverlay::GlobeProjector hidden = [](
-        double, double, QPointF *) { return false; };
+        double, double, QPointF *, double *) { return false; };
     harness.probe.calls.clear();
     harness.overlay.buildGlobe(&harness.canvas, &harness.cache, s.viewport,
                                hidden, &s.snapshot, EntityWidth,
@@ -638,7 +658,7 @@ void testGlobeEditorIcons()
         "off-horizon globe entities never generate icon sprites");
 
     const MapBgfxEditorOverlay::GlobeProjector offscreen = [](
-        double, double, QPointF *point)
+        double, double, QPointF *point, double *)
     {
         *point = QPointF(1000000.0, 1000000.0);
         return true;

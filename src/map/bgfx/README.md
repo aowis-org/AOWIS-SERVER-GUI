@@ -864,3 +864,13 @@ labels, editor overlays, 3D network entities, heatmap and picking; it does not
 clear the retained scene or discard GPU network geometry. On returning to a
 distribution mode, the appropriate monitor/editor symbology and input handlers
 are restored. A mode change must not call `bgfx::shutdown()` or `bgfx::init()`.
+
+### Globe icon overlap order
+
+Transparent icon quads are drawn back-to-front relative to the active globe
+camera. Monitor retains the per-entity globe vertex buffer and updates only a
+32-bit draw-index stream when camera eye or icon geometry changes. Editor
+projects its full-colour entity icons onto the HUD canvas and depth-sorts those
+sprites before building the canvas. Both paths keep their existing terrain
+visibility and rendering styles; neither rebuilds the network geometry when
+panning or orbiting.

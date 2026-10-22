@@ -1399,7 +1399,8 @@ void MapBgfxSurface::renderGlobeOverlay(const QSizeF &logical)
     const GlobeProjector projector =
         [&view_projection, &origin, &preparation, &navigation, ray_start_height_m,
          vertical_exaggeration, eye_x, eye_y, eye_z, viewport](
-            double longitude_deg, double latitude_deg, QPointF *screen_position) -> bool
+            double longitude_deg, double latitude_deg, QPointF *screen_position,
+            double *distance_m) -> bool
     {
         if (!std::isfinite(longitude_deg) || !std::isfinite(latitude_deg))
             return false;
@@ -1470,6 +1471,13 @@ void MapBgfxSurface::renderGlobeOverlay(const QSizeF &logical)
             return false;
         *screen_position = QPointF((ndc_x + 1.0) * double(viewport.width()) / 2.0,
                                    (1.0 - ndc_y) * double(viewport.height()) / 2.0);
+        if (distance_m != nullptr)
+        {
+            const double dx = point.x - eye_x;
+            const double dy = point.y - eye_y;
+            const double dz = point.z - eye_z;
+            *distance_m = std::sqrt(dx * dx + dy * dy + dz * dz);
+        }
         return true;
     };
     this->globe_overlay_builder(&this->overlay_canvas, &this->overlay_text_cache, projector, logical);

@@ -14,6 +14,7 @@
 #include <QSize>
 #include <QUuid>
 #include <QVector>
+#include <QVector3D>
 
 #include <bgfx/bgfx.h>
 
@@ -167,11 +168,13 @@ private:
     // The hit for an entity, unless it is unknown or hidden.
     MapRenderHit entityHit(InfrastructureEntity entity_type, quint32 render_id) const;
     void uploadStreams(FrameResult *result);
+    void updateIconDrawOrder(const QVector3D &eye, FrameResult *result);
     // One draw of a stream (nothing when it is empty).
     void submitStream(bgfx::ViewId view, const Buffer &buffer, bgfx::ProgramHandle program, uint64_t state,
                       const FrameUniforms &uniforms, const MapBgfxEntityStyle &entity_style,
                       MapBgfxEntityStyle::Mode mode, bgfx::TextureHandle texture,
-                      bgfx::UniformHandle sampler, FrameResult *result) const;
+                      bgfx::UniformHandle sampler, FrameResult *result,
+                      bool ordered_icons = false) const;
     QVector<JunctionVertex> junctionVertices(const QVector<MapGlobeJunctionInstance> &instances) const;
     // Whether a junction is drawn (junctions shown, not hidden): picking.
     bool junctionDrawn(quint32 render_id) const;
@@ -252,6 +255,10 @@ private:
     Buffer diagnostic_node_buffer;
     Buffer flow_buffer;
     Buffer icon_buffer;
+    bgfx::DynamicIndexBufferHandle icon_order_buffer = BGFX_INVALID_HANDLE;
+    quint32 icon_order_count = 0;
+    QVector3D icon_order_eye;
+    bool icon_order_dirty = true;
     Buffer underground_link_buffer;
     Buffer junction_buffer;
     Buffer underground_junction_buffer;

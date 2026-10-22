@@ -223,8 +223,10 @@ public:
     // relief where it is drawn, else the ellipsoid) lies on screen this
     // frame, in logical px. False behind the camera or beyond the horizon
     // (relief does not occlude: the overlay is drawn on top of the globe).
+    // Optional distance_m returns eye-to-draped-anchor distance for correct
+    // painter ordering of transparent icons in the 3D editor overlay.
     using GlobeProjector = std::function<bool(double longitude_deg, double latitude_deg,
-                                              QPointF *screen_position)>;
+                                              QPointF *screen_position, double *distance_m)>;
     // Called every globe frame after the terrain and the network and before
     // the HUD; draws into the overlay's canvas and atlas (the 2D builder's,
     // the two never run in the same frame), submitted untranslated.

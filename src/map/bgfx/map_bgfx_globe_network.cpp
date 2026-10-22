@@ -2,6 +2,7 @@
 
 #include "map/bgfx/map_bgfx_backend.h"
 #include "map/core/map_model.h"
+#include "map/render/map_globe_icon_draw_order.h"
 #include "map/render/map_globe_camera.h"
 #include "map/render/map_globe_picking.h"
 #include "map/render/map_globe_render_frame.h"
@@ -215,6 +216,9 @@ void MapBgfxGlobeNetwork::destroyBuffers()
 void MapBgfxGlobeNetwork::release()
 {
     destroyBuffers();
+    destroyHandle(&this->icon_order_buffer);
+    this->icon_order_count = 0;
+    this->icon_order_dirty = true;
     destroyHandle(&this->reservoir_texture);
     destroyHandle(&this->tank_texture);
     destroyHandle(&this->albedo_sampler);
@@ -544,6 +548,7 @@ void MapBgfxGlobeNetwork::uploadStreams(FrameResult *result)
     {
         bytes += uploadVertices(&this->icon_buffer.handle, &this->icon_buffer.count, this->icon_layout,
                                 scene.iconVertices());
+        this->icon_order_dirty = true;
         // The models are built per instance in their local frames (kept for
         // picking).
         ensureModelVertices();
@@ -569,15 +574,38 @@ void MapBgfxGlobeNetwork::uploadStreams(FrameResult *result)
     result->upload_bytes += bytes;
 }
 
+void MapBgfxGlobeNetwork::updateIconDrawOrder(const QVector3D &eye, FrameResult *result)
+{
+    if (!this->icon_order_dirty && this->icon_order_eye == eye)
+        return;
+    this->icon_order_eye = eye;
+    this->icon_order_dirty = false;
+    const QVector<quint32> indices = mapGlobeIconDrawOrder(this->network_scene.iconVertices(), eye);
+    this->icon_order_count = quint32(indices.size());
+    if (indices.isEmpty())
+        return;
+    if (!bgfx::isValid(this->icon_order_buffer))
+        this->icon_order_buffer = bgfx::createDynamicIndexBuffer(
+            this->icon_order_count, BGFX_BUFFER_INDEX32 | BGFX_BUFFER_ALLOW_RESIZE);
+    if (bgfx::isValid(this->icon_order_buffer))
+    {
+        const uint32_t bytes = uint32_t(indices.size() * qsizetype(sizeof(quint32)));
+        bgfx::update(this->icon_order_buffer, 0, bgfx::copy(indices.constData(), bytes));
+        result->upload_bytes += bytes;
+    }
+}
+
 void MapBgfxGlobeNetwork::submitStream(bgfx::ViewId view, const Buffer &buffer, bgfx::ProgramHandle program,
                                        uint64_t state, const FrameUniforms &uniforms,
                                        const MapBgfxEntityStyle &entity_style, MapBgfxEntityStyle::Mode mode,
                                        bgfx::TextureHandle texture, bgfx::UniformHandle sampler,
-                                       FrameResult *result) const
+                                       FrameResult *result, bool ordered_icons) const
 {
     if (buffer.count == 0 || !bgfx::isValid(buffer.handle))
         return;
     bgfx::setVertexBuffer(0, buffer.handle, 0, buffer.count);
+    if (ordered_icons && this->icon_order_count != 0 && bgfx::isValid(this->icon_order_buffer))
+        bgfx::setIndexBuffer(this->icon_order_buffer, 0, this->icon_order_count);
     // Selected icons take the selection colour on the globe.
     entity_style.bind(mode, MapBgfxEntityStyle::Table::Nodes, true);
     bgfx::setUniform(this->view_projection_uniform, uniforms.view_projection);
@@ -658,6 +686,7 @@ MapBgfxGlobeNetwork::FrameResult MapBgfxGlobeNetwork::render(bgfx::ViewId view, 
         ? -float(resources.icon_size_m) : float(resources.icon_size_px);
     uniforms.params[2] = homogeneous_depth ? 0.5f : 1.0f;
     uniforms.params[3] = homogeneous_depth ? 0.5f : 0.0f;
+    updateIconDrawOrder(frame.camera_basis.eye, &result);
     const QVector3D *basis[3] = {&frame.camera_basis.right, &frame.camera_basis.up, &frame.camera_basis.eye};
     float *targets[3] = {uniforms.camera_right, uniforms.camera_up, uniforms.camera_eye};
     for (int index = 0; index < 3; ++index)
@@ -716,7 +745,7 @@ MapBgfxGlobeNetwork::FrameResult MapBgfxGlobeNetwork::render(bgfx::ViewId view, 
     }
     if (bgfx::isValid(icon_atlas))
         submitStream(view, this->icon_buffer, this->icon_program, kOverlayState, uniforms, entity_style, entity,
-                     icon_atlas, this->icon_sampler, &result);
+                     icon_atlas, this->icon_sampler, &result, true);
     return result;
 }
 

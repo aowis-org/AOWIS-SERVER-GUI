@@ -311,6 +311,7 @@ qt_add_executable(aowis-server-gui
     src/map/render/map_globe_vertical_transform.h
     src/map/render/map_globe_camera.h
     src/map/render/map_globe_camera.cpp
+    src/map/render/map_globe_icon_draw_order.h
     src/map/render/map_globe_network_scene.h
     src/map/render/map_globe_network_scene.cpp
     src/map/render/map_globe_render_frame.h
@@ -941,6 +942,17 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
     set_tests_properties(aowis-map-globe-retained-origin PROPERTIES
         LABELS "aowis" ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+    # Camera-depth sorting of alpha-blended globe icons; no GPU context needed.
+    add_executable(aowis-map-globe-icon-draw-order-tests
+        tests/map_globe_icon_draw_order_test.cpp)
+    target_include_directories(aowis-map-globe-icon-draw-order-tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/external/AOWIS-SERVER-MODEL/include)
+    target_link_libraries(aowis-map-globe-icon-draw-order-tests PRIVATE Qt6::Core Qt6::Gui)
+    add_test(NAME aowis-map-globe-icon-draw-order
+        COMMAND aowis-map-globe-icon-draw-order-tests)
+    set_tests_properties(aowis-map-globe-icon-draw-order PROPERTIES LABELS "aowis")
+
     # Demand points (no elevation in the model) lie on the drawn globe
     # terrain: bare ellipsoid, relief, in-place moves without a network
     # rebuild, attachment lines ending at the network's elevation.
@@ -1198,6 +1210,7 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
             aowis-map-zoom-animation-tests
             aowis-map-retained-network-scene-tests
             aowis-map-globe-retained-origin-tests
+            aowis-map-globe-icon-draw-order-tests
             aowis-map-globe-demand-drape-tests
             aowis-unit-model-header-authority-tests
             aowis-emitter-coefficient-binding-tests

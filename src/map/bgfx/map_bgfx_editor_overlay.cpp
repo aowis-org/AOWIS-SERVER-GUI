@@ -779,10 +779,18 @@ void MapBgfxEditorOverlay::globeNetworkIcons(const NetworkRenderSnapshot &snapsh
                                              const GlobeProjector &projector, int icon_width,
                                              const QSizeF &viewport_size)
 {
-    // These are precisely the editor's 2D pixmap sprites, rather than the
-    // generic star/device symbols in the globe's monitoring icon atlas.
-    // Project only icon-bearing entities; the retained globe GPU scene
-    // continues to draw the links, junction dots and terrain.
+    // The 3D editor uses a 2D translucent HUD overlay rather than a depth
+    // buffer. Draw far entities first so near symbols cover them, independent
+    // of snapshot insertion order. Keep the same icons and anchors as in 2D.
+    struct VisibleIcon
+    {
+        QPointF point;
+        InfrastructureEntity entity = InfrastructureEntity::Unknown;
+        double distance_m = 0.0;
+        bool bottom_anchored = false;
+    };
+    QVector<VisibleIcon> icons;
+    icons.reserve(snapshot.nodes.size() + snapshot.links.size());
     const double margin = 2.0 * double(icon_width) + 24.0;
     const auto visible = [&viewport_size, margin](const QPointF &point)
     {
@@ -796,12 +804,11 @@ void MapBgfxEditorOverlay::globeNetworkIcons(const NetworkRenderSnapshot &snapsh
             || !isPointEntity(node.entity_type))
             continue;
         QPointF point;
+        double distance_m = 0.0;
         if (!projector(node.coordinate_wgs84.longitude_deg,
-                       node.coordinate_wgs84.latitude_deg, &point) || !visible(point))
+                       node.coordinate_wgs84.latitude_deg, &point, &distance_m) || !visible(point))
             continue;
-        const Icon icon = this->icon_provider(this->cache, node.entity_type,
-                                               QString(), icon_width, Highlight::None);
-        drawIcon(double(qRound(point.x())), double(qRound(point.y())) - icon.height, icon);
+        icons.append({point, node.entity_type, distance_m, true});
     }
     for (const NetworkRenderLink &link : snapshot.links)
     {
@@ -809,11 +816,26 @@ void MapBgfxEditorOverlay::globeNetworkIcons(const NetworkRenderSnapshot &snapsh
             continue;
         const CoordinateWGS84 center = deviceLinkCenter(link.vertices_wgs84);
         QPointF point;
-        if (!projector(center.longitude_deg, center.latitude_deg, &point) || !visible(point))
+        double distance_m = 0.0;
+        if (!projector(center.longitude_deg, center.latitude_deg, &point, &distance_m)
+            || !visible(point))
             continue;
-        const Icon icon = this->icon_provider(this->cache, link.entity_type,
-                                               QString(), icon_width, Highlight::None);
-        drawIcon(point.x() - icon.width / 2.0, point.y() - icon.height / 2.0, icon);
+        icons.append({point, link.entity_type, distance_m, false});
+    }
+    std::stable_sort(icons.begin(), icons.end(), [](const VisibleIcon &a, const VisibleIcon &b)
+    {
+        return a.distance_m > b.distance_m;
+    });
+    for (const VisibleIcon &entry : icons)
+    {
+        const Icon icon = this->icon_provider(this->cache, entry.entity,
+                                              QString(), icon_width, Highlight::None);
+        if (entry.bottom_anchored)
+            drawIcon(double(qRound(entry.point.x())),
+                     double(qRound(entry.point.y())) - icon.height, icon);
+        else
+            drawIcon(entry.point.x() - icon.width / 2.0,
+                     entry.point.y() - icon.height / 2.0, icon);
     }
 }
 
@@ -871,7 +893,7 @@ void MapBgfxEditorOverlay::globeTileSelection(const MapEditorViewportRenderState
             const double longitude_deg = normalizeLongitude(tile_x / tiles * 360.0 - 180.0);
             QPointF projected;
             const qsizetype index = qsizetype(row) * lattice_width + column;
-            if (projector(longitude_deg, latitude_deg, &projected))
+            if (projector(longitude_deg, latitude_deg, &projected, nullptr))
             {
                 lattice[index] = MapBgfxHudPoint{projected.x(), projected.y()};
                 lattice_valid[index] = true;
