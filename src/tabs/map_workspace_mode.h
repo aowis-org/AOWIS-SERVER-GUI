@@ -67,10 +67,9 @@ constexpr bool isImplemented(int index)
     return mode != nullptr && mode->tools_implemented;
 }
 
-// Before the single-viewport migration the editor's independent globe used
-// flat billboard symbols (3D models disabled), while the monitor followed its
-// configurable "3D icons" option. Preserve that presentation distinction
-// when the two modes reuse the same MapBgfxSurface.
+// Editor uses its own full-colour pixmaps in the globe HUD overlay (not
+// monitor 3D models). Monitor follows its configurable "3D icons" option.
+// The underlying MapBgfxSurface is shared across both modes.
 constexpr bool useGlobe3dIconModels(int mode, bool monitor_preference = false)
 {
     return mode == DistributionMonitor && monitor_preference;

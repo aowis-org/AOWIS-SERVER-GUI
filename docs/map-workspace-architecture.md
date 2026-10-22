@@ -62,12 +62,15 @@ highlights. The monitor's model-selection and simulation-diagnostic signals
 may change while editing, but cannot overwrite the editor's GPU state; the
 latest selected entity and diagnostics are restored when returning to monitor.
 The monitor reinstates its own HUD action handlers, labels and symbology.
-The shared globe also restores the icon *presentation* on each activation:
-Distribution Editor uses its original flat billboard entity icons, while
-Distribution Monitor follows its configurable 3D icon-model preference.
-This prevents the monitor's GPU icon-model state leaking into the editor.
-The policy is encoded in `MapWorkspace::useGlobe3dIconModels()` and covered
-by the Qt-independent workspace contract test.
+The shared globe also restores icon *presentation* on each activation:
+Distribution Editor disables the generic globe icon atlas and projects its
+full-colour editor pixmaps through the terrain-aware globe overlay, using the
+same icon provider and anchoring as its 2D overlay. Distribution Monitor uses
+its own GPU icon atlas and configurable 3D icon-model preference. The editor
+projection culls off-horizon and off-viewport icons before asking for atlas
+sprites, without regenerating retained GPU network geometry. The mode policy
+is encoded in `MapWorkspace::useGlobe3dIconModels()`, and projection behavior
+is tested independently of bgfx.
 
 `MainWindow` has only one distribution `MapModel`. Camera movement, provider
 changes, zoom edits, GPS navigation and fullscreen edge-panning are routed

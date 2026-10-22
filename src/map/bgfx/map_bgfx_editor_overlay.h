@@ -95,15 +95,17 @@ public:
     // atlas had to be cleared during the build.
     void build(MapBgfxHudCanvas *canvas, MapBgfxHudTextCache *cache, const Inputs &inputs);
 
-    // Globe mode (the editor's 3D view): only the tile-cache selection, laid
-    // on the drawn globe surface through projector (MapBgfxSurface's
-    // GlobeProjector: WGS84 -> logical px, false when hidden). Editing is
-    // 2D only, so nothing else of the editor is drawn on the globe.
+    // Globe mode: use the same full-colour editor entity icons as 2D,
+    // projected onto the terrain-aware globe, plus the tile-cache selection.
+    // Editing interactions themselves remain 2D-only. The network geometry
+    // is drawn by the persistent globe renderer, not rebuilt here.
     using GlobeProjector = std::function<bool(double longitude_deg, double latitude_deg,
                                               QPointF *screen_position)>;
     void buildGlobe(MapBgfxHudCanvas *canvas, MapBgfxHudTextCache *cache,
                     const MapEditorViewportRenderState &viewport_state,
-                    const GlobeProjector &projector);
+                    const GlobeProjector &projector,
+                    const NetworkRenderSnapshot *snapshot = nullptr,
+                    int icon_width = 0, const QSizeF &viewport_size = QSizeF());
     // Globe tile selection lattice: at most this many cells per axis (each
     // lattice point is one projection, relief lookup included), at most
     // this many cells per tile (relief detail along the frame and grid).
@@ -228,6 +230,9 @@ private:
     void tileSelection();
     void globeTileSelection(const MapEditorViewportRenderState &viewport_state,
                             const GlobeProjector &projector);
+    void globeNetworkIcons(const NetworkRenderSnapshot &snapshot,
+                           const GlobeProjector &projector, int icon_width,
+                           const QSizeF &viewport_size);
     void rectangleSelection();
     void staticDetails(bool include_moving);
     void movingNetwork();

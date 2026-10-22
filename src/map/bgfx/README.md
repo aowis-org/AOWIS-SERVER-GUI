@@ -433,7 +433,11 @@ two ground corners (terrain-aware), the tile range between them is drawn on
 the drawn surface by the globe overlay pass (`setGlobeOverlayBuilder()`, a
 `GlobeProjector` per frame: WGS84 -> logical px on the drawn relief, hidden
 behind the camera and beyond the horizon), map tiles green, terrain tiles
-brown (`MapBgfxEditorOverlay::buildGlobe()`).
+brown (`MapBgfxEditorOverlay::buildGlobe()`). In 3D Editor mode the same
+overlay projects its full-colour node and device-link pixmaps onto the globe,
+instead of the monitor's generic GPU star symbols. Only the editor's 3D
+presentation changes; its 2D icon path and the retained globe network geometry
+remain unchanged.
 
 Slice 1, the terrain surface (`map_bgfx_globe_surface.*`):
 

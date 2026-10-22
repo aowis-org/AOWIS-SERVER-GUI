@@ -580,6 +580,77 @@ void testTerrainAndGlobeTileSelection()
         "globe map tile selection frame is green");
 }
 
+// The 3D editor projects its full-colour 2D sprites onto the globe. It must
+// not fall back to the monitor's generic star atlas, and off-horizon entities
+// must not create HUD sprites.
+void testGlobeEditorIcons()
+{
+    Harness harness;
+    Scene s = scene();
+    s.snapshot.nodes.clear();
+    s.snapshot.links.clear();
+    NetworkRenderNode demand;
+    demand.uuid = QUuid::createUuid();
+    demand.entity_type = InfrastructureEntity::DemandPoint;
+    demand.coordinate_wgs84 = coordinate(9.0, 47.0);
+    s.snapshot.nodes.append(demand);
+    NetworkRenderNode junction;
+    junction.uuid = QUuid::createUuid();
+    junction.entity_type = InfrastructureEntity::Junction;
+    junction.coordinate_wgs84 = coordinate(9.0001, 47.0);
+    s.snapshot.nodes.append(junction);
+    NetworkRenderLink pump;
+    pump.uuid = QUuid::createUuid();
+    pump.entity_type = InfrastructureEntity::Pump;
+    pump.vertices_wgs84.append(coordinate(9.0, 47.0));
+    pump.vertices_wgs84.append(coordinate(9.0002, 47.0));
+    s.snapshot.links.append(pump);
+
+    const MapBgfxEditorOverlay::GlobeProjector visible = [](
+        double longitude, double latitude, QPointF *point)
+    {
+        *point = QPointF(400.0 + (longitude - 9.0) * 1.0e5,
+                         300.0 - (latitude - 47.0) * 1.0e5);
+        return true;
+    };
+    harness.overlay.buildGlobe(&harness.canvas, &harness.cache, s.viewport,
+                               visible, &s.snapshot, EntityWidth,
+                               QSizeF(ViewportWidth, ViewportHeight));
+    req(harness.probe.calls.size() == 2,
+        "globe editor renders demand-point and pump pixmaps, not junction stars");
+    req(harness.probe.calls.size() == 2
+        && harness.probe.calls.at(0).entity == InfrastructureEntity::DemandPoint
+        && harness.probe.calls.at(1).entity == InfrastructureEntity::Pump,
+        "globe editor requests its real 2D entity icon types");
+    req(hasSpriteCorner(harness.canvas, harness.cache, 400.0, 300.0 - IconHeight),
+        "globe demand-point icon retains the editor's bottom anchoring");
+    req(hasSpriteCorner(harness.canvas, harness.cache, 400.0 + 10.0 - EntityWidth / 2.0,
+                        300.0 - IconHeight / 2.0),
+        "globe device-link icon is centred like the 2D editor");
+
+    const MapBgfxEditorOverlay::GlobeProjector hidden = [](
+        double, double, QPointF *) { return false; };
+    harness.probe.calls.clear();
+    harness.overlay.buildGlobe(&harness.canvas, &harness.cache, s.viewport,
+                               hidden, &s.snapshot, EntityWidth,
+                               QSizeF(ViewportWidth, ViewportHeight));
+    req(harness.probe.calls.isEmpty() && harness.canvas.vertices().isEmpty(),
+        "off-horizon globe entities never generate icon sprites");
+
+    const MapBgfxEditorOverlay::GlobeProjector offscreen = [](
+        double, double, QPointF *point)
+    {
+        *point = QPointF(1000000.0, 1000000.0);
+        return true;
+    };
+    harness.probe.calls.clear();
+    harness.overlay.buildGlobe(&harness.canvas, &harness.cache, s.viewport,
+                               offscreen, &s.snapshot, EntityWidth,
+                               QSizeF(ViewportWidth, ViewportHeight));
+    req(harness.probe.calls.isEmpty() && harness.canvas.vertices().isEmpty(),
+        "off-viewport globe icons are culled before atlas allocation");
+}
+
 // Attachments run per frame for every demand point: culled, clipped, and
 // without handles where the line is too short to show one.
 void testAttachmentCost()
@@ -706,6 +777,7 @@ int main(int argc, char **argv)
     testDiagnostics();
     testFramesAndAttachments();
     testTerrainAndGlobeTileSelection();
+    testGlobeEditorIcons();
     testAttachmentCost();
     testPanReuse();
     testAntimeridian();

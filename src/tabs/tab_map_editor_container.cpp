@@ -28,6 +28,7 @@
 #include <QShortcut>
 #include <QWheelEvent>
 
+#include <algorithm>
 #include <memory>
 #include <optional>
 
@@ -361,18 +362,17 @@ void MapEditorContainer::applyRenderSurfaceEditorSymbology()
         return;
 
     // The editor look: black pipes and node dots, brown device links, no
-    // GPU icons in 2D (the overlay draws the full-colour editor icons), no
-    // flow. 3D has no editor overlay: there the globe network draws its
-    // icons (re-applied on every view mode switch).
+    // GPU icons in either projection: the editor overlay draws the same
+    // full-colour pixmaps in 2D and projected onto the 3D globe. No flow.
     MapNetworkRenderSymbology symbology;
     symbology.node_size_unit = NetworkSymbologySizeUnit::Pixels;
     symbology.node_size_px = 10;
     symbology.node_size_m = NetworkSymbologyDefaultNodeSizeM;
-    // No GPU icons (show_icons false): their size is irrelevant here.
+    // No generic GPU icons: the editor overlay owns the icon presentation.
     symbology.icon_size_unit = NetworkSymbologySizeUnit::Pixels;
     symbology.icon_size_px = NetworkSymbologyDefaultIconSizePx;
     symbology.icon_size_m = NetworkSymbologyDefaultIconSizeM;
-    symbology.show_icons = this->map_model->viewMode() == MapViewMode::Globe;
+    symbology.show_icons = false;
     symbology.link_thickness_unit = NetworkSymbologySizeUnit::Pixels;
     symbology.link_thickness_px = NetworkSymbologyDefaultLinkThicknessPx;
     symbology.link_thickness_m = NetworkSymbologyDefaultLinkThicknessM;
@@ -451,7 +451,7 @@ void MapEditorContainer::setupBgfxEditor()
     {
         return surface->terrainCoordinateAtScreen(screen_position, coordinate, true);
     });
-    // GPU icons on the globe only (applyRenderSurfaceEditorSymbology()).
+    // The editor overlay draws its pixmaps in both 2D and globe modes.
     // The 2D and the globe overlay share the surface's overlay canvas: the
     // 2D builder must not reuse (pan) a canvas the globe frames rebuilt.
     connect(this->map_model, &MapModel::viewModeChanged, this, [this](MapViewMode)
@@ -601,14 +601,20 @@ void MapEditorContainer::setupBgfxEditor()
             overlay_frame->tile_selection_revision = this->editor_controller->tileSelectionRevision();
             return build.offset;
         };
-    // Globe: the cache sections' tile selection on the drawn surface, built
-    // every globe frame (cheap: a bounded lattice, no network content).
+    // In 3D the editor needs its same full-colour entity pixmaps as in 2D,
+    // not the monitor's generic globe star sprites. Project the icons using
+    // the drawn terrain's globe projector, retaining the GPU network mesh.
     this->editor_globe_overlay_builder = [this, overlay](MapBgfxHudCanvas *canvas, MapBgfxHudTextCache *cache,
-                        const MapBgfxSurface::GlobeProjector &projector, const QSizeF &)
+                        const MapBgfxSurface::GlobeProjector &projector, const QSizeF &viewport)
         {
             const MapEditorViewportRenderState viewport_state =
                 this->map_canvas->viewportRenderState();
-            overlay->buildGlobe(canvas, cache, viewport_state, projector);
+            const double zoom = this->map_model->view2dContinuousZoom();
+            const double base_width = std::clamp(10.0 + (zoom - 16.0) * 10.0, 10.0, 40.0);
+            const int width = qMax(1, qRound(base_width
+                * this->map_canvas->mapCanvasEntities()->iconSizePercent() / 100.0));
+            overlay->buildGlobe(canvas, cache, viewport_state, projector,
+                                &this->hydraulic_data->networkRenderSnapshot(), width, viewport);
         };
     connect(this->map_canvas, &MapCanvasWidget::signalRenderUpdateRequested, this, [this]()
     {

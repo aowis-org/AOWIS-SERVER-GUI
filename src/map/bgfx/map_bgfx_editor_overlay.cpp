@@ -742,18 +742,79 @@ void MapBgfxEditorOverlay::tileSelection()
 
 void MapBgfxEditorOverlay::buildGlobe(MapBgfxHudCanvas *canvas, MapBgfxHudTextCache *cache,
                                       const MapEditorViewportRenderState &viewport_state,
-                                      const GlobeProjector &projector)
+                                      const GlobeProjector &projector,
+                                      const NetworkRenderSnapshot *snapshot, int icon_width,
+                                      const QSizeF &viewport_size)
 {
     canvas->clear();
-    if (!projector || !viewport_state.tile_selection_visible)
+    if (!projector || (!viewport_state.tile_selection_visible
+                       && (snapshot == nullptr || icon_width <= 0)))
         return;
-    cache->beginFrame();
-    canvas->setWhiteTexel(cache->whiteU(), cache->whiteV());
+
     this->canvas = canvas;
     this->cache = cache;
-    globeTileSelection(viewport_state, projector);
+    cache->beginFrame();
+    const auto build = [this, &viewport_state, &projector, snapshot, icon_width, &viewport_size]()
+    {
+        this->canvas->setWhiteTexel(this->cache->whiteU(), this->cache->whiteV());
+        if (viewport_state.tile_selection_visible)
+            globeTileSelection(viewport_state, projector);
+        if (snapshot != nullptr && icon_width > 0 && this->icon_provider)
+            globeNetworkIcons(*snapshot, projector, icon_width, viewport_size);
+    };
+    build();
+    // The atlas may evict while the first icon sizes are created. As with
+    // build(), no draw list may refer to regions of a discarded generation.
+    if (cache->evictedSinceFrameStart())
+    {
+        cache->beginFrame();
+        canvas->clear();
+        build();
+    }
     this->canvas = nullptr;
     this->cache = nullptr;
+}
+
+void MapBgfxEditorOverlay::globeNetworkIcons(const NetworkRenderSnapshot &snapshot,
+                                             const GlobeProjector &projector, int icon_width,
+                                             const QSizeF &viewport_size)
+{
+    // These are precisely the editor's 2D pixmap sprites, rather than the
+    // generic star/device symbols in the globe's monitoring icon atlas.
+    // Project only icon-bearing entities; the retained globe GPU scene
+    // continues to draw the links, junction dots and terrain.
+    const double margin = 2.0 * double(icon_width) + 24.0;
+    const auto visible = [&viewport_size, margin](const QPointF &point)
+    {
+        return point.x() >= -margin && point.y() >= -margin
+            && point.x() <= viewport_size.width() + margin
+            && point.y() <= viewport_size.height() + margin;
+    };
+    for (const NetworkRenderNode &node : snapshot.nodes)
+    {
+        if (node.entity_type == InfrastructureEntity::Junction
+            || !isPointEntity(node.entity_type))
+            continue;
+        QPointF point;
+        if (!projector(node.coordinate_wgs84.longitude_deg,
+                       node.coordinate_wgs84.latitude_deg, &point) || !visible(point))
+            continue;
+        const Icon icon = this->icon_provider(this->cache, node.entity_type,
+                                               QString(), icon_width, Highlight::None);
+        drawIcon(double(qRound(point.x())), double(qRound(point.y())) - icon.height, icon);
+    }
+    for (const NetworkRenderLink &link : snapshot.links)
+    {
+        if (!isDeviceLink(link.entity_type) || link.vertices_wgs84.size() < 2)
+            continue;
+        const CoordinateWGS84 center = deviceLinkCenter(link.vertices_wgs84);
+        QPointF point;
+        if (!projector(center.longitude_deg, center.latitude_deg, &point) || !visible(point))
+            continue;
+        const Icon icon = this->icon_provider(this->cache, link.entity_type,
+                                               QString(), icon_width, Highlight::None);
+        drawIcon(point.x() - icon.width / 2.0, point.y() - icon.height / 2.0, icon);
+    }
 }
 
 void MapBgfxEditorOverlay::globeTileSelection(const MapEditorViewportRenderState &viewport,
