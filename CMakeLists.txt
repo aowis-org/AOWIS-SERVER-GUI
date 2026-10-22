@@ -219,6 +219,8 @@ qt_add_executable(aowis-server-gui
     src/tabs/tab_map_workspace.cpp
     src/tabs/tab_map_workspace.h
     src/tabs/map_workspace_mode.h
+    src/tabs/map_mode_tool_panel.cpp
+    src/tabs/map_mode_tool_panel.h
     src/tabs/tab_map_editor_container.cpp
     src/tabs/tab_map_editor_container.h
     src/tabs/tab_map_monitor_container.cpp
@@ -575,6 +577,20 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
     add_test(NAME aowis-map-workspace-diagnostics
         COMMAND aowis-map-workspace-diagnostics-tests)
     set_tests_properties(aowis-map-workspace-diagnostics PROPERTIES LABELS "aowis")
+
+    # Stage 2: panels are independent QWidget trees; no map model, GPU
+    # surface or native window is needed to build/test their behavior.
+    add_executable(aowis-map-mode-tool-panel-tests
+        tests/map_mode_tool_panel_test.cpp
+        src/tabs/map_mode_tool_panel.cpp)
+    target_include_directories(aowis-map-mode-tool-panel-tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(aowis-map-mode-tool-panel-tests PRIVATE Qt6::Widgets)
+    add_test(NAME aowis-map-mode-tool-panel
+        COMMAND aowis-map-mode-tool-panel-tests)
+    set_tests_properties(aowis-map-mode-tool-panel PROPERTIES
+        LABELS "aowis"
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
     add_executable(aowis-map-provider-fallback-tests
         tests/map_provider_fallback_resolution_test.cpp)
@@ -1137,6 +1153,7 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
         DEPENDS
             aowis-map-workspace-contract-tests
             aowis-map-workspace-diagnostics-tests
+            aowis-map-mode-tool-panel-tests
             aowis-map-provider-fallback-tests
             aowis-bgfx-2d-projection-tests
             aowis-bgfx-2d-imagery-layout-tests

@@ -1,5 +1,6 @@
 #include <aowis/model/units/quantity.h>
 #include "tabs/tab_map_monitor_container.h"
+#include "tabs/map_mode_tool_panel.h"
 
 #include "network/hydraulic_data.h"
 #include "network/network_symbology_values.h"
@@ -332,30 +333,9 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
     this->layout->setContentsMargins(0, 0, 0, 0);
     this->layout->setSpacing(0);
     
-    QScrollArea *scroll_controls = new QScrollArea(this);
-    this->map_menu_scroll = scroll_controls;
-    scroll_controls->setMinimumWidth(Sizes::SidebarLeftWidth);
-    scroll_controls->setMaximumWidth(Sizes::SidebarLeftWidth);
-    scroll_controls->setWidgetResizable(true);
-    scroll_controls->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    scroll_controls->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
-    scroll_controls->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
-    
-    // unfortunately we need to fix widget width depending on scrollbar visible with some black magic
-    connect(scroll_controls->verticalScrollBar(), &QScrollBar::rangeChanged, this, [scroll_controls]
-    {
-        QScrollBar *sb = scroll_controls->verticalScrollBar();
-        bool should_show = sb->maximum() > sb->minimum();
-        
-        int width_base = Sizes::SidebarLeftWidth;
-        int width_sb = sb->sizeHint().width();
-        int w = should_show ? width_base + width_sb : width_base;
-        
-        scroll_controls->setMinimumWidth(w);
-        scroll_controls->setMaximumWidth(w);
-    });
-    
-    scroll_controls->setWidget(this->map_menu);
+    this->tool_panel = new MapModeToolPanel(
+        this->map_menu, Sizes::SidebarLeftWidth,
+        MapModeToolPanel::ScrollbarWidthPolicy::IncludeVisibleScrollbar, false, this);
 
     this->map_stack_layout->setContentsMargins(0, 0, 0, 0);
     this->map_stack_layout->setSpacing(0);
@@ -791,13 +771,7 @@ MapMonitorContainer::MapMonitorContainer(MapModel *map_model, MapTileRepository 
         });
     }
 
-    this->sidebar_panel = new QWidget(this);
-    this->sidebar_panel->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
-    this->sidebar_layout = new QVBoxLayout(this->sidebar_panel);
-    this->sidebar_layout->setContentsMargins(0, 0, 0, 0);
-    this->sidebar_layout->setSpacing(0);
-    this->sidebar_layout->addWidget(scroll_controls);
-    this->layout->addWidget(this->sidebar_panel);
+    this->layout->addWidget(this->tool_panel);
     this->layout->addWidget(this->map_stack);
     
     connect(this->map_menu, &MapMonitorMenuWidget::signalNodeVisualClicked, this,
@@ -1386,8 +1360,7 @@ void MapMonitorContainer::applyMapFullscreen(bool fullscreen)
         return;
 
     this->bgfx_fullscreen_active = fullscreen;
-    if (this->sidebar_panel != nullptr)
-        this->sidebar_panel->setVisible(!fullscreen);
+    this->tool_panel->setMapFullscreen(fullscreen);
     if (this->bgfx_surface != nullptr)
     {
         this->bgfx_surface->setHudFullscreen(fullscreen);
@@ -1500,10 +1473,14 @@ MapWidget *MapMonitorContainer::getMap()
 {
     return this->map;
 }
-void MapMonitorContainer::setModeSelector(QWidget *selector)
+MapModeToolPanel *MapMonitorContainer::toolPanel() const
 {
-    if (selector != nullptr && this->sidebar_layout != nullptr)
-        this->sidebar_layout->insertWidget(0, selector);
+    return this->tool_panel;
+}
+
+QWidget *MapMonitorContainer::mapViewport() const
+{
+    return this->map_stack;
 }
 
 MapNavigationWidget *MapMonitorContainer::mapNavigationWidget()

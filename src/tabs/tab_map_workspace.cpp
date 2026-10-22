@@ -3,6 +3,7 @@
 #include "common/_sizes.h"
 #include "map/render/map_render_diagnostics.h"
 #include "tabs/tab_map_editor_container.h"
+#include "tabs/map_mode_tool_panel.h"
 #include "tabs/tab_map_monitor_container.h"
 
 #include <QDebug>
@@ -23,6 +24,12 @@ MapWorkspaceWidget::MapWorkspaceWidget(MapEditorContainer *editor,
     Q_ASSERT(monitor != nullptr);
     this->monitor_map = monitor->getMap();
     this->editor_map = editor->getMap();
+    this->monitor_tools = monitor->toolPanel();
+    this->editor_tools = editor->toolPanel();
+    Q_ASSERT(this->monitor_tools != nullptr);
+    Q_ASSERT(this->editor_tools != nullptr);
+    Q_ASSERT(monitor->mapViewport() != this->monitor_tools);
+    Q_ASSERT(editor->mapViewport() != this->editor_tools);
 
     QVBoxLayout *layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
@@ -36,8 +43,8 @@ MapWorkspaceWidget::MapWorkspaceWidget(MapEditorContainer *editor,
     this->pages->addWidget(createEmptyModePage(DrainageMonitor));
     this->pages->addWidget(createEmptyModePage(DrainageEditor));
 
-    editor->setModeSelector(createModeSelector(DistributionEditor));
-    monitor->setModeSelector(createModeSelector(DistributionMonitor));
+    this->editor_tools->setModeSelector(createModeSelector(DistributionEditor));
+    this->monitor_tools->setModeSelector(createModeSelector(DistributionMonitor));
     this->pages->setCurrentIndex(DistributionMonitor);
 }
 
@@ -75,6 +82,21 @@ MapModel *MapWorkspaceWidget::activeModel() const
 {
     MapWidget *map = activeMap();
     return map != nullptr ? map->model() : nullptr;
+}
+
+MapModeToolPanel *MapWorkspaceWidget::activeToolPanel() const
+{
+    switch (currentMode())
+    {
+    case DistributionMonitor:
+        return this->monitor_tools;
+    case DistributionEditor:
+        return this->editor_tools;
+    case DrainageMonitor:
+    case DrainageEditor:
+        return nullptr;
+    }
+    return nullptr;
 }
 
 void MapWorkspaceWidget::setCurrentMode(int index)

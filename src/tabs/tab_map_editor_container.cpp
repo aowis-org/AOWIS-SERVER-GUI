@@ -1,4 +1,5 @@
 #include "tabs/tab_map_editor_container.h"
+#include "tabs/map_mode_tool_panel.h"
 #include "config/gui_configuration.h"
 #include "config/shortcut_registry.h"
 
@@ -121,17 +122,10 @@ MapEditorContainer::MapEditorContainer(MapModel *map_model, MapTileRepository *t
     this->layout->setContentsMargins(0, 0, 0, 0);
     this->layout->setSpacing(0);
     
-    QScrollArea *scroll_controls = new QScrollArea(this);
-    this->map_menu_scroll = scroll_controls;
-    scroll_controls->setMinimumWidth(Sizes::SidebarMapEditLeftWidth);
-    scroll_controls->setMaximumWidth(Sizes::SidebarMapEditLeftWidth);
-    scroll_controls->setWidgetResizable(true);
-    scroll_controls->setFrameShape(QFrame::NoFrame);
-    scroll_controls->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    scroll_controls->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
-    scroll_controls->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
-    scroll_controls->setWidget(this->map_menu);
-    
+    this->tool_panel = new MapModeToolPanel(
+        this->map_menu, Sizes::SidebarMapEditLeftWidth,
+        MapModeToolPanel::ScrollbarWidthPolicy::Fixed, true, this);
+
     // Stack (StackAll, all at the map's size): MapWidget (navigation owner,
     // paints only its background), the canvas (editor input, paints
     // nothing), the bgfx surface and the status label.
@@ -155,15 +149,9 @@ MapEditorContainer::MapEditorContainer(MapModel *map_model, MapTileRepository *t
     this->map_stack->installEventFilter(this);
     setupBgfxEditor();
     
-    this->sidebar_panel = new QWidget(this);
-    this->sidebar_panel->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
-    this->sidebar_layout = new QVBoxLayout(this->sidebar_panel);
-    this->sidebar_layout->setContentsMargins(0, 0, 0, 0);
-    this->sidebar_layout->setSpacing(0);
-    this->sidebar_layout->addWidget(scroll_controls);
-    this->layout->addWidget(this->sidebar_panel);
+    this->layout->addWidget(this->tool_panel);
     this->layout->addWidget(this->map_stack);
-    
+
     connect(this->map_menu, &MapEditorMenuWidget::signalSlideOpacityChanged,
             this->map_canvas, &MapCanvasWidget::setBackgroundOpacity);
     connect(this->map_menu->mapNavigationWidget(), &MapNavigationWidget::signalIconSizeChanged,
@@ -897,8 +885,7 @@ void MapEditorContainer::applyMapFullscreen(bool fullscreen)
         return;
 
     this->bgfx_fullscreen_active = fullscreen;
-    if (this->sidebar_panel != nullptr)
-        this->sidebar_panel->setVisible(!fullscreen);
+    this->tool_panel->setMapFullscreen(fullscreen);
     if (this->bgfx_surface != nullptr)
         this->bgfx_surface->setHudFullscreen(fullscreen);
     // Keys belong to the canvas (editor keys; in fullscreen also the left
@@ -951,10 +938,14 @@ MapWidget *MapEditorContainer::getMap()
 {
     return this->map;
 }
-void MapEditorContainer::setModeSelector(QWidget *selector)
+MapModeToolPanel *MapEditorContainer::toolPanel() const
 {
-    if (selector != nullptr && this->sidebar_layout != nullptr)
-        this->sidebar_layout->insertWidget(0, selector);
+    return this->tool_panel;
+}
+
+QWidget *MapEditorContainer::mapViewport() const
+{
+    return this->map_stack;
 }
 
 MapNavigationWidget *MapEditorContainer::mapNavigationWidget()

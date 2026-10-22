@@ -5,6 +5,7 @@
 #include <QList>
 #include <QWidget>
 
+class MapModeToolPanel;
 class MapEditorContainer;
 class MapMonitorContainer;
 class MapWidget;
@@ -48,6 +49,10 @@ public:
     // for switching from separate viewports to one shared viewport later.
     MapWidget *activeMap() const;
     MapModel *activeModel() const;
+    // Stage 2 seam: tools no longer contain a GPU viewport and can later be
+    // hosted directly by the workspace. Legacy pages still host them today.
+    MapModeToolPanel *activeToolPanel() const;
+
 
 public slots:
     void setCurrentMode(int index);
@@ -61,6 +66,8 @@ private:
 
     MapWidget *monitor_map = nullptr;
     MapWidget *editor_map = nullptr;
+    MapModeToolPanel *monitor_tools = nullptr;
+    MapModeToolPanel *editor_tools = nullptr;
     QStackedWidget *pages = nullptr;
     QList<QTabBar *> mode_tabs;
 };

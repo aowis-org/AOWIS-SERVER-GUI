@@ -50,6 +50,8 @@ class QShortcut;
 
 #include "common/_sizes.h"
 
+class MapModeToolPanel;
+
 class MapMonitorMenuWidget : public QWidget
 {
     Q_OBJECT
@@ -118,9 +120,9 @@ public:
     ~MapMonitorContainer() override;
     
     MapWidget *getMap();
+    MapModeToolPanel *toolPanel() const;
+    QWidget *mapViewport() const;
     
-    // Inserts the map-workspace mode tabs above the existing controls.
-    void setModeSelector(QWidget *selector);
     MapNavigationWidget *mapNavigationWidget();
 
 public slots:
@@ -149,9 +151,7 @@ private:
     QLabel *renderer_status = nullptr;
     MapMonitorMenuWidget *map_menu = nullptr;
     // The left menu's scroll area (hidden in map fullscreen).
-    QWidget *sidebar_panel = nullptr;
-    QVBoxLayout *sidebar_layout = nullptr;
-    QScrollArea *map_menu_scroll = nullptr;
+    MapModeToolPanel *tool_panel = nullptr;
     int network_background_opacity = 0;
     NetworkSymbologySettings symbology_settings;
     bool visual_control_symbology_apply_pending = false;

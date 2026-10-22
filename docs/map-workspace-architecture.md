@@ -20,9 +20,16 @@ networks or run distribution editing.
 
 ## Ownership and boundaries
 
-**Present implementation:** `MainWindow` owns two `MapModel`s. The distribution
+**Present implementation (Stage 2):** `MainWindow` owns two `MapModel`s. The distribution
 monitor and editor each own a `MapWidget`, `MapBgfxSurface`, map-specific HUD
-and interaction logic. `MapWorkspaceWidget` owns the pages and tab selectors,
+and interaction logic. Their left controls are now hosted by independent
+`MapModeToolPanel` widgets (`src/tabs/map_mode_tool_panel.h/.cpp`), whose
+ownership includes only the controls, scrolling and mode-selector widgets;
+they never own map models, viewports or GPU resources. The legacy containers
+still host these panels alongside their map stacks, preserving existing widget
+hierarchy and behavior until the renderer migration. The workspace can discover
+the selected panel through `activeToolPanel()` and containers expose
+`toolPanel()` / `mapViewport()` as explicit separation points. `MapWorkspaceWidget` owns the pages and tab selectors,
 but not their renderers. Only one map surface owns the process-global bgfx
 device at a time; switching between distribution modes can stop and start it.
 
@@ -61,8 +68,7 @@ renderers:
 - **Lifecycle:** destruction/recreation of the native surface can still
   require an explicit bgfx device restart. Merely switching modes must not.
 
-Do not merge these ownership changes into one large untestable patch. First
-extract standalone tool panels, then attach the monitor to the shared
+Do not merge these ownership changes into one large untestable patch. The tool-panel extraction is now complete (Stage 2). Next attach the monitor to the shared
 viewport, migrate the editor, and finally remove obsolete sync/device-handover
 logic. Fullscreen and WASM input should remain working at every intermediate
 stage.
@@ -97,14 +103,18 @@ viewport exists already. Once consolidated, a mode switch should increase
 `bgfx_device_stopped` or network geometry counters. Initial startup, a true
 model change, or native surface loss may legitimately affect those counters.
 
-Automated checks:
+Automated checks (including the new Qt Widgets panel ownership test):
 
 ```bash
 ./compile_linux_tests.sh --debug
 ctest --test-dir build-linux-tests-debug --output-on-failure \
-  -R 'aowis-map-(workspace|camera-invalidation|retained-network-scene)'
+  -R 'aowis-map-(workspace|mode-tool-panel|camera-invalidation|retained-network-scene)'
 ```
 
+The tool-panel test checks that each controls tree is independently parented,
+mode tabs remain outside the scroll viewport, scrollbar behavior matches the
+old controls, and fullscreen hides only the requested panel. It runs through
+the `aowis-tests` aggregate build target using Qt's offscreen platform.
 The separate mode-contract test compiles without Qt or a GPU. The diagnostics
 test uses Qt Core but does not create a window. The existing camera
 invalidation and retained-network-scene tests cover zoom/LOD and geometry

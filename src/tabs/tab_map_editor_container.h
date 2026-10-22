@@ -53,6 +53,7 @@
 // editor look, the globe HUD) once the bgfx globe initialized. Network
 // editing is 2D only; the cache sections (map tiles, terrain) select their
 // tiles on the globe as well.
+class MapModeToolPanel;
 class MapBgfxSurface;
 class MapBgfxGlobeHudController;
 class QKeyEvent;
@@ -153,9 +154,11 @@ public:
     ~MapEditorContainer() override;
     
     MapWidget *getMap();
+    // Independent left tools and map viewport, still hosted side by side by
+    // this legacy container until the shared viewport migration.
+    MapModeToolPanel *toolPanel() const;
+    QWidget *mapViewport() const;
     
-    // Inserts the map-workspace mode tabs above the existing controls.
-    void setModeSelector(QWidget *selector);
     MapNavigationWidget *mapNavigationWidget();
     bool isEditNetworkSectionActive() const;
 
@@ -229,9 +232,7 @@ private:
     MapEditorController *editor_controller;
     MapEditorMenuWidget *map_menu;
     // The left menu's scroll area (hidden in map fullscreen).
-    QWidget *sidebar_panel = nullptr;
-    QVBoxLayout *sidebar_layout = nullptr;
-    QScrollArea *map_menu_scroll = nullptr;
+    MapModeToolPanel *tool_panel = nullptr;
     
     QHBoxLayout *layout;
     
