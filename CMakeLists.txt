@@ -612,6 +612,18 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
         LABELS "aowis"
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+    # Native Windows tab padding must not widen the five-icon map sidebar.
+    add_executable(aowis-map-mode-tab-bar-tests
+        tests/map_mode_tab_bar_test.cpp)
+    target_include_directories(aowis-map-mode-tab-bar-tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(aowis-map-mode-tab-bar-tests PRIVATE Qt6::Widgets)
+    add_test(NAME aowis-map-mode-tab-bar
+        COMMAND aowis-map-mode-tab-bar-tests)
+    set_tests_properties(aowis-map-mode-tab-bar PROPERTIES
+        LABELS "aowis"
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
     # The workspace must preserve viewport identity and teardown order.
     add_executable(aowis-map-workspace-viewport-page-tests
         tests/map_workspace_viewport_page_test.cpp
@@ -1255,6 +1267,7 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
             aowis-map-bgfx-layer-visibility-tests
             aowis-map-workspace-diagnostics-tests
             aowis-map-mode-tool-panel-tests
+            aowis-map-mode-tab-bar-tests
             aowis-map-workspace-viewport-page-tests
             aowis-map-provider-fallback-tests
             aowis-bgfx-2d-projection-tests

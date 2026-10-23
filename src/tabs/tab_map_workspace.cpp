@@ -4,6 +4,7 @@
 #include "common/_sizes.h"
 #include "tabs/tab_map_editor_container.h"
 #include "tabs/map_mode_tool_panel.h"
+#include "tabs/map_mode_tab_bar.h"
 #include "tabs/map_workspace_viewport_page.h"
 #include "tabs/tab_map_monitor_container.h"
 
@@ -201,7 +202,7 @@ QWidget *MapWorkspaceWidget::createModeSelector(Mode mode)
 
     // Five compact icon tabs share the existing map sidebar.
     // The full mode name remains visible beneath the icon tabs.
-    QTabBar *tabs = new QTabBar(selector);
+    QTabBar *tabs = new MapModeTabBar(selector);
     tabs->setObjectName(QStringLiteral("mapModeTabs"));
     tabs->setAccessibleName(tr("Map modes"));
     tabs->setExpanding(true);
