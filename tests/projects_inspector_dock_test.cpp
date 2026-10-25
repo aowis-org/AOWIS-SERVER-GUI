@@ -6,6 +6,8 @@
 #include <QEventLoop>
 #include <QLineEdit>
 #include <QPushButton>
+#include <QScrollArea>
+#include <QScrollBar>
 #include <QMainWindow>
 #include <QSplitter>
 #include <QStackedWidget>
@@ -132,6 +134,51 @@ int main(int argc, char **argv)
                      && project_section->title() == QStringLiteral("Projects && Branches"),
                  "project/branch section is missing or incorrectly titled"))
         return 1;
+    // Project/branch creation and both import actions must share exactly one row.
+    // They may shrink to the sidebar width, but must never trigger horizontal scrolling.
+    QScrollArea *sidebar = projects.findChild<QScrollArea *>(
+        QStringLiteral("projectsSidebarScrollArea"));
+    QPushButton *branch_action = projects.findChild<QPushButton *>(
+        QStringLiteral("projectsCreateBranchButton"));
+    QPushButton *import_action = projects.findChild<QPushButton *>(
+        QStringLiteral("projectsImportButton"));
+    QPushButton *load_action = projects.findChild<QPushButton *>(
+        QStringLiteral("projectsLoadExampleButton"));
+    if (!require(sidebar != nullptr && branch_action != nullptr
+                     && import_action != nullptr && load_action != nullptr,
+                 "sidebar action row or scroll area is missing"))
+        return 1;
+    if (!require(branch_action->text() == QStringLiteral("+ Branch")
+                     && import_action->text() == QStringLiteral("Import")
+                     && load_action->text() == QStringLiteral("Load"),
+                 "sidebar action labels are incorrect"))
+        return 1;
+    const auto actions_fit = [&]()
+    {
+        const QRect branch = branch_action->geometry();
+        const QRect import = import_action->geometry();
+        const QRect load = load_action->geometry();
+        const QPoint branch_left = branch_action->mapTo(sidebar->viewport(), QPoint(0, 0));
+        const QPoint load_right = load_action->mapTo(
+            sidebar->viewport(), QPoint(load_action->width() - 1, 0));
+        return branch.y() == import.y() && import.y() == load.y()
+            && branch.right() < import.left() && import.right() < load.left()
+            && branch.width() > 0 && import.width() > 0 && load.width() > 0
+            && branch_left.x() >= 0 && load_right.x() < sidebar->viewport()->width()
+            && sidebar->horizontalScrollBarPolicy() == Qt::ScrollBarAsNeeded
+            && sidebar->horizontalScrollBar()->maximum() == 0
+            && !sidebar->horizontalScrollBar()->isVisible();
+    };
+    if (!require(actions_fit(), "sidebar buttons are not in a single non-scrolling row"))
+        return 1;
+    // Simulate the minimum-width pane, regardless of the current user splitter size.
+    splitter->setSizes(QList<int>{240, 900});
+    app.processEvents();
+    if (!require(actions_fit(), "narrow sidebar creates an overflowing action row"))
+        return 1;
+    splitter->setSizes(QList<int>{295, 720});
+    app.processEvents();
+
     const int default_project_height = project_tree->height();
     const int default_revision_height = revisions->height();
     if (!require(default_project_height >= 190 && default_revision_height >= 220,

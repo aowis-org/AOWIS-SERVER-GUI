@@ -15,6 +15,7 @@
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QSizePolicy>
 #include <QScrollArea>
 #include <QSignalBlocker>
 #include <QSplitter>
@@ -100,6 +101,9 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
 
     QScrollArea *left_scroll = new QScrollArea(splitter);
     left_scroll->setWidgetResizable(true);
+    // Preserve the normal scroll behavior. The action layouts must fit
+    // naturally without disabling horizontal scrolling to hide overflow.
+    left_scroll->setObjectName(QStringLiteral("projectsSidebarScrollArea"));
     left_scroll->setFrameShape(QFrame::NoFrame);
     left_scroll->setMinimumWidth(240);
     QWidget *left = new QWidget(left_scroll);
@@ -112,28 +116,48 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     projects_group->setObjectName(QStringLiteral("projectsCollapsibleGroup"));
     QVBoxLayout *projects_layout = new QVBoxLayout(projects_group);
     QHBoxLayout *project_actions = new QHBoxLayout();
+    project_actions->setSpacing(4);
     QPushButton *create_project = compactButton(tr("+ Project"), tr("Add a project to this GUI preview"), projects_group);
     this->rename_button = compactButton(tr("Rename"), tr("Rename selected project or branch in preview"), projects_group);
     this->delete_button = compactButton(tr("Delete"), tr("Remove selected project or branch from preview"), projects_group);
-    project_actions->addWidget(create_project);
-    project_actions->addWidget(this->rename_button);
-    project_actions->addWidget(this->delete_button);
+    // Keep the existing upper action row responsive at the same narrow widths.
+    for (QPushButton *button : {create_project, this->rename_button, this->delete_button})
+    {
+        button->setMinimumWidth(0);
+        button->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+    }
+    project_actions->addWidget(create_project, 3);
+    project_actions->addWidget(this->rename_button, 2);
+    project_actions->addWidget(this->delete_button, 2);
     projects_layout->addLayout(project_actions);
     this->project_tree = new QTreeWidget(projects_group);
     this->project_tree->setObjectName(QStringLiteral("projectsTree"));
     this->project_tree->setHeaderHidden(true);
     this->project_tree->setIndentation(18);
     this->project_tree->setMinimumHeight(190);
+    this->project_tree->setMinimumWidth(0);
     this->project_tree->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     projects_layout->addWidget(this->project_tree, 1);
+    // Keep all three actions in one row even at the sidebar's minimum width.
+    // Ignored horizontal size hints allow Qt to shrink the buttons rather than
+    // expanding the scroll area's contents and producing a horizontal scrollbar.
+    QHBoxLayout *model_actions = new QHBoxLayout();
+    model_actions->setSpacing(4);
     this->create_branch_button = compactButton(tr("+ Branch"), tr("Create a branch from the current head or selected revision"), projects_group);
-    projects_layout->addWidget(this->create_branch_button);
-    QHBoxLayout *example_actions = new QHBoxLayout();
-    QPushButton *import_button = compactButton(tr("Import EPANET…"), tr("Use the existing network import workflow"), projects_group);
-    this->load_example_button = compactButton(tr("Load example"), tr("Load the selected built-in example with the existing importer"), projects_group);
-    example_actions->addWidget(import_button);
-    example_actions->addWidget(this->load_example_button);
-    projects_layout->addLayout(example_actions);
+    this->create_branch_button->setObjectName(QStringLiteral("projectsCreateBranchButton"));
+    QPushButton *import_button = compactButton(tr("Import"), tr("Import an EPANET network using the existing importer"), projects_group);
+    import_button->setObjectName(QStringLiteral("projectsImportButton"));
+    this->load_example_button = compactButton(tr("Load"), tr("Load the selected built-in example with the existing importer"), projects_group);
+    this->load_example_button->setObjectName(QStringLiteral("projectsLoadExampleButton"));
+    for (QPushButton *button : {this->create_branch_button, import_button, this->load_example_button})
+    {
+        button->setMinimumWidth(0);
+        button->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+    }
+    model_actions->addWidget(this->create_branch_button, 3);
+    model_actions->addWidget(import_button, 2);
+    model_actions->addWidget(this->load_example_button, 2);
+    projects_layout->addLayout(model_actions);
     left_layout->addWidget(projects_group, 1);
 
     GroupBoxCollapsible *revisions_group = new GroupBoxCollapsible(tr("Revisions"), left);
@@ -146,6 +170,7 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     this->revision_tree->setObjectName(QStringLiteral("revisionsTree"));
     this->revision_tree->setHeaderHidden(true);
     this->revision_tree->setMinimumHeight(220);
+    this->revision_tree->setMinimumWidth(0);
     this->revision_tree->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     revisions_layout->addWidget(this->revision_tree, 1);
     left_layout->addWidget(revisions_group, 1);
