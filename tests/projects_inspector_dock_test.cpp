@@ -1,4 +1,5 @@
 #include "tabs/tab_projects_widget.h"
+#include "widgets/group_box_collapsible.h"
 
 #include <QApplication>
 #include <QDockWidget>
@@ -113,6 +114,51 @@ int main(int argc, char **argv)
                      && near(startup_head.y(), graph->revisionViewportPosition(head_id).y()),
                  "first graph display was not already fitted as if Fit graph was clicked"))
         return 1;
+    // Both sidebar trees keep their existing minimum heights and consume
+    // additional vertical space as the Projects page becomes taller.
+    GroupBoxCollapsible *project_section = projects.findChild<GroupBoxCollapsible *>(
+        QStringLiteral("projectsCollapsibleGroup"));
+    GroupBoxCollapsible *revision_section = projects.findChild<GroupBoxCollapsible *>(
+        QStringLiteral("revisionsCollapsibleGroup"));
+    // QGroupBox uses && for a visible ampersand rather than a mnemonic.
+    if (!require(project_section != nullptr && revision_section != nullptr
+                     && project_section->title() == QStringLiteral("Projects && Branches"),
+                 "project/branch section is missing or incorrectly titled"))
+        return 1;
+    const int default_project_height = project_tree->height();
+    const int default_revision_height = revisions->height();
+    if (!require(default_project_height >= 190 && default_revision_height >= 220,
+                 "sidebar trees fell below their existing minimum heights"))
+        return 1;
+    projects.resize(1250, 1040);
+    app.processEvents();
+    if (!require(project_tree->height() > default_project_height + 50
+                     && revisions->height() > default_revision_height + 50,
+                 "extra left-panel space was not distributed to both trees"))
+        return 1;
+    const int expanded_revision_height = revisions->height();
+    project_section->setCollapsed(true);
+    app.processEvents();
+    if (!require(!project_tree->isVisible() && revisions->isVisible()
+                     && revisions->height() > expanded_revision_height + 50,
+                 "collapsing Projects & Branches did not expand the Revisions tree"))
+        return 1;
+    project_section->setCollapsed(false);
+    app.processEvents();
+    const int expanded_project_height = project_tree->height();
+    revision_section->setCollapsed(true);
+    app.processEvents();
+    if (!require(!revisions->isVisible() && project_tree->isVisible()
+                     && project_tree->height() > expanded_project_height + 50,
+                 "collapsing Revisions did not expand the Projects & Branches tree"))
+        return 1;
+    revision_section->setCollapsed(false);
+    projects.resize(1250, 740);
+    app.processEvents();
+    if (!require(project_tree->height() >= 190 && revisions->height() >= 220,
+                 "restoring sidebar sections lost their minimum tree heights"))
+        return 1;
+
     orientation_toggle->click();
     if (!require(orientation_toggle->isChecked() && !graph->isTopDown()
                      && graph->revisionViewportPosition(head_id).y()

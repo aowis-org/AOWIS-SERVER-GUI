@@ -209,29 +209,21 @@ README. The provider-editing API currently has no authentication.
 
 ## Applying patch ZIPs and refreshing project snapshots
 
-Apply a GUI patch (named `aowis-server-gui-*.zip`, with entries under
-`AOWIS-SERVER-GUI/`) using:
+GUI patches use the `aowis-server-gui-*.zip` filename convention and contain
+new or changed files under `AOWIS-SERVER-GUI/`. Apply a patch from this
+repository with:
 
 ```bash
 ./tools/apply_patch.sh /path/to/aowis-server-gui-change.zip
 ```
 
-The script extracts the patch, updates file and directory modification times,
-then **automatically rebuilds the relevant source ZIP snapshots** in the parent
-of `AOWIS-SERVER-GUI/`:
+Applying replaces the included files, refreshes their timestamps for
+CMake/Ninja, and automatically runs the ZIP snapshot scripts for whichever
+repositories the patch touched (`gui.zip`, `model.zip` and/or `epanet.zip`).
+Snapshots are created next to the GUI checkout. Patch application does **not**
+compile or test the application, and a snapshot error does not roll back
+already-extracted files.
 
-- Changes to GUI files (including `tools/`, `src/`, `tests/`, or docs) invoke
-  `tools/zip_gui_project.sh` to regenerate `gui.zip`.
-- Changes beneath `external/AOWIS-SERVER-MODEL/` invoke
-  `tools/zip_model_project.sh` to regenerate `model.zip`.
-- Changes beneath `external/AOWIS-SERVER-EPANET/` invoke
-  `tools/zip_epanet_project.sh` to regenerate `epanet.zip`.
-
-Mixed patches run every affected snapshot script once. Directory-only entries
-are ignored. Unaffected ZIPs are left untouched. These snapshots are for sharing
-sources; the scripts do not compile or run tests. The `zip` and `unzip` tools
-must be available. Because the snapshot scripts run after extraction, a snapshot
-failure returns a nonzero status **without reverting the applied patch**.
-
-The routing behavior can be checked independently of Qt with
-`bash tests/apply_patch_script_test.sh`.
+**See [Patch ZIP workflow and snapshot regeneration](docs/apply-patches.md)**
+for detailed path rules, making ZIP patches, submodule caveats, excluded
+assets, failure recovery, and the standalone test command.

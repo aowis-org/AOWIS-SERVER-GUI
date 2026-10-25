@@ -107,7 +107,8 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     left_layout->setContentsMargins(8, 8, 8, 8);
     left_layout->setSpacing(10);
 
-    GroupBoxCollapsible *projects_group = new GroupBoxCollapsible(tr("Projects"), left);
+    // QGroupBox interprets a single & as a mnemonic marker. Use && for a visible ampersand.
+    GroupBoxCollapsible *projects_group = new GroupBoxCollapsible(tr("Projects && Branches"), left);
     projects_group->setObjectName(QStringLiteral("projectsCollapsibleGroup"));
     QVBoxLayout *projects_layout = new QVBoxLayout(projects_group);
     QHBoxLayout *project_actions = new QHBoxLayout();
@@ -123,7 +124,8 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     this->project_tree->setHeaderHidden(true);
     this->project_tree->setIndentation(18);
     this->project_tree->setMinimumHeight(190);
-    projects_layout->addWidget(this->project_tree);
+    this->project_tree->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    projects_layout->addWidget(this->project_tree, 1);
     this->create_branch_button = compactButton(tr("+ Branch"), tr("Create a branch from the current head or selected revision"), projects_group);
     projects_layout->addWidget(this->create_branch_button);
     QHBoxLayout *example_actions = new QHBoxLayout();
@@ -135,7 +137,7 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     QPushButton *show_on_map = compactButton(tr("Show network on map"),
         tr("Fit the currently loaded hydraulic network in Maps"), projects_group);
     projects_layout->addWidget(show_on_map);
-    left_layout->addWidget(projects_group);
+    left_layout->addWidget(projects_group, 1);
 
     GroupBoxCollapsible *revisions_group = new GroupBoxCollapsible(tr("Revisions"), left);
     revisions_group->setObjectName(QStringLiteral("revisionsCollapsibleGroup"));
@@ -147,9 +149,37 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     this->revision_tree->setObjectName(QStringLiteral("revisionsTree"));
     this->revision_tree->setHeaderHidden(true);
     this->revision_tree->setMinimumHeight(220);
-    revisions_layout->addWidget(this->revision_tree);
-    left_layout->addWidget(revisions_group);
-    left_layout->addStretch(1);
+    this->revision_tree->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    revisions_layout->addWidget(this->revision_tree, 1);
+    left_layout->addWidget(revisions_group, 1);
+    left_layout->addStretch(0);
+
+    // Give the trees any spare sidebar height without reducing their existing
+    // minimum heights. When a section is collapsed, its header should remain
+    // compact and the other expanded tree should use the freed space.
+    const auto update_section_stretches = [left_layout, projects_group, revisions_group]()
+    {
+        const bool projects_expanded = !projects_group->isCollapsed();
+        const bool revisions_expanded = !revisions_group->isCollapsed();
+        projects_group->setSizePolicy(QSizePolicy::Preferred,
+            projects_expanded ? QSizePolicy::Expanding : QSizePolicy::Maximum);
+        revisions_group->setSizePolicy(QSizePolicy::Preferred,
+            revisions_expanded ? QSizePolicy::Expanding : QSizePolicy::Maximum);
+        left_layout->setStretch(left_layout->indexOf(projects_group), projects_expanded ? 1 : 0);
+        left_layout->setStretch(left_layout->indexOf(revisions_group), revisions_expanded ? 1 : 0);
+        left_layout->setStretch(left_layout->count() - 1,
+            (!projects_expanded && !revisions_expanded) ? 1 : 0);
+        left_layout->invalidate();
+    };
+    connect(projects_group, &GroupBoxCollapsible::signalExpanded, left,
+            [update_section_stretches](GroupBoxCollapsible *) { update_section_stretches(); });
+    connect(projects_group, &GroupBoxCollapsible::signalCollapsed, left,
+            [update_section_stretches](GroupBoxCollapsible *) { update_section_stretches(); });
+    connect(revisions_group, &GroupBoxCollapsible::signalExpanded, left,
+            [update_section_stretches](GroupBoxCollapsible *) { update_section_stretches(); });
+    connect(revisions_group, &GroupBoxCollapsible::signalCollapsed, left,
+            [update_section_stretches](GroupBoxCollapsible *) { update_section_stretches(); });
+    update_section_stretches();
     left_scroll->setWidget(left);
     splitter->addWidget(left_scroll);
 
