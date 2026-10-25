@@ -150,6 +150,105 @@ int main(int argc, char **argv)
                      < graph.revisionViewportPosition(latest.id).y(),
                  "returning to top-down did not restore parent-first layout"))
         return 1;
+    // Editable-heads canvas mode must retain a visible, clickable summary of
+    // every hidden ancestry path. Unfolding one path must not expand the other.
+    ProjectGraphNode main_head = node;
+    main_head.id = QStringLiteral("head-main");
+    main_head.parents = {QStringLiteral("main-intermediate")};
+    main_head.position = QPointF(0, 0);
+    ProjectGraphNode scenario_head = node;
+    scenario_head.id = QStringLiteral("head-scenario");
+    scenario_head.branch = QStringLiteral("scenario");
+    scenario_head.head_branch = QStringLiteral("scenario");
+    scenario_head.parents = {QStringLiteral("intermediate")};
+    scenario_head.position = QPointF(285, 155);
+    ProjectGraphNode intermediate = scenario_head;
+    intermediate.id = QStringLiteral("intermediate");
+    intermediate.head_branch.clear();
+    intermediate.parents = {QStringLiteral("root")};
+    intermediate.position = QPointF(285, 310);
+    ProjectGraphNode main_intermediate = main_head;
+    main_intermediate.id = QStringLiteral("main-intermediate");
+    main_intermediate.head_branch.clear();
+    main_intermediate.parents = {QStringLiteral("root")};
+    main_intermediate.position = QPointF(0, 310);
+    ProjectGraphNode root = main_head;
+    root.id = QStringLiteral("root");
+    root.head_branch.clear();
+    root.parents.clear();
+    root.position = QPointF(0, 465);
+    graph.setNodes(QVector<ProjectGraphNode>{main_head, scenario_head, main_intermediate, intermediate, root});
+    if (!require(graph.showsFullTree() && graph.omissionCount() == 0,
+                 "revision graph must default to Full tree"))
+        return 1;
+    graph.setShowFullTree(false);
+    if (!require(!graph.showsFullTree() && graph.omissionCount() == 2
+                     && !graph.revisionViewportPosition(root.id).isNull()
+                     && graph.revisionViewportPosition(main_intermediate.id).isNull()
+                     && graph.revisionViewportPosition(main_head.id) != QPointF(),
+                 "Editable heads must preserve the shared ancestor and fold intervening paths"))
+        return 1;
+    // Fold markers must lie *between* a visible branch ancestor and each
+    // head; an isolated "hidden history" bubble breaks the DAG visually.
+    const double root_y = graph.revisionViewportPosition(root.id).y();
+    const double furthest_head_y = qMax(graph.revisionViewportPosition(main_head.id).y(),
+                                         graph.revisionViewportPosition(scenario_head.id).y());
+    for (int i = 0; i < graph.omissionCount(); ++i)
+    {
+        const double marker_y = graph.omissionViewportPosition(i).y();
+        if (!require(marker_y > root_y && marker_y < furthest_head_y,
+                     "fold marker must lie on the visible root-to-head branch connection"))
+            return 1;
+    }
+    // Pick the folded history belonging to main, not scenario.
+    int main_fold = -1;
+    for (int i = 0; i < graph.omissionCount(); ++i)
+        if (std::abs(graph.omissionViewportPosition(i).x()
+            - graph.revisionViewportPosition(root.id).x()) < 0.1) main_fold = i;
+    if (!require(main_fold >= 0, "could not find the main branch history fold"))
+        return 1;
+    click(graph, graph.omissionViewportPosition(main_fold));
+    if (!require(!graph.showsFullTree() && graph.omissionCount() == 1
+                     && !graph.revisionViewportPosition(main_intermediate.id).isNull()
+                     && graph.revisionViewportPosition(intermediate.id).isNull(),
+                 "unfolding a graph omission expanded unrelated history or changed view mode"))
+        return 1;
+    click(graph, graph.omissionViewportPosition(0));
+    if (!require(graph.omissionCount() == 0
+                     && !graph.revisionViewportPosition(intermediate.id).isNull(),
+                 "unfolding the remaining history path failed"))
+        return 1;
+    // Mode changes reset local unfolding. Otherwise the two-state control
+    // appears to do nothing after every omission has been expanded.
+    graph.setShowFullTree(true);
+    if (!require(graph.showsFullTree() && graph.omissionCount() == 0,
+                 "returning to Full tree did not restore all revisions"))
+        return 1;
+    graph.setShowFullTree(false);
+    if (!require(graph.omissionCount() == 2
+                     && graph.revisionViewportPosition(main_intermediate.id).isNull()
+                     && graph.revisionViewportPosition(intermediate.id).isNull(),
+                 "switching back to Editable heads retained old expanded paths"))
+        return 1;
+    graph.expandOmission(0);
+    graph.setShowFullTree(false); // pressing the selected mode re-folds history
+    if (!require(graph.omissionCount() == 2,
+                 "clicking Editable heads again must collapse expanded history"))
+        return 1;
+    graph.setNodes(QVector<ProjectGraphNode>{scenario_head, intermediate, root});
+    if (!require(graph.omissionCount() == 1
+                     && graph.revisionViewportPosition(root.id).isNull(),
+                 "loading a new DAG retained expansion state from the old graph"))
+        return 1;
+    graph.setShowFullTree(true);
+    graph.setNodes(QVector<ProjectGraphNode>{main_head, scenario_head, main_intermediate, intermediate, root});
+    graph.setShowFullTree(false);
+    graph.setSelection(intermediate.id);
+    if (!require(!graph.showsFullTree()
+                     && !graph.revisionViewportPosition(intermediate.id).isNull(),
+                 "selecting history in the sidebar must unfold its graph branch"))
+        return 1;
+    graph.setShowFullTree(true);
     graph.setNodes(QVector<ProjectGraphNode>{node});
     graph.fitGraph();
 

@@ -17,6 +17,10 @@
 #include <QWheelEvent>
 #include <QtMath>
 #include <cmath>
+#include <algorithm>
+#include <functional>
+#include <limits>
+#include <QHash>
 
 namespace
 {
@@ -110,25 +114,250 @@ ProjectRevisionGraph::ProjectRevisionGraph(QWidget *parent)
 
 void ProjectRevisionGraph::rebuildDisplayNodes()
 {
-    // The source list is newest-first. In a *top-down* history the root is
-    // above its descendants and HEAD is near the bottom. The source layout
-    // therefore needs reflecting for the default orientation. Bottom-up
-    // keeps the original newest-at-the-top coordinates. Reflect positions,
-    // not QPainter's coordinate system, so all labels and hit targets are
-    // upright in both orientations.
-    this->nodes = this->source_nodes;
-    if (!this->top_down || this->nodes.isEmpty())
-        return;
+    this->nodes.clear();
+    this->omissions.clear();
+    QHash<QString, const ProjectGraphNode *> by_id;
+    for (const ProjectGraphNode &node : this->source_nodes)
+        by_id.insert(node.id, &node);
 
-    double min_y = this->nodes.first().position.y();
-    double max_y = min_y;
+    QSet<QString> visible;
+    if (this->show_full_tree)
+    {
+        for (const ProjectGraphNode &node : this->source_nodes)
+            visible.insert(node.id);
+    }
+    else
+    {
+        // Always preserve the heads and their real branch junctions. For
+        // example, two branch HEADs must both remain connected to their
+        // common ancestor, even when the history between them is folded.
+        QHash<QString, int> descendant_head_counts;
+        QHash<QString, QStringList> children_by_id;
+        for (const ProjectGraphNode &node : this->source_nodes)
+            for (const QString &parent_id : node.parents)
+                children_by_id[parent_id].append(node.id);
+
+        for (const ProjectGraphNode &head : this->source_nodes)
+        {
+            if (head.head_branch.isEmpty())
+                continue;
+            QSet<QString> visited;
+            std::function<void(const QString &)> visit;
+            visit = [&](const QString &id)
+            {
+                if (visited.contains(id) || !by_id.contains(id))
+                    return;
+                visited.insert(id);
+                ++descendant_head_counts[id];
+                for (const QString &parent : by_id.value(id)->parents)
+                    visit(parent);
+            };
+            visit(head.id);
+        }
+
+        for (const ProjectGraphNode &node : this->source_nodes)
+        {
+            if (!node.head_branch.isEmpty() || this->expanded_revisions.contains(node.id))
+                visible.insert(node.id);
+            const int count = descendant_head_counts.value(node.id);
+            if (count < 2)
+                continue;
+            // Retain the nearest shared ancestor at each branch junction,
+            // rather than showing an entire shared trunk. A branch point
+            // cannot have a descendant with the same set of HEADs.
+            bool deeper_common_ancestor = false;
+            for (const QString &child_id : children_by_id.value(node.id))
+                if (descendant_head_counts.value(child_id) == count)
+                {
+                    deeper_common_ancestor = true;
+                    break;
+                }
+            if (!deeper_common_ancestor)
+                visible.insert(node.id);
+        }
+    }
+
+    for (const ProjectGraphNode &node : this->source_nodes)
+        if (visible.contains(node.id))
+            this->nodes.append(node);
+
+    if (!this->show_full_tree)
+    {
+        for (const ProjectGraphNode &node : this->nodes)
+        {
+            for (const QString &parent_id : node.parents)
+            {
+                if (visible.contains(parent_id) || !by_id.contains(parent_id))
+                    continue;
+
+                QSet<QString> hidden;
+                QSet<QString> visible_ancestors;
+                std::function<void(const QString &)> walk;
+                walk = [&](const QString &id)
+                {
+                    if (visible.contains(id))
+                    {
+                        visible_ancestors.insert(id);
+                        return;
+                    }
+                    if (hidden.contains(id))
+                        return;
+                    const ProjectGraphNode *ancestor = by_id.value(id, nullptr);
+                    if (ancestor == nullptr)
+                        return;
+                    hidden.insert(id);
+                    for (const QString &parent : ancestor->parents)
+                        walk(parent);
+                };
+                walk(parent_id);
+
+                if (visible_ancestors.isEmpty())
+                {
+                    // A single-head project can still summarize old history
+                    // without manufacturing a non-existent branch junction.
+                    Omission omission;
+                    omission.hidden_parent_id = parent_id;
+                    omission.visible_child_id = node.id;
+                    omission.position = node.position + QPointF(0.0, 80.0);
+                    omission.revision_count = hidden.size();
+                    this->omissions.append(omission);
+                }
+                else
+                {
+                    for (const QString &ancestor_id : visible_ancestors)
+                    {
+                        const ProjectGraphNode *ancestor = by_id.value(ancestor_id);
+                        if (ancestor == nullptr)
+                            continue;
+                        Omission omission;
+                        omission.hidden_parent_id = parent_id;
+                        omission.visible_parent_id = ancestor_id;
+                        omission.visible_child_id = node.id;
+                        omission.position = (node.position + ancestor->position) / 2.0;
+                        omission.revision_count = hidden.size();
+                        this->omissions.append(omission);
+                    }
+                }
+            }
+        }
+
+        // Repack remaining nodes and folded-history markers so hiding ancestry
+        // does not leave the full graph's large empty vertical gaps behind.
+        QVector<double> levels;
+        for (const ProjectGraphNode &node : this->nodes)
+            levels.append(node.position.y());
+        for (const Omission &omission : this->omissions)
+            levels.append(omission.position.y());
+        std::sort(levels.begin(), levels.end());
+        levels.erase(std::unique(levels.begin(), levels.end()), levels.end());
+        for (ProjectGraphNode &node : this->nodes)
+            node.position.setY(double(std::lower_bound(levels.begin(), levels.end(),
+                node.position.y()) - levels.begin()) * 155.0);
+        for (Omission &omission : this->omissions)
+            omission.position.setY(double(std::lower_bound(levels.begin(), levels.end(),
+                omission.position.y()) - levels.begin()) * 155.0);
+    }
+
+    // Reflect positions, not the painter transform: labels and click targets
+    // stay upright. Source positions run from newest to oldest.
+    if (!this->top_down || (this->nodes.isEmpty() && this->omissions.isEmpty()))
+        return;
+    double min_y = std::numeric_limits<double>::max();
+    double max_y = std::numeric_limits<double>::lowest();
     for (const ProjectGraphNode &node : this->nodes)
     {
         min_y = qMin(min_y, node.position.y());
         max_y = qMax(max_y, node.position.y());
     }
+    for (const Omission &omission : this->omissions)
+    {
+        min_y = qMin(min_y, omission.position.y());
+        max_y = qMax(max_y, omission.position.y());
+    }
     for (ProjectGraphNode &node : this->nodes)
         node.position.setY(min_y + max_y - node.position.y());
+    for (Omission &omission : this->omissions)
+        omission.position.setY(min_y + max_y - omission.position.y());
+}
+
+void ProjectRevisionGraph::setShowFullTree(bool full_tree)
+{
+    // Returning from Full tree, or clicking Editable heads again, must fold
+    // back any paths unfolded interactively in the previous heads-only view.
+    // Otherwise the mode control appears to stop working after a graph click.
+    if (this->show_full_tree == full_tree
+        && (full_tree || this->expanded_revisions.isEmpty()))
+        return;
+    if (!full_tree)
+        this->expanded_revisions.clear();
+    this->show_full_tree = full_tree;
+    rebuildDisplayNodes();
+    if (this->pending_fit)
+        scheduleInitialFit();
+    else
+        fitGraph();
+}
+
+bool ProjectRevisionGraph::showsFullTree() const
+{
+    return this->show_full_tree;
+}
+
+int ProjectRevisionGraph::omissionCount() const
+{
+    return this->omissions.size();
+}
+
+QPointF ProjectRevisionGraph::omissionViewportPosition(int index) const
+{
+    if (index < 0 || index >= this->omissions.size())
+        return QPointF();
+    return graphToViewport(this->omissions.at(index).position);
+}
+
+void ProjectRevisionGraph::expandHiddenAncestors(const QString &parent_id)
+{
+    QHash<QString, const ProjectGraphNode *> by_id;
+    for (const ProjectGraphNode &node : this->source_nodes)
+        by_id.insert(node.id, &node);
+    std::function<void(const QString &)> expand;
+    expand = [&](const QString &id)
+    {
+        const ProjectGraphNode *node = by_id.value(id, nullptr);
+        if (node == nullptr || this->expanded_revisions.contains(id))
+            return;
+        this->expanded_revisions.insert(id);
+        for (const QString &parent : node->parents)
+            expand(parent);
+    };
+    expand(parent_id);
+    rebuildDisplayNodes();
+    if (this->pending_fit)
+        scheduleInitialFit();
+    else
+        fitGraph();
+}
+
+void ProjectRevisionGraph::expandOmission(int index)
+{
+    if (index < 0 || index >= this->omissions.size())
+        return;
+    const QString parent_id = this->omissions.at(index).hidden_parent_id;
+    expandHiddenAncestors(parent_id);
+}
+
+QRectF ProjectRevisionGraph::omissionRect(const Omission &omission) const
+{
+    return QRectF(omission.position.x() - node_width / 2.0,
+                  omission.position.y() - 29.0, node_width, 58.0);
+}
+
+const ProjectRevisionGraph::Omission *ProjectRevisionGraph::hitOmission(const QPointF &point) const
+{
+    for (const Omission &omission : this->omissions)
+        if (omissionRect(omission).contains(point))
+            return &omission;
+    return nullptr;
 }
 
 void ProjectRevisionGraph::setNodes(const QVector<ProjectGraphNode> &nodes)
@@ -143,13 +372,16 @@ void ProjectRevisionGraph::setNodes(const QVector<ProjectGraphNode> &nodes)
             const ProjectGraphNode &old_node = this->source_nodes.at(i);
             const ProjectGraphNode &new_node = nodes.at(i);
             if (old_node.id != new_node.id || old_node.position != new_node.position
-                || old_node.parents != new_node.parents)
+                || old_node.parents != new_node.parents
+                || old_node.head_branch != new_node.head_branch)
             {
                 same_layout = false;
                 break;
             }
         }
     }
+    if (!same_layout)
+        this->expanded_revisions.clear();
     this->source_nodes = nodes;
     rebuildDisplayNodes();
     if (same_layout)
@@ -182,6 +414,47 @@ void ProjectRevisionGraph::setSelection(const QString &revision_id)
     if (this->selected_revision == revision_id)
         return;
     this->selected_revision = revision_id;
+    if (!this->show_full_tree && !revision_id.isEmpty())
+    {
+        bool visible = false;
+        for (const ProjectGraphNode &node : this->nodes)
+            if (node.id == revision_id) { visible = true; break; }
+        if (!visible)
+        {
+            // A historical revision selected from the left panel must never
+            // become an invisible graph selection. Unfold the containing head
+            // path, leaving the other branches in heads-only mode.
+            QHash<QString, const ProjectGraphNode *> by_id;
+            for (const ProjectGraphNode &node : this->source_nodes)
+                by_id.insert(node.id, &node);
+            std::function<bool(const QString &, QSet<QString> &)> contains;
+            contains = [&](const QString &id, QSet<QString> &visited) -> bool
+            {
+                if (id == revision_id) return true;
+                if (visited.contains(id)) return false;
+                visited.insert(id);
+                const ProjectGraphNode *node = by_id.value(id, nullptr);
+                if (node == nullptr) return false;
+                for (const QString &parent_id : node->parents)
+                    if (contains(parent_id, visited)) return true;
+                return false;
+            };
+            bool revealed = false;
+            for (const ProjectGraphNode &head : this->source_nodes)
+            {
+                if (head.head_branch.isEmpty()) continue;
+                for (const QString &parent_id : head.parents)
+                {
+                    QSet<QString> visited;
+                    if (!contains(parent_id, visited)) continue;
+                    expandHiddenAncestors(parent_id);
+                    revealed = true;
+                }
+            }
+            if (!revealed)
+                expandHiddenAncestors(revision_id);
+        }
+    }
     update();
 }
 
@@ -257,6 +530,8 @@ void ProjectRevisionGraph::fitGraph()
     QRectF bounds;
     for (const ProjectGraphNode &node : this->nodes)
         bounds = bounds.isNull() ? nodeRect(node) : bounds.united(nodeRect(node));
+    for (const Omission &omission : this->omissions)
+        bounds = bounds.isNull() ? omissionRect(omission) : bounds.united(omissionRect(omission));
     bounds.adjust(-76, -85, 76, 85);
     this->zoom = qBound(min_zoom, qMin((width() - 32.0) / bounds.width(),
                                   (height() - 32.0) / bounds.height()), 1.5);
@@ -330,6 +605,36 @@ void ProjectRevisionGraph::paintEvent(QPaintEvent *event)
     painter.translate(this->offset);
     painter.scale(this->zoom, this->zoom);
 
+    // A collapsed path is a real edge between its visible ancestor and
+    // descendant, passing through a clickable omission marker. Both halves
+    // remain drawn so branch connectivity does not disappear in heads mode.
+    for (const Omission &omission : this->omissions)
+    {
+        const ProjectGraphNode *child = nullptr;
+        const ProjectGraphNode *parent = nullptr;
+        for (const ProjectGraphNode &node : this->nodes)
+        {
+            if (node.id == omission.visible_child_id) child = &node;
+            if (node.id == omission.visible_parent_id) parent = &node;
+        }
+        if (child == nullptr) continue;
+        const double sign = this->top_down ? 1.0 : -1.0;
+        painter.setPen(QPen(tint(accent, 145), 2.5, Qt::DashLine, Qt::RoundCap));
+        painter.setBrush(Qt::NoBrush);
+        const auto draw_segment = [&](const QPointF &begin, const QPointF &end)
+        {
+            QPainterPath path(begin);
+            path.cubicTo(begin + QPointF(0, sign * 40.0),
+                         end - QPointF(0, sign * 40.0), end);
+            painter.drawPath(path);
+        };
+        if (parent != nullptr)
+            draw_segment(parent->position + QPointF(0, sign * node_height / 2.0),
+                         omission.position - QPointF(0, sign * 29.0));
+        draw_segment(omission.position + QPointF(0, sign * 29.0),
+                     child->position - QPointF(0, sign * node_height / 2.0));
+    }
+
     // Parents can belong to any branch: derive edges from immutable IDs, not
     // from a first-parent-only visible history list.
     for (const ProjectGraphNode &node : this->nodes)
@@ -401,6 +706,19 @@ void ProjectRevisionGraph::paintEvent(QPaintEvent *event)
             painter.setPen(ink);
             painter.drawText(head, Qt::AlignCenter, QStringLiteral("HEAD"));
         }
+    }
+    // Fold markers are explicitly interactive graph elements, not tooltips.
+    painter.setFont(small_font);
+    for (const Omission &omission : this->omissions)
+    {
+        const QRectF box = omissionRect(omission);
+        painter.setPen(QPen(tint(accent, 180), 2, Qt::DashLine));
+        painter.setBrush(tint(accent, 28));
+        painter.drawRoundedRect(box, 10, 10);
+        painter.setPen(ink);
+        painter.drawText(box.adjusted(8, 4, -8, -4), Qt::AlignCenter | Qt::TextWordWrap,
+                         tr("+ %n hidden revision(s)\nClick to unfold", nullptr,
+                            omission.revision_count));
     }
     painter.restore();
 }
@@ -584,7 +902,12 @@ void ProjectRevisionGraph::mouseReleaseEvent(QMouseEvent *event)
         if (!this->dragging)
         {
             const QPointF point = mapToGraph(event->position());
-            if (const ProjectGraphNode *node = hitNode(point))
+            if (const Omission *omission = hitOmission(point))
+            {
+                const QString parent_id = omission->hidden_parent_id;
+                expandHiddenAncestors(parent_id);
+            }
+            else if (const ProjectGraphNode *node = hitNode(point))
             {
                 // The branch badge has a separate hit target from the revision.
                 const QRectF pill(nodeRect(*node).left() + 14,

@@ -3,6 +3,7 @@
 
 #include <QApplication>
 #include <QDockWidget>
+#include <QFrame>
 #include <QEventLoop>
 #include <QLineEdit>
 #include <QPushButton>
@@ -137,6 +138,52 @@ int main(int argc, char **argv)
                      && scenario_start->text(0) == QStringLiteral("Scenario start")
                      && scenario_head->text(0) == QStringLiteral("Pressure tuning"),
                  "Revision labels must contain names only, never hashes"))
+        return 1;
+
+    QPushButton *graph_heads_view = projects.findChild<QPushButton *>(
+        QStringLiteral("projectsGraphHeadsOnlyButton"));
+    QPushButton *graph_full_view = projects.findChild<QPushButton *>(
+        QStringLiteral("projectsGraphFullTreeButton"));
+    QFrame *graph_view_switch = projects.findChild<QFrame *>(
+        QStringLiteral("projectsGraphViewSegmentedControl"));
+    if (!require(graph_heads_view != nullptr && graph_full_view != nullptr
+                     && graph_view_switch != nullptr
+                     && graph_heads_view->parentWidget() == graph_view_switch
+                     && graph_full_view->parentWidget() == graph_view_switch
+                     && graph_full_view->isChecked() && graph->showsFullTree(),
+                 "graph modes must be visibly grouped with Full tree selected by default"))
+        return 1;
+    graph_heads_view->click();
+    app.processEvents();
+    if (!require(graph_heads_view->isChecked() && !graph->showsFullTree()
+                     && graph->omissionCount() == 1
+                     && !graph->revisionViewportPosition(baseline_id).isNull()
+                     && revisions->topLevelItemCount() == 1,
+                 "graph heads mode must retain the common ancestor and fold history"))
+        return 1;
+    graph->expandOmission(0);
+    app.processEvents();
+    if (!require(!graph->showsFullTree() && graph->omissionCount() == 0
+                     && revisions->topLevelItemCount() == 1,
+                 "graph omission expansion changed sidebar filter or did not unfold"))
+        return 1;
+    graph_full_view->click();
+    app.processEvents();
+    if (!require(graph_full_view->isChecked() && !graph_heads_view->isChecked()
+                     && graph->showsFullTree() && graph->omissionCount() == 0,
+                 "graph Full tree did not restore hidden history"))
+        return 1;
+    graph_heads_view->click();
+    app.processEvents();
+    if (!require(graph_heads_view->isChecked() && !graph_full_view->isChecked()
+                     && !graph->showsFullTree() && graph->omissionCount() == 1,
+                 "switching back to Editable heads must re-fold the graph"))
+        return 1;
+    graph->expandOmission(0);
+    graph_heads_view->click();
+    app.processEvents();
+    if (!require(graph_heads_view->isChecked() && graph->omissionCount() == 1,
+                 "pressing the active Editable heads control must re-fold expanded history"))
         return 1;
 
     heads_view->click();

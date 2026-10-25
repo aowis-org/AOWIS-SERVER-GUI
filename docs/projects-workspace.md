@@ -41,7 +41,20 @@ current editor network; **it is not a DB project/branch checkout**.
   tooltip or instructional overlay obscuring graph nodes. A **Top down / Bottom up**
   toggle above the graph controls revision flow (default: Top down, oldest
   root above its descendants, newest HEAD at the bottom), reflecting only the DAG's vertical layout so labels and hit targets
-  remain upright. **Fit graph** remains available, but the graph also fits
+  remain upright. The canvas additionally has its own **Editable heads / Full
+  tree** segmented control, independent of the left sidebar. The active mode
+  is highlighted and **Full tree** is the default. **Editable heads** keeps
+  branch HEADs and their nearest shared branch ancestors visible, with
+  dashed, clickable folded-history markers on the connections between them.
+  The branches stay visibly connected through their common ancestor even when
+  their intermediate histories are folded. Each marker shows the number of
+  hidden revisions; clicking it reveals that path without expanding unrelated
+  branches. Switching from Full tree back to Editable heads, or clicking the
+  active Editable heads segment again, collapses previously unfolded paths.
+  A project/DAG change also clears per-path expansion state. A historical revision selected before
+  filtering is replaced with its branch head so there is no invisible active
+  selection. Both orientations preserve the fold markers, edges, and hit targets.
+  **Fit graph** remains available, but the graph also fits
   automatically on first display (after the dock/splitter geometry settles), when a
   different project is loaded, or when revision topology changes. Ordinary
   selections and dock resize preserve the user's camera. Selecting a node selects its revision

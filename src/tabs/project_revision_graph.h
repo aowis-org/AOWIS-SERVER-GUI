@@ -2,6 +2,7 @@
 
 #include <QElapsedTimer>
 #include <QPoint>
+#include <QSet>
 #include <QPointF>
 #include <QRectF>
 #include <QString>
@@ -46,6 +47,11 @@ public:
     void fitGraph();
     void setTopDown(bool top_down);
     bool isTopDown() const;
+    void setShowFullTree(bool full_tree);
+    bool showsFullTree() const;
+    int omissionCount() const;
+    QPointF omissionViewportPosition(int index) const;
+    void expandOmission(int index);
 
     // Camera inspection also allows hit testing and graph overlays to use
     // exactly the same transform as the renderer.
@@ -72,7 +78,18 @@ protected:
     void hideEvent(QHideEvent *event) override;
 
 private:
+    struct Omission
+    {
+        QString hidden_parent_id;
+        QString visible_parent_id;
+        QString visible_child_id;
+        QPointF position;
+        int revision_count = 0;
+    };
     void rebuildDisplayNodes();
+    QRectF omissionRect(const Omission &omission) const;
+    const Omission *hitOmission(const QPointF &point) const;
+    void expandHiddenAncestors(const QString &parent_id);
     void scheduleInitialFit();
     QPointF mapToGraph(const QPointF &point) const;
     QRectF nodeRect(const ProjectGraphNode &node) const;
@@ -94,6 +111,8 @@ private:
     QPointF keyboardDirection() const;
     QVector<ProjectGraphNode> source_nodes;
     QVector<ProjectGraphNode> nodes;
+    QVector<Omission> omissions;
+    QSet<QString> expanded_revisions;
     QString selected_revision;
     QPointF offset;
     QPointF last_pointer;
@@ -109,6 +128,7 @@ private:
     double zoom = 1.0;
     double drag_distance = 0.0;
     bool top_down = true;
+    bool show_full_tree = true;
     bool pending_fit = true;
     bool dragging = false;
     bool mouse_pressed = false;

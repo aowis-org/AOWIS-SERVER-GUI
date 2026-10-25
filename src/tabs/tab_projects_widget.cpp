@@ -243,6 +243,42 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     graph_title->setFont(graph_font);
     graph_header->addWidget(graph_title);
     graph_header->addStretch();
+    // One visibly grouped, mutually exclusive control. The selected half
+    // uses the Qt highlight color, so it is unmistakably a view-mode switch.
+    // This remains independent of the left revision-tree filter.
+    QLabel *graph_view_label = new QLabel(tr("View:"), center);
+    graph_header->addWidget(graph_view_label);
+    QFrame *graph_view_switch = new QFrame(center);
+    graph_view_switch->setObjectName(QStringLiteral("projectsGraphViewSegmentedControl"));
+    graph_view_switch->setStyleSheet(QStringLiteral(
+        "QFrame#projectsGraphViewSegmentedControl { border: 1px solid palette(mid); "
+        "border-radius: 5px; background: palette(button); } "
+        "QFrame#projectsGraphViewSegmentedControl QPushButton { border: none; "
+        "border-radius: 0px; padding: 3px 9px; background: transparent; } "
+        "QFrame#projectsGraphViewSegmentedControl QPushButton:checked { "
+        "background: palette(highlight); color: palette(highlighted-text); "
+        "font-weight: bold; } "
+        "QFrame#projectsGraphViewSegmentedControl QPushButton:hover:!checked { "
+        "background: palette(midlight); }"));
+    QHBoxLayout *graph_switch_layout = new QHBoxLayout(graph_view_switch);
+    graph_switch_layout->setContentsMargins(2, 2, 2, 2);
+    graph_switch_layout->setSpacing(0);
+    QPushButton *graph_heads_button = compactButton(tr("Editable heads"),
+        tr("Show branch heads, shared ancestors, and expandable hidden history"), graph_view_switch);
+    graph_heads_button->setObjectName(QStringLiteral("projectsGraphHeadsOnlyButton"));
+    QPushButton *graph_full_button = compactButton(tr("Full tree"),
+        tr("Show every revision in the graph"), graph_view_switch);
+    graph_full_button->setObjectName(QStringLiteral("projectsGraphFullTreeButton"));
+    QButtonGroup *graph_view_group = new QButtonGroup(graph_view_switch);
+    graph_view_group->setExclusive(true);
+    for (QPushButton *button : {graph_heads_button, graph_full_button})
+    {
+        button->setCheckable(true);
+        graph_view_group->addButton(button);
+        graph_switch_layout->addWidget(button);
+    }
+    graph_full_button->setChecked(true);
+    graph_header->addWidget(graph_view_switch);
     QPushButton *direction_button = compactButton(tr("Top down ↓"),
         tr("Switch the order of revisions between top-down and bottom-up"), center);
     direction_button->setObjectName(QStringLiteral("projectsGraphOrientationToggle"));
@@ -319,6 +355,20 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     connect(this->create_branch_button, &QPushButton::clicked, this, [this] { createBranch(); });
     connect(import_button, &QPushButton::clicked, this, &ProjectsWidget::importProjectRequested);
     connect(this->load_example_button, &QPushButton::clicked, this, &ProjectsWidget::loadSelectedExample);
+    connect(graph_heads_button, &QPushButton::clicked, this, [this]
+    {
+        // A historical selection must not silently remain offscreen when the
+        // graph displays only branch heads.
+        if (this->selection_kind == SelectionKind::Revision && !isBranchHead(this->selected_id))
+        {
+            if (ProjectPreviewBranch *branch = currentBranch())
+                if (isBranchHead(branch->head))
+                    select(SelectionKind::Revision, branch->head);
+        }
+        this->graph->setShowFullTree(false);
+    });
+    connect(graph_full_button, &QPushButton::clicked, this->graph,
+            [this]() { this->graph->setShowFullTree(true); });
     connect(fit_button, &QPushButton::clicked, this->graph, &ProjectRevisionGraph::fitGraph);
     connect(direction_button, &QPushButton::toggled, this,
             [this, direction_button](bool bottom_up)
