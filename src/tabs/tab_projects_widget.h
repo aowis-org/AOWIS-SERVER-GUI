@@ -9,6 +9,7 @@
 
 class GroupBoxCollapsible;
 class QDockWidget;
+class QComboBox;
 class QLabel;
 class QLineEdit;
 class QPushButton;
@@ -37,9 +38,20 @@ struct ProjectPreviewBranch
     QString head;
 };
 
+struct ProjectPreviewServer
+{
+    QString id;
+    QString name;
+    QString endpoint;
+    QString description;
+    QStringList tags;
+    QString auth_mode;
+};
+
 struct ProjectPreviewData
 {
     QString id;
+    QString server_id;
     QString name;
     QString description;
     QStringList tags;
@@ -69,8 +81,9 @@ signals:
     void importProjectRequested();
 
 private:
-    enum class SelectionKind { None, Project, Branch, Revision, Example };
+    enum class SelectionKind { None, Server, Project, Branch, Revision, Example };
     void seedPreview();
+    void populateServerTree();
     void populateProjectTree();
     void populateRevisionTree();
     bool isBranchHead(const QString &revision_id) const;
@@ -80,12 +93,16 @@ private:
     void broadcastContext();
     void select(SelectionKind kind, const QString &id);
     void selectTreeItem(QTreeWidget *tree, const QString &key);
+    void createServer();
+    void renameServer();
+    void deleteServer();
     void createProject();
     void createBranch(const QString &source_revision = QString());
     void renameSelection();
     void deleteSelection();
     void loadSelectedExample();
     void applyInspectorEdits();
+    ProjectPreviewServer *currentServer();
     ProjectPreviewData *currentProject();
     const ProjectPreviewData *currentProject() const;
     ProjectPreviewBranch *currentBranch();
@@ -93,11 +110,19 @@ private:
     static QString makeId(const QString &prefix);
     static QStringList parseTags(const QString &text);
 
+    QList<ProjectPreviewServer> servers;
+    QString server_id;
     QList<ProjectPreviewData> projects;
     QString project_id;
     QString branch_id;
     SelectionKind selection_kind = SelectionKind::None;
     QString selected_id;
+    QTreeWidget *server_tree = nullptr;
+    QPushButton *rename_server_button = nullptr;
+    QPushButton *delete_server_button = nullptr;
+    QLineEdit *server_endpoint_edit = nullptr;
+    QComboBox *server_auth_combo = nullptr;
+    QWidget *server_options = nullptr;
     QTreeWidget *project_tree = nullptr;
     QTreeWidget *revision_tree = nullptr;
     QPushButton *full_tree_button = nullptr;

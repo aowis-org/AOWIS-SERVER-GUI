@@ -3,6 +3,8 @@
 
 #include <QApplication>
 #include <QDockWidget>
+#include <QComboBox>
+#include <QLabel>
 #include <QFrame>
 #include <QEventLoop>
 #include <QLineEdit>
@@ -98,6 +100,60 @@ int main(int argc, char **argv)
                  "inspector does not support close, move and float"))
         return 1;
     if (!require(dock->isVisible(), "inspector should start open"))
+        return 1;
+
+    // Servers are managed as GUI-only profiles. Selecting one scopes the
+    // preview projects and reopens its inspector, without creating a session.
+    GroupBoxCollapsible *server_section = projects.findChild<GroupBoxCollapsible *>(
+        QStringLiteral("serversCollapsibleGroup"));
+    QTreeWidget *servers = projects.findChild<QTreeWidget *>(QStringLiteral("serversTree"));
+    QLineEdit *endpoint = projects.findChild<QLineEdit *>(QStringLiteral("projectServerEndpoint"));
+    QComboBox *auth_mode = projects.findChild<QComboBox *>(QStringLiteral("projectServerAuthMode"));
+    QWidget *server_options = projects.findChild<QWidget *>(QStringLiteral("projectServerOptions"));
+    if (!require(server_section != nullptr && servers != nullptr
+                     && servers->topLevelItemCount() == 2
+                     && endpoint != nullptr && auth_mode != nullptr && server_options != nullptr,
+                 "Servers panel or inspector configuration fields are missing"))
+        return 1;
+    if (!require(servers->parentWidget() != nullptr && server_section->isVisible(),
+                 "Servers section is not visible above the project tree"))
+        return 1;
+    for (QLabel *label : projects.findChildren<QLabel *>())
+        if (!require(label->text() != QStringLiteral("View:"),
+                     "obsolete graph View: label is still present"))
+            return 1;
+    dock->close();
+    servers->setCurrentItem(servers->topLevelItem(1));
+    app.processEvents();
+    if (!require(dock->isVisible() && name->text() == QStringLiteral("Remote preview")
+                     && server_options->isVisible() && endpoint->text().startsWith(QStringLiteral("https://")),
+                 "remote server selection did not show its preview inspector"))
+        return 1;
+    if (!require(project_tree->topLevelItemCount() == 1
+                     || project_tree->topLevelItemCount() == 0,
+                 "projects from the local server leaked into the remote server view"))
+        return 1;
+    endpoint->setText(QStringLiteral("https://new-preview.example.invalid"));
+    QMetaObject::invokeMethod(endpoint, "editingFinished", Qt::DirectConnection);
+    auth_mode->setCurrentIndex(2);
+    app.processEvents();
+    servers->setCurrentItem(servers->topLevelItem(0));
+    app.processEvents();
+    if (!require(project_tree->topLevelItemCount() >= 2
+                     && server_options->isVisible(),
+                 "switching to the local preview server failed"))
+        return 1;
+    servers->setCurrentItem(servers->topLevelItem(1));
+    app.processEvents();
+    if (!require(endpoint->text() == QStringLiteral("https://new-preview.example.invalid")
+                     && auth_mode->currentText() == QStringLiteral("User login"),
+                 "server configuration preview was lost on profile switch"))
+        return 1;
+    servers->setCurrentItem(servers->topLevelItem(0));
+    projects.selectBranchByName(QStringLiteral("main"));
+    app.processEvents();
+    if (!require(!server_options->isVisible(),
+                 "server-specific inspector fields remain visible for a branch"))
         return 1;
 
     QPushButton *heads_view = projects.findChild<QPushButton *>(
@@ -288,6 +344,9 @@ int main(int argc, char **argv)
     if (!require(project_section != nullptr && revision_section != nullptr
                      && project_section->title() == QStringLiteral("Projects && Branches"),
                  "project/branch section is missing or incorrectly titled"))
+        return 1;
+    if (!require(server_section->isVisible() && server_section->y() < project_section->y(),
+                 "Servers section must appear above Projects & Branches"))
         return 1;
     // Project/branch creation and both import actions must share exactly one row.
     // They may shrink to the sidebar width, but must never trigger horizontal scrolling.

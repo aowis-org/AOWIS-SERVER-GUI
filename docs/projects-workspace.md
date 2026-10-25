@@ -3,7 +3,7 @@
 ## Scope and current state
 
 The **first navigation tab** is now Projects. The GUI is intentionally a
-**local, in-memory interaction prototype**: fictional sample projects, branches,
+**local, in-memory interaction prototype**: fictional server profiles, sample projects, branches,
 revisions, annotations, and graph relationships are not returned by the DB
 server, stored in application settings, or saved to disk. New project creation,
 rename, deletion, branch creation, tags, titles, and descriptions currently
@@ -21,7 +21,19 @@ current editor network; **it is not a DB project/branch checkout**.
 - Toolbar: preview project selector, branch selector, session status, disabled
   future Save-to-revision action, working History action. The previous revision
   dropdown is removed. The selectors and Projects sidebar stay synchronized.
-- Left pane: reusable `GroupBoxCollapsible` **Projects & Branches** and
+- Left pane: a new top `GroupBoxCollapsible` **Servers** section with a
+  server-profile list and **+ Server / Rename / Delete** actions. Selecting a
+  server chooses the scope of the project and revision trees and the current
+  preview graph. The default profiles **Local preview** and **Remote preview**
+  are fictional and are never contacted. Adding, renaming, or deleting profiles
+  affects RAM only. Deleting a preview server also removes its in-memory sample
+  projects after confirmation. Server inspector fields include name, endpoint
+  URL, authentication method (choice only, no credentials), tags, and description;
+  nothing is saved to application settings or a DB. The selected server is
+  highlighted in its own tree even when inspecting a project or branch.
+  Project/branch toolbar selectors list the currently selected server's
+  projects. Examples remain available independently of the server profile.
+- Under Servers, reusable `GroupBoxCollapsible` **Projects & Branches** and
   **Revisions** groups. Projects tree contains branches and built-in examples;
   project and branch actions work on the preview. The Revisions section offers
   a two-state **Editable heads / Full tree** switch (Full tree by default).
@@ -42,7 +54,7 @@ current editor network; **it is not a DB project/branch checkout**.
   toggle above the graph controls revision flow (default: Top down, oldest
   root above its descendants, newest HEAD at the bottom), reflecting only the DAG's vertical layout so labels and hit targets
   remain upright. The canvas additionally has its own **Editable heads / Full
-  tree** segmented control, independent of the left sidebar. The active mode
+  tree** segmented control (without a redundant "View:" label), independent of the left sidebar. The active mode
   is highlighted and **Full tree** is the default. **Editable heads** keeps
   branch HEADs and their nearest shared branch ancestors visible, with
   dashed, clickable folded-history markers on the connections between them.
@@ -122,3 +134,46 @@ independent `ProjectGraphNode` structure and `revisionActivated` /
 Server-side contract gaps and implementation priorities are tracked in the
 **DB repository** under `docs/gui-integration-requirements.md`. The DB OpenAPI
 contract remains unchanged until endpoints actually exist.
+
+## Future multi-server graph / distributed workflows (not implemented)
+
+The graph currently displays **one selected project on one selected preview
+server**. This is intentional; the server selector is the first step toward
+multi-server exploration, not a claim that push/pull/merge is implemented.
+For the later integration phase:
+
+1. Make a stable server profile identity independent from display name and URL.
+   Identify a graph object with a composite **(server, project, revision)**
+   identity; commit hashes alone are not a safe cross-server key. Use server
+   lanes or swimlanes, distinct server headings, and optional server-visibility
+   controls so multiple repository DAGs can be viewed at once. Fetch each
+   source independently and clearly mark offline/stale results.
+2. Resolve repository equivalence using explicit IDs/origin mappings (not
+   coincidentally identical project names). Cross-server ancestry may be shared,
+   unrelated, or only partially present. Display transfer relationships and
+   divergence without inventing common ancestors or deduplicating unrelated
+   commits. Continue to support Full tree / Editable heads and fold markers
+   per repository, including the real visible merge base.
+3. Introduce explicit **Fetch / Pull / Push** previews with source, destination,
+   direction, authentication identity, destination branch, expected HEAD,
+   ahead/behind summary, conflict policy and a confirmation step. Graph gestures
+   can propose a transfer; they must never commit one silently. Pull means
+   fetch plus an explicit integration choice, not automatic overwrite.
+4. **Merge** should compare parent DAGs and immutable snapshots, offer a dry-run,
+   show entity-level conflicts and authorization checks, and use optimistic
+   concurrency. A merge across servers requires data transfer/identity mapping
+   first; it is not an ordinary same-repository merge.
+5. Store credentials in an OS credential manager, never in GUI preview objects,
+   URLs, plaintext configuration, or logged diagnostics. Check certificate
+   trust/TLS, authentication, server capabilities, API versions, permission
+   scopes, pagination and offline behavior before exposing server operations.
+   Keep the GUI functional when a server is unavailable.
+6. Keep server selection (active editor/checkout) separate from visibility
+   selection (which servers are drawn). The inspector must show unambiguous
+   server/repository origin for each selected branch/revision. Add backend
+   support for multi-remote discovery and push/pull/merge only after contracts
+   and conflict handling are defined. Do not silently couple the currently
+   edited working copy to a remote server just because it is visible in the DAG.
+
+These are implementation requirements for the subsequent integration phase,
+not features supplied by the current GUI prototype.

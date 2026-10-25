@@ -6,6 +6,7 @@
 
 #include <QAbstractItemView>
 #include <QButtonGroup>
+#include <QComboBox>
 #include <QDockWidget>
 #include <QMainWindow>
 #include <QFormLayout>
@@ -116,6 +117,40 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     left_layout->setContentsMargins(8, 8, 8, 8);
     left_layout->setSpacing(10);
 
+    // Server settings are a GUI-only preview. Selecting a server scopes the
+    // project/branch/revision panels; no connection is opened or tested.
+    GroupBoxCollapsible *servers_group = new GroupBoxCollapsible(tr("Servers"), left);
+    servers_group->setObjectName(QStringLiteral("serversCollapsibleGroup"));
+    QVBoxLayout *servers_layout = new QVBoxLayout(servers_group);
+    QHBoxLayout *server_actions = new QHBoxLayout();
+    server_actions->setSpacing(4);
+    QPushButton *add_server = compactButton(tr("+ Server"), tr("Add a server profile (preview only)"), servers_group);
+    add_server->setObjectName(QStringLiteral("serversCreateButton"));
+    this->rename_server_button = compactButton(tr("Rename"), tr("Rename the selected server profile"), servers_group);
+    this->rename_server_button->setObjectName(QStringLiteral("serversRenameButton"));
+    this->delete_server_button = compactButton(tr("Delete"), tr("Delete the server and its preview projects"), servers_group);
+    this->delete_server_button->setObjectName(QStringLiteral("serversDeleteButton"));
+    for (QPushButton *button : {add_server, this->rename_server_button, this->delete_server_button})
+    {
+        button->setMinimumWidth(0);
+        button->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+    }
+    server_actions->addWidget(add_server, 3);
+    server_actions->addWidget(this->rename_server_button, 2);
+    server_actions->addWidget(this->delete_server_button, 2);
+    servers_layout->addLayout(server_actions);
+    this->server_tree = new QTreeWidget(servers_group);
+    this->server_tree->setObjectName(QStringLiteral("serversTree"));
+    this->server_tree->setHeaderHidden(true);
+    this->server_tree->setMinimumWidth(0);
+    this->server_tree->setMinimumHeight(86);
+    this->server_tree->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    servers_layout->addWidget(this->server_tree, 1);
+    QLabel *server_notice = new QLabel(tr("Preview · Offline"), servers_group);
+    server_notice->setObjectName(QStringLiteral("serversPreviewStatus"));
+    servers_layout->addWidget(server_notice);
+    left_layout->addWidget(servers_group, 0);
+
     // QGroupBox interprets a single & as a mnemonic marker. Use && for a visible ampersand.
     GroupBoxCollapsible *projects_group = new GroupBoxCollapsible(tr("Projects && Branches"), left);
     projects_group->setObjectName(QStringLiteral("projectsCollapsibleGroup"));
@@ -123,6 +158,7 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     QHBoxLayout *project_actions = new QHBoxLayout();
     project_actions->setSpacing(4);
     QPushButton *create_project = compactButton(tr("+ Project"), tr("Add a project to this GUI preview"), projects_group);
+    create_project->setObjectName(QStringLiteral("projectsCreateProjectButton"));
     this->rename_button = compactButton(tr("Rename"), tr("Rename selected project or branch in preview"), projects_group);
     this->delete_button = compactButton(tr("Delete"), tr("Remove selected project or branch from preview"), projects_group);
     // Keep the existing upper action row responsive at the same narrow widths.
@@ -206,20 +242,28 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     // Give the trees any spare sidebar height without reducing their existing
     // minimum heights. When a section is collapsed, its header should remain
     // compact and the other expanded tree should use the freed space.
-    const auto update_section_stretches = [left_layout, projects_group, revisions_group]()
+    const auto update_section_stretches = [left_layout, servers_group, projects_group, revisions_group]()
     {
+        const bool servers_expanded = !servers_group->isCollapsed();
         const bool projects_expanded = !projects_group->isCollapsed();
         const bool revisions_expanded = !revisions_group->isCollapsed();
+        servers_group->setSizePolicy(QSizePolicy::Preferred,
+            servers_expanded ? QSizePolicy::Preferred : QSizePolicy::Maximum);
         projects_group->setSizePolicy(QSizePolicy::Preferred,
             projects_expanded ? QSizePolicy::Expanding : QSizePolicy::Maximum);
         revisions_group->setSizePolicy(QSizePolicy::Preferred,
             revisions_expanded ? QSizePolicy::Expanding : QSizePolicy::Maximum);
+        left_layout->setStretch(left_layout->indexOf(servers_group), 0);
         left_layout->setStretch(left_layout->indexOf(projects_group), projects_expanded ? 1 : 0);
         left_layout->setStretch(left_layout->indexOf(revisions_group), revisions_expanded ? 1 : 0);
         left_layout->setStretch(left_layout->count() - 1,
             (!projects_expanded && !revisions_expanded) ? 1 : 0);
         left_layout->invalidate();
     };
+    connect(servers_group, &GroupBoxCollapsible::signalExpanded, left,
+            [update_section_stretches](GroupBoxCollapsible *) { update_section_stretches(); });
+    connect(servers_group, &GroupBoxCollapsible::signalCollapsed, left,
+            [update_section_stretches](GroupBoxCollapsible *) { update_section_stretches(); });
     connect(projects_group, &GroupBoxCollapsible::signalExpanded, left,
             [update_section_stretches](GroupBoxCollapsible *) { update_section_stretches(); });
     connect(projects_group, &GroupBoxCollapsible::signalCollapsed, left,
@@ -246,8 +290,6 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     // One visibly grouped, mutually exclusive control. The selected half
     // uses the Qt highlight color, so it is unmistakably a view-mode switch.
     // This remains independent of the left revision-tree filter.
-    QLabel *graph_view_label = new QLabel(tr("View:"), center);
-    graph_header->addWidget(graph_view_label);
     QFrame *graph_view_switch = new QFrame(center);
     graph_view_switch->setObjectName(QStringLiteral("projectsGraphViewSegmentedControl"));
     graph_view_switch->setStyleSheet(QStringLiteral(
@@ -326,6 +368,23 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     form->addRow(tr("Tags"), this->tags_edit);
     form->addRow(tr("Description"), this->description_edit);
     right_layout->addLayout(form);
+    this->server_options = new QWidget(right);
+    this->server_options->setObjectName(QStringLiteral("projectServerOptions"));
+    QFormLayout *server_form = new QFormLayout(this->server_options);
+    server_form->setRowWrapPolicy(QFormLayout::WrapAllRows);
+    server_form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+    this->server_endpoint_edit = new QLineEdit(this->server_options);
+    this->server_endpoint_edit->setObjectName(QStringLiteral("projectServerEndpoint"));
+    this->server_endpoint_edit->setPlaceholderText(tr("https://database.example.invalid"));
+    this->server_auth_combo = new QComboBox(this->server_options);
+    this->server_auth_combo->setObjectName(QStringLiteral("projectServerAuthMode"));
+    this->server_auth_combo->addItems({tr("None"), tr("API token"), tr("User login")});
+    server_form->addRow(tr("Server URL"), this->server_endpoint_edit);
+    server_form->addRow(tr("Authentication (future)"), this->server_auth_combo);
+    QLabel *server_warning = new QLabel(tr("Preview settings only. No connection, credentials, or tokens are stored."), this->server_options);
+    server_warning->setWordWrap(true);
+    server_form->addRow(server_warning);
+    right_layout->addWidget(this->server_options);
     this->metadata_info = new QLabel(right);
     this->metadata_info->setWordWrap(true);
     this->metadata_info->setTextInteractionFlags(Qt::TextSelectableByMouse);
@@ -349,6 +408,16 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     splitter->setStretchFactor(0, 0);
     splitter->setStretchFactor(1, 1);
 
+    connect(add_server, &QPushButton::clicked, this, &ProjectsWidget::createServer);
+    connect(this->rename_server_button, &QPushButton::clicked, this, &ProjectsWidget::renameServer);
+    connect(this->delete_server_button, &QPushButton::clicked, this, &ProjectsWidget::deleteServer);
+    connect(this->server_tree, &QTreeWidget::itemSelectionChanged, this, [this]
+    {
+        const QList<QTreeWidgetItem *> items = this->server_tree->selectedItems();
+        if (items.isEmpty() || this->updating_ui) return;
+        const QString key = items.first()->data(0, role_key).toString();
+        if (key.startsWith(QStringLiteral("s:"))) select(SelectionKind::Server, key.mid(2));
+    });
     connect(create_project, &QPushButton::clicked, this, &ProjectsWidget::createProject);
     connect(this->rename_button, &QPushButton::clicked, this, &ProjectsWidget::renameSelection);
     connect(this->delete_button, &QPushButton::clicked, this, &ProjectsWidget::deleteSelection);
@@ -432,10 +501,14 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     {
         selectBranchByName(name);
     });
+    connect(this->server_endpoint_edit, &QLineEdit::editingFinished, this, &ProjectsWidget::applyInspectorEdits);
+    connect(this->server_auth_combo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, [this](int) { applyInspectorEdits(); });
     connect(this->name_edit, &QLineEdit::editingFinished, this, &ProjectsWidget::applyInspectorEdits);
     connect(this->tags_edit, &QLineEdit::editingFinished, this, &ProjectsWidget::applyInspectorEdits);
     connect(this->description_edit, &QTextEdit::textChanged, this, &ProjectsWidget::applyInspectorEdits);
 
+    populateServerTree();
     populateProjectTree();
     populateRevisionTree();
     rebuildGraph();
@@ -465,6 +538,14 @@ void ProjectsWidget::seedPreview()
         {QStringLiteral("a24f918d"), tr("Scenario start"), tr("Branch off the network baseline."), QStringLiteral("pressure-study"), {QStringLiteral("93f0de41")}, {}, tr("Preview author"), QStringLiteral("2026-10-23")},
         {QStringLiteral("93f0de41"), tr("Network baseline"), tr("Initial imported hydraulic model."), QStringLiteral("main"), {}, {QStringLiteral("baseline")}, tr("Preview author"), QStringLiteral("2026-10-22")}
     };
+    this->servers = {
+        {QStringLiteral("preview-local"), tr("Local preview"), QStringLiteral("http://localhost:8080"),
+         tr("Illustrative local database server profile; no connection is made."), {}, QStringLiteral("None")},
+        {QStringLiteral("preview-remote"), tr("Remote preview"), QStringLiteral("https://database.example.invalid"),
+         tr("Illustrative remote database profile for future multi-server workflows."), {}, QStringLiteral("API token")}
+    };
+    this->server_id = this->servers.first().id;
+    north.server_id = this->server_id;
     this->projects.append(north);
     ProjectPreviewData south;
     south.id = QStringLiteral("preview-south");
@@ -473,9 +554,29 @@ void ProjectsWidget::seedPreview()
     south.tags = {QStringLiteral("preview")};
     south.branches = {{QStringLiteral("south-main"), QStringLiteral("main"), QString(), {}, QStringLiteral("742b0a90")}};
     south.revisions = {{QStringLiteral("742b0a90"), tr("Initial layout"), tr("Demo revision."), QStringLiteral("main"), {}, {}, tr("Preview author"), QStringLiteral("2026-10-23")}};
+    south.server_id = this->server_id;
     this->projects.append(south);
     this->project_id = north.id;
     this->branch_id = north.branches.first().id;
+}
+
+ProjectPreviewServer *ProjectsWidget::currentServer()
+{
+    for (ProjectPreviewServer &server : this->servers)
+        if (server.id == this->server_id) return &server;
+    return nullptr;
+}
+
+void ProjectsWidget::populateServerTree()
+{
+    const QSignalBlocker blocked(this->server_tree);
+    this->server_tree->clear();
+    for (const ProjectPreviewServer &server : this->servers)
+    {
+        QTreeWidgetItem *item = newTreeItem(this->server_tree, server.name,
+            keyFor(QStringLiteral("s"), server.id));
+        item->setToolTip(0, tr("%1\nPreview only · Not connected").arg(server.endpoint));
+    }
 }
 
 ProjectPreviewData *ProjectsWidget::currentProject()
@@ -527,6 +628,7 @@ void ProjectsWidget::populateProjectTree()
     this->project_tree->clear();
     for (const ProjectPreviewData &project : this->projects)
     {
+        if (project.server_id != this->server_id) continue;
         QTreeWidgetItem *parent = newTreeItem(this->project_tree,
                                                QStringLiteral("▣  ") + project.name,
                                                keyFor(QStringLiteral("p"), project.id));
@@ -696,7 +798,31 @@ void ProjectsWidget::selectTreeItem(QTreeWidget *tree, const QString &key)
 
 void ProjectsWidget::select(SelectionKind kind, const QString &id)
 {
-    if (kind == SelectionKind::Project)
+    if (kind == SelectionKind::Server)
+    {
+        bool found = false;
+        for (const ProjectPreviewServer &server : this->servers)
+            if (server.id == id) { found = true; break; }
+        if (!found) return;
+        if (this->server_id != id)
+        {
+            this->server_id = id;
+            this->project_id.clear();
+            this->branch_id.clear();
+            for (const ProjectPreviewData &project : this->projects)
+                if (project.server_id == id)
+                {
+                    this->project_id = project.id;
+                    if (!project.branches.isEmpty()) this->branch_id = project.branches.first().id;
+                    break;
+                }
+            populateProjectTree();
+            populateRevisionTree();
+            rebuildGraph();
+            this->graph->fitGraph();
+        }
+    }
+    else if (kind == SelectionKind::Project)
     {
         bool found = false;
         for (const ProjectPreviewData &project : this->projects)
@@ -704,6 +830,14 @@ void ProjectsWidget::select(SelectionKind kind, const QString &id)
         if (!found) return;
         if (id != this->project_id)
         {
+            for (const ProjectPreviewData &project : this->projects)
+                if (project.id == id && project.server_id != this->server_id)
+                {
+                    this->server_id = project.server_id;
+                    populateServerTree();
+                    populateProjectTree();
+                    break;
+                }
             this->project_id = id;
             const ProjectPreviewData *project = currentProject();
             this->branch_id = project != nullptr && !project->branches.isEmpty()
@@ -722,6 +856,12 @@ void ProjectsWidget::select(SelectionKind kind, const QString &id)
                 {
                     if (this->project_id != project.id)
                     {
+                        if (this->server_id != project.server_id)
+                        {
+                            this->server_id = project.server_id;
+                            populateServerTree();
+                            populateProjectTree();
+                        }
                         this->project_id = project.id;
                         populateRevisionTree();
                         rebuildGraph();
@@ -762,6 +902,7 @@ void ProjectsWidget::select(SelectionKind kind, const QString &id)
     this->selection_kind = kind;
     this->selected_id = id;
     this->updating_ui = true;
+    selectTreeItem(this->server_tree, keyFor(QStringLiteral("s"), this->server_id));
     selectTreeItem(this->project_tree,
                    kind == SelectionKind::Project ? keyFor(QStringLiteral("p"), id)
                    : kind == SelectionKind::Branch ? keyFor(QStringLiteral("b"), id)
@@ -787,7 +928,19 @@ void ProjectsWidget::updateInspector()
     bool editable = true;
 
     ProjectPreviewData *project = currentProject();
-    if (this->selection_kind == SelectionKind::Project && project != nullptr)
+    if (this->selection_kind == SelectionKind::Server)
+    {
+        if (ProjectPreviewServer *server = currentServer())
+        {
+            heading = tr("Server");
+            name = server->name;
+            description = server->description;
+            tags = server->tags;
+            subtitle = tr("Configuration preview · not connected");
+            metadata = tr("Profile: %1\nStatus: Not connected").arg(server->id);
+        }
+    }
+    else if (this->selection_kind == SelectionKind::Project && project != nullptr)
     {
         heading = tr("Project");
         name = project->name;
@@ -838,7 +991,17 @@ void ProjectsWidget::updateInspector()
     else
     {
         editable = false;
-        subtitle = tr("Select a project, branch, revision, or built-in example.");
+        subtitle = tr("Select a server, project, branch, revision, or built-in example.");
+    }
+    const bool server_selected = this->selection_kind == SelectionKind::Server
+        && currentServer() != nullptr;
+    this->server_options->setVisible(server_selected);
+    if (server_selected)
+    {
+        const ProjectPreviewServer *server = currentServer();
+        this->server_endpoint_edit->setText(server->endpoint);
+        const int index = this->server_auth_combo->findText(server->auth_mode);
+        this->server_auth_combo->setCurrentIndex(index < 0 ? 0 : index);
     }
     this->inspector_heading->setText(heading);
     this->inspector_subtitle->setText(subtitle);
@@ -862,6 +1025,10 @@ void ProjectsWidget::updateInspector()
 
 void ProjectsWidget::updateButtons()
 {
+    if (QPushButton *create_project = findChild<QPushButton *>(QStringLiteral("projectsCreateProjectButton")))
+        create_project->setEnabled(currentServer() != nullptr);
+    this->rename_server_button->setEnabled(currentServer() != nullptr);
+    this->delete_server_button->setEnabled(currentServer() != nullptr);
     const bool project_selected = this->selection_kind == SelectionKind::Project;
     const bool branch_selected = this->selection_kind == SelectionKind::Branch;
     this->rename_button->setEnabled(project_selected || branch_selected);
@@ -877,7 +1044,7 @@ void ProjectsWidget::broadcastContext()
 {
     QStringList project_names;
     for (const ProjectPreviewData &project : this->projects)
-        project_names.append(project.name);
+        if (project.server_id == this->server_id) project_names.append(project.name);
     QString current_name;
     QStringList branch_names;
     QString branch_name;
@@ -896,7 +1063,8 @@ void ProjectsWidget::broadcastContext()
 void ProjectsWidget::selectProjectByName(const QString &name)
 {
     for (const ProjectPreviewData &project : this->projects)
-        if (project.name == name) { select(SelectionKind::Project, project.id); return; }
+        if (project.server_id == this->server_id && project.name == name)
+        { select(SelectionKind::Project, project.id); return; }
 }
 
 void ProjectsWidget::selectBranchByName(const QString &name)
@@ -923,20 +1091,91 @@ void ProjectsWidget::showRevisionHistory()
         this->inspector_dock->show();
 }
 
+void ProjectsWidget::createServer()
+{
+    bool accepted = false;
+    const QString name = QInputDialog::getText(this, tr("New server (preview)"),
+        tr("Server name"), QLineEdit::Normal, QString(), &accepted).trimmed();
+    if (!accepted || name.isEmpty()) return;
+    for (const ProjectPreviewServer &server : this->servers)
+        if (server.name.compare(name, Qt::CaseInsensitive) == 0)
+        {
+            QMessageBox::information(this, tr("Already exists"), tr("Choose a different server name."));
+            return;
+        }
+    ProjectPreviewServer server;
+    server.id = makeId(QStringLiteral("s-"));
+    server.name = name;
+    server.auth_mode = QStringLiteral("None");
+    this->servers.append(server);
+    populateServerTree();
+    select(SelectionKind::Server, server.id);
+}
+
+void ProjectsWidget::renameServer()
+{
+    ProjectPreviewServer *server = currentServer();
+    if (server == nullptr) return;
+    bool accepted = false;
+    const QString requested = QInputDialog::getText(this, tr("Rename server (preview)"),
+        tr("Server name"), QLineEdit::Normal, server->name, &accepted).trimmed();
+    if (!accepted || requested.isEmpty() || requested == server->name) return;
+    for (const ProjectPreviewServer &other : this->servers)
+        if (other.id != server->id && other.name.compare(requested, Qt::CaseInsensitive) == 0)
+        {
+            QMessageBox::information(this, tr("Already exists"), tr("Choose a different server name."));
+            return;
+        }
+    server->name = requested;
+    populateServerTree();
+    select(SelectionKind::Server, this->server_id);
+}
+
+void ProjectsWidget::deleteServer()
+{
+    if (currentServer() == nullptr) return;
+    if (QMessageBox::question(this, tr("Delete server preview"),
+        tr("Remove this server profile and its local preview projects? No database server is contacted."))
+        != QMessageBox::Yes) return;
+    const QString removed = this->server_id;
+    for (int i = this->projects.size() - 1; i >= 0; --i)
+        if (this->projects.at(i).server_id == removed) this->projects.removeAt(i);
+    for (int i = this->servers.size() - 1; i >= 0; --i)
+        if (this->servers.at(i).id == removed) this->servers.removeAt(i);
+    this->server_id.clear();
+    this->project_id.clear();
+    this->branch_id.clear();
+    populateServerTree();
+    this->selection_kind = SelectionKind::None;
+    this->selected_id.clear();
+    if (!this->servers.isEmpty()) select(SelectionKind::Server, this->servers.first().id);
+    else
+    {
+        populateProjectTree();
+        populateRevisionTree();
+        rebuildGraph();
+        updateInspector();
+        updateButtons();
+        broadcastContext();
+    }
+}
+
 void ProjectsWidget::createProject()
 {
+    if (currentServer() == nullptr) return;
     bool accepted = false;
     QString name = QInputDialog::getText(this, tr("New project (preview)"), tr("Project name"),
                                          QLineEdit::Normal, QString(), &accepted).trimmed();
     if (!accepted || name.isEmpty()) return;
     for (const ProjectPreviewData &project : this->projects)
-        if (project.name.compare(name, Qt::CaseInsensitive) == 0)
+        if (project.server_id == this->server_id && project.name.compare(name, Qt::CaseInsensitive) == 0)
         {
             QMessageBox::information(this, tr("Already exists"), tr("Choose a different project name."));
             return;
         }
     ProjectPreviewData project;
     project.id = makeId(QStringLiteral("p-"));
+    project.server_id = this->server_id;
     project.name = name;
     const QString id = project.id;
     this->projects.append(project);
@@ -986,7 +1225,7 @@ void ProjectsWidget::renameSelection()
     if (this->selection_kind == SelectionKind::Project)
     {
         for (const ProjectPreviewData &other : this->projects)
-            if (other.id != this->project_id
+            if (other.id != this->project_id && other.server_id == this->server_id
                 && other.name.compare(requested, Qt::CaseInsensitive) == 0)
             {
                 QMessageBox::information(this, tr("Already exists"), tr("Choose a different project name."));
@@ -1020,7 +1259,10 @@ void ProjectsWidget::deleteSelection()
     {
         for (int i = 0; i < this->projects.size(); ++i)
             if (this->projects.at(i).id == id) { this->projects.removeAt(i); break; }
-        this->project_id = this->projects.isEmpty() ? QString() : this->projects.first().id;
+        this->project_id.clear();
+        for (const ProjectPreviewData &candidate : this->projects)
+            if (candidate.server_id == this->server_id)
+            { this->project_id = candidate.id; break; }
         const ProjectPreviewData *project = currentProject();
         this->branch_id = project != nullptr && !project->branches.isEmpty()
             ? project->branches.first().id : QString();
@@ -1066,7 +1308,28 @@ void ProjectsWidget::applyInspectorEdits()
     const QString description = this->description_edit->toPlainText();
     const QStringList tags = parseTags(this->tags_edit->text());
     bool tree_changed = false;
-    if (this->selection_kind == SelectionKind::Project)
+    if (this->selection_kind == SelectionKind::Server)
+    {
+        ProjectPreviewServer *server = currentServer();
+        if (server == nullptr) return;
+        if (!name.isEmpty() && name != server->name)
+        {
+            bool exists = false;
+            for (const ProjectPreviewServer &other : this->servers)
+                if (other.id != server->id && other.name.compare(name, Qt::CaseInsensitive) == 0)
+                    exists = true;
+            if (!exists) { server->name = name; tree_changed = true; }
+        }
+        server->endpoint = this->server_endpoint_edit->text().trimmed();
+        server->auth_mode = this->server_auth_combo->currentText();
+        server->description = description;
+        server->tags = tags;
+        // Keep the server tooltip and list selection in sync after changing
+        // even just the endpoint or authentication preview.
+        populateServerTree();
+        selectTreeItem(this->server_tree, keyFor(QStringLiteral("s"), this->server_id));
+    }
+    else if (this->selection_kind == SelectionKind::Project)
     {
         ProjectPreviewData *project = currentProject();
         if (project == nullptr) return;
@@ -1074,7 +1337,8 @@ void ProjectsWidget::applyInspectorEdits()
         {
             bool exists = false;
             for (const ProjectPreviewData &other : this->projects)
-                if (other.id != project->id && other.name.compare(name, Qt::CaseInsensitive) == 0) exists = true;
+                if (other.id != project->id && other.server_id == this->server_id
+                    && other.name.compare(name, Qt::CaseInsensitive) == 0) exists = true;
             if (!exists) { project->name = name; tree_changed = true; }
         }
         project->description = description;
@@ -1120,7 +1384,7 @@ void ProjectsWidget::applyInspectorEdits()
     {
         populateProjectTree();
         populateRevisionTree();
-        rebuildGraph();
+        if (this->selection_kind != SelectionKind::Server) rebuildGraph();
         select(this->selection_kind, this->selected_id);
     }
 }
