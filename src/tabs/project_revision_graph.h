@@ -1,0 +1,118 @@
+#pragma once
+
+#include <QElapsedTimer>
+#include <QPoint>
+#include <QPointF>
+#include <QRectF>
+#include <QString>
+#include <QStringList>
+#include <QTimer>
+#include <QtGlobal>
+#include <QVector>
+#include <QWidget>
+
+#include "map/core/map_zoom_animation.h"
+
+// GUI-only graph data. No database IDs are inferred from these preview labels.
+struct ProjectGraphNode
+{
+    QString id;
+    QString title;
+    QString branch;
+    QStringList parents;
+    QStringList tags;
+    QString head_branch;
+    QPointF position;
+};
+
+class QFocusEvent;
+class QHideEvent;
+class QKeyEvent;
+class QMouseEvent;
+class QWheelEvent;
+
+// Intentionally renderer-independent. The existing map surface owns the process-
+// global bgfx renderer; a second independent bgfx::init would be unsafe.
+// This widget is a functional pan/zoom/select fallback until a shared bgfx
+// graph view can be implemented without disturbing the map presentation loop.
+class ProjectRevisionGraph final : public QWidget
+{
+    Q_OBJECT
+public:
+    explicit ProjectRevisionGraph(QWidget *parent = nullptr);
+    void setNodes(const QVector<ProjectGraphNode> &nodes);
+    void setSelection(const QString &revision_id);
+    void fitGraph();
+
+    // Camera inspection also allows hit testing and graph overlays to use
+    // exactly the same transform as the renderer.
+    QPointF graphToViewport(const QPointF &point) const;
+    double zoomFactor() const;
+
+signals:
+    void revisionActivated(const QString &revision_id);
+    void branchActivated(const QString &branch_name);
+
+protected:
+    void paintEvent(QPaintEvent *event) override;
+    void resizeEvent(QResizeEvent *event) override;
+    void mousePressEvent(QMouseEvent *event) override;
+    void mouseMoveEvent(QMouseEvent *event) override;
+    void mouseReleaseEvent(QMouseEvent *event) override;
+    void mouseDoubleClickEvent(QMouseEvent *event) override;
+    void wheelEvent(QWheelEvent *event) override;
+    void keyPressEvent(QKeyEvent *event) override;
+    void keyReleaseEvent(QKeyEvent *event) override;
+    void focusOutEvent(QFocusEvent *event) override;
+    void hideEvent(QHideEvent *event) override;
+
+private:
+    QPointF mapToGraph(const QPointF &point) const;
+    QRectF nodeRect(const ProjectGraphNode &node) const;
+    const ProjectGraphNode *hitNode(const QPointF &point) const;
+    void startNavigation();
+    void updateNavigation();
+    void stopNavigation();
+    void synchronizeZoomHold();
+    struct NavigationKeyIdentity
+    {
+        quint32 scan_code = 0;
+        quint32 virtual_key = 0;
+        int key = 0;
+    };
+    static NavigationKeyIdentity navigationKeyIdentity(const QKeyEvent *event);
+    static bool sameNavigationKey(const NavigationKeyIdentity &first,
+                                  const NavigationKeyIdentity &second);
+    void setZoomAnchor(const QPointF &anchor);
+    QPointF keyboardDirection() const;
+    QVector<ProjectGraphNode> nodes;
+    QString selected_revision;
+    QPointF offset;
+    QPointF last_pointer;
+    QPointF pan_velocity;
+    QPointF mouse_pan_velocity;
+    QPointF zoom_anchor;
+    QPointF zoom_graph_anchor;
+    QTimer navigation_timer;
+    QElapsedTimer frame_elapsed;
+    QElapsedTimer drag_elapsed;
+    MapZoomMotion zoom_motion;
+    double zoom = 1.0;
+    double drag_distance = 0.0;
+    bool dragging = false;
+    bool mouse_pressed = false;
+    bool mouse_inertia = false;
+    bool key_left = false;
+    bool key_right = false;
+    bool key_up = false;
+    bool key_down = false;
+    bool key_zoom_in = false;
+    bool key_zoom_out = false;
+    bool key_fast = false;
+    NavigationKeyIdentity key_left_identity;
+    NavigationKeyIdentity key_right_identity;
+    NavigationKeyIdentity key_up_identity;
+    NavigationKeyIdentity key_down_identity;
+    NavigationKeyIdentity key_zoom_in_identity;
+    NavigationKeyIdentity key_zoom_out_identity;
+};

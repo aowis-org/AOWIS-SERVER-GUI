@@ -3,6 +3,7 @@
 #include <QList>
 #include <QPointer>
 #include <QString>
+#include <QStringList>
 #include <QToolBar>
 
 #include <aowis/model/hydraulic/hydraulic_types.h>
@@ -14,6 +15,7 @@ struct HydraulicSimulationResultTimeline;
 class ComboCheckboxes;
 class QComboBox;
 class QDialog;
+class QLabel;
 class QPushButton;
 class QTimer;
 class QToolButton;
@@ -40,6 +42,12 @@ public:
     void clearSimulationResultTimeline();
     void setCurrentSimulationResultIndex(int result_index);
     void setEpanetLogAvailable(bool available);
+    // Preview-only context provided by ProjectsWidget (not a database checkout).
+    void setProjectContext(const QStringList &projects,
+                           const QString &project,
+                           const QStringList &branches,
+                           const QString &branch);
+    void setWorkingCopyModified(bool modified);
 
 signals:
     void signalHeadlossFormulaChanged(HeadlossFormulas formulas);
@@ -48,11 +56,11 @@ signals:
     void signalSimulationResultIndexSelected(int result_index);
     void signalShowEpanetLog();
     void signalExportEpanetNetwork();
-    void signalImportProject();
-    void signalBuiltinRevisionActivationRequested(
-        const QString &resource_path,
-        const QString &file_name);
     void signalShowNetworkOnMap();
+    void signalProjectSelected(const QString &name);
+    void signalBranchSelected(const QString &name);
+    void signalProjectHistoryRequested();
+    void signalProjectSaveRequested();
     void signalFullScreenToggle();
     void signalManageUnitsRequested();
 
@@ -60,7 +68,9 @@ private:
     QWidget *content = nullptr;
     ComboCheckboxes *combo_quality_analysis = nullptr;
     QComboBox *combo_project = nullptr;
-    QComboBox *combo_revision = nullptr;
+    QComboBox *combo_branch = nullptr;
+    QLabel *label_modified = nullptr;
+    QToolButton *button_project_save = nullptr;
     QComboBox *combo_headloss_formula = nullptr;
     QToolButton *button_fullscreen = nullptr;
     QPushButton *button_sim_start = nullptr;
@@ -79,7 +89,6 @@ private:
     EN_FlowUnits selected_flow_units = EN_LPS;
 
     void addProjectControls();
-    void updateRevisionControls();
     void addFlowUnitCombo();
     void addQualityHeadlossControls();
     void addSimulationControls();

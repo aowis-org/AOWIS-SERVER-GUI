@@ -6,6 +6,7 @@
         <file alias="aowis_128.png">assets/iconsets/gothic/aowis_128.png</file>
         <file alias="aowis_light_128.png">assets/iconsets/gothic/aowis_light_128.png</file>
         
+        <file alias="projects.png">assets/iconsets/gothic/projects.png</file>
         <file alias="dashboard.png">assets/iconsets/gothic/dashboard.png</file>
         <file alias="dashboard_global.png">assets/iconsets/gothic/dashboard_global.png</file>
         <file alias="log.png">assets/iconsets/gothic/log.png</file>

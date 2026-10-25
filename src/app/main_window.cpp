@@ -1,5 +1,6 @@
 #include "app/main_window.h"
 #include "tabs/tab_map_workspace.h"
+#include "tabs/tab_projects_widget.h"
 #include "config/gui_configuration.h"
 #include "config/unit_profile_manager.h"
 #include "config/shortcut_registry.h"
@@ -59,6 +60,7 @@ MainWindow::MainWindow(QWidget *parent)
     simulation_manager( new SimulationManager(hydraulic_data, this) )
 {
     this->main_navigation = new MainNavigationWidget(this);
+    this->projects_workspace = new ProjectsWidget(this->main_navigation);
     this->map_workspace = new MapWorkspaceWidget(this->map_editor, this->map_monitor,
                                                 this->main_navigation);
 
@@ -207,6 +209,9 @@ MainWindow::MainWindow(QWidget *parent)
     this->setMinimumHeight(700);
     this->setMinimumWidth(1222);
     
+    this->main_navigation->addPage(this->projects_workspace,
+                                  QIcon(":/icon/projects.png"),
+                                  "Projects");
     this->main_navigation->addPage(new QWidget(this->main_navigation),
                                   QIcon(":/icon/dashboard_global.png"),
                                   "Dashboard");
@@ -282,7 +287,21 @@ MainWindow::MainWindow(QWidget *parent)
         this->settings->focusUnits();
     });
 
-    this->main_navigation->setCurrentIndex(1);
+    connect(this->projects_workspace, &ProjectsWidget::projectContextChanged,
+            this->top_control_bar, &TopControlBar::setProjectContext);
+    connect(this->top_control_bar, &TopControlBar::signalProjectSelected,
+            this->projects_workspace, &ProjectsWidget::selectProjectByName);
+    connect(this->top_control_bar, &TopControlBar::signalBranchSelected,
+            this->projects_workspace, &ProjectsWidget::selectBranchByName);
+    connect(this->top_control_bar, &TopControlBar::signalProjectHistoryRequested,
+            this, [this]
+    {
+        this->main_navigation->setCurrentIndex(0);
+        this->projects_workspace->showRevisionHistory();
+    });
+    // First paint the preview context; no server or model connection is made.
+    this->projects_workspace->selectProjectByName(QStringLiteral("Sample North Network"));
+    this->main_navigation->setCurrentIndex(0);
 
     // Map fullscreen: requested by the map pages' HUD button / shortcut;
     // another page (shortcut) ends it.
@@ -367,17 +386,17 @@ MainWindow::MainWindow(QWidget *parent)
     connect(this->top_control_bar, &TopControlBar::signalShowEpanetLog, this->simulation_manager, &SimulationManager::showEpanetLog);
 #ifdef Q_OS_WASM
     connect(
-        this->top_control_bar,
-        &TopControlBar::signalImportProject,
+        this->projects_workspace,
+        &ProjectsWidget::importProjectRequested,
         this->simulation_manager,
         &SimulationManager::importNetworkProject,
         Qt::DirectConnection);
 #else
-    connect(this->top_control_bar, &TopControlBar::signalImportProject, this->simulation_manager, &SimulationManager::importNetworkProject);
+    connect(this->projects_workspace, &ProjectsWidget::importProjectRequested, this->simulation_manager, &SimulationManager::importNetworkProject);
 #endif
     connect(
-        this->top_control_bar,
-        &TopControlBar::signalBuiltinRevisionActivationRequested,
+        this->projects_workspace,
+        &ProjectsWidget::builtinExampleRequested,
         this->simulation_manager,
         &SimulationManager::importNetworkProjectResource);
     connect(this->top_control_bar, &TopControlBar::signalExportEpanetNetwork, this->simulation_manager, &SimulationManager::exportEpanetNetwork);
@@ -395,6 +414,8 @@ MainWindow::MainWindow(QWidget *parent)
         this->top_control_bar->setSelectedSimulationQualityAnalyses(analyses);
     });
     connect(this->simulation_manager, &SimulationManager::signalEpanetNetworkImported,
+            this->top_control_bar, &TopControlBar::signalShowNetworkOnMap);
+    connect(this->projects_workspace, &ProjectsWidget::showNetworkOnMapRequested,
             this->top_control_bar, &TopControlBar::signalShowNetworkOnMap);
     connect(this->top_control_bar, &TopControlBar::signalShowNetworkOnMap, this, [this]
     {

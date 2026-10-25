@@ -6,6 +6,20 @@ This is the GUI for the AOWIS-SERVER infrastucture.
 
 This software is written in C++ with Qt and can be compiled for all major platforms, including WebAssembly.
 
+## Projects tab (GUI prototype)
+
+The first navigation tab is **Projects**. It provides a project/branch tree, the existing
+built-in EPANET examples and importer, a separate revisions list, an interactive
+revision graph and an editable metadata inspector. The toolbar now shows project
+and branch context and links to history rather than selecting revisions. **All new
+project/branch/revision management and metadata changes are a local in-memory
+UI preview only; no database integration or persistence exists yet.** The Save
+action is deliberately disabled. The middle graph uses a renderer-neutral Qt
+fallback until a safe shared-bgfx implementation is available.
+
+See [Projects workspace and integration contract](docs/projects-workspace.md)
+for precise current behavior and planned working-copy safety rules.
+
 ## Git submodules
 
 Clone the repository with its dependencies, or initialize them after cloning:

@@ -216,6 +216,10 @@ qt_add_executable(aowis-server-gui
     src/tabs/tab_junctions_widget.h
     src/tabs/tab_logs_widget.cpp
     src/tabs/tab_logs_widget.h
+    src/tabs/tab_projects_widget.cpp
+    src/tabs/tab_projects_widget.h
+    src/tabs/project_revision_graph.cpp
+    src/tabs/project_revision_graph.h
     src/tabs/tab_map_workspace.cpp
     src/tabs/map_workspace_viewport_page.cpp
     src/tabs/tab_map_workspace.h
@@ -609,6 +613,46 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
     add_test(NAME aowis-map-mode-tool-panel
         COMMAND aowis-map-mode-tool-panel-tests)
     set_tests_properties(aowis-map-mode-tool-panel PROPERTIES
+        LABELS "aowis"
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+    # Projects DAG navigation uses a QWidget fallback (no bgfx instance needed).
+    add_executable(aowis-project-revision-graph-tests
+        tests/project_revision_graph_test.cpp
+        src/tabs/project_revision_graph.cpp
+        src/tabs/project_revision_graph.h
+        src/config/gui_configuration.cpp
+        src/config/shortcut_registry.cpp
+        src/config/shortcut_registry.h)
+    target_include_directories(aowis-project-revision-graph-tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(aowis-project-revision-graph-tests PRIVATE Qt6::Widgets)
+    add_test(NAME aowis-project-revision-graph
+        COMMAND aowis-project-revision-graph-tests)
+    set_tests_properties(aowis-project-revision-graph PROPERTIES
+        LABELS "aowis"
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+    # Projects uses a real nested dock: closing it must leave the graph
+    # visible and selections must still synchronize while it is hidden.
+    add_executable(aowis-projects-inspector-dock-tests
+        tests/projects_inspector_dock_test.cpp
+        src/tabs/tab_projects_widget.cpp
+        src/tabs/tab_projects_widget.h
+        src/tabs/project_revision_graph.cpp
+        src/tabs/project_revision_graph.h
+        src/app/builtin_examples.cpp
+        src/widgets/group_box_collapsible.cpp
+        src/widgets/group_box_collapsible.h
+        src/config/gui_configuration.cpp
+        src/config/shortcut_registry.cpp
+        src/config/shortcut_registry.h)
+    target_include_directories(aowis-projects-inspector-dock-tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(aowis-projects-inspector-dock-tests PRIVATE Qt6::Widgets)
+    add_test(NAME aowis-projects-inspector-dock
+        COMMAND aowis-projects-inspector-dock-tests)
+    set_tests_properties(aowis-projects-inspector-dock PROPERTIES
         LABELS "aowis"
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
@@ -1263,6 +1307,8 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
     # shows up as "Not Run" in CTest.
     add_custom_target(aowis-tests
         DEPENDS
+            aowis-project-revision-graph-tests
+            aowis-projects-inspector-dock-tests
             aowis-map-workspace-contract-tests
             aowis-map-bgfx-layer-visibility-tests
             aowis-map-workspace-diagnostics-tests

@@ -1,7 +1,6 @@
 #include "app/top_control_bar.h"
 
 #include "common/_sizes.h"
-#include "app/builtin_examples.h"
 #include "config/gui_configuration.h"
 #include "config/unit_profile_notifications.h"
 #include "config/unit_profile_manager.h"
@@ -752,125 +751,91 @@ void TopControlBar::showSimulationSettings()
 void TopControlBar::addProjectControls()
 {
     TopControlBarContent *bar_content = barContent(this->content);
+    QWidget *workspace_context = new QWidget(this->content);
+    QVBoxLayout *layout = new QVBoxLayout(workspace_context);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(2);
 
-    QWidget *project_revision_container = new QWidget(this->content);
-    QVBoxLayout *project_revision_layout = new QVBoxLayout(project_revision_container);
-    project_revision_layout->setContentsMargins(0, 0, 0, 0);
-    project_revision_layout->setSpacing(2);
+    QHBoxLayout *selectors = new QHBoxLayout();
+    selectors->setContentsMargins(0, 0, 0, 0);
+    selectors->setSpacing(5);
+    this->combo_project = new QComboBox(workspace_context);
+    this->combo_project->setObjectName(QStringLiteral("toolbarProjectSelector"));
+    this->combo_project->setAccessibleName(tr("Project"));
+    this->combo_project->setFixedWidth(160);
+    this->combo_project->setMinimumHeight(28);
+    this->combo_project->setToolTip(tr("Preview project context; manage projects in the Projects tab"));
+    this->combo_branch = new QComboBox(workspace_context);
+    this->combo_branch->setObjectName(QStringLiteral("toolbarBranchSelector"));
+    this->combo_branch->setAccessibleName(tr("Branch"));
+    this->combo_branch->setFixedWidth(134);
+    this->combo_branch->setMinimumHeight(28);
+    this->combo_branch->setToolTip(tr("Preview branch context; manage revisions in the Projects tab"));
+    selectors->addWidget(this->combo_project);
+    selectors->addWidget(this->combo_branch);
+    layout->addLayout(selectors);
 
-    this->combo_project = new QComboBox(project_revision_container);
-    this->combo_project->setFixedSize(178, 30);
-    this->combo_project->addItem(QStringLiteral("Select project"), QString());
-    if (guiConfiguration().examples_builtin_enable)
-    {
-        this->combo_project->addItem(
-            QStringLiteral("Examples"),
-            QStringLiteral("builtin_examples"));
-    }
+    QHBoxLayout *actions = new QHBoxLayout();
+    actions->setContentsMargins(0, 0, 0, 0);
+    actions->setSpacing(6);
+    this->label_modified = createCaption(tr("PREVIEW  ·  No database session"), workspace_context);
+    this->label_modified->setObjectName(QStringLiteral("toolbarWorkingCopyStatus"));
+    actions->addWidget(this->label_modified, 1);
 
-    this->combo_revision = new QComboBox(project_revision_container);
-    this->combo_revision->setFixedSize(178, 30);
-    this->combo_revision->addItem(QStringLiteral("Select revision"), QString());
-    this->combo_revision->setEnabled(false);
+    this->button_project_save = new QToolButton(workspace_context);
+    this->button_project_save->setIcon(QIcon(QStringLiteral(":/icon/save.png")));
+    this->button_project_save->setIconSize(QSize(20, 20));
+    this->button_project_save->setFixedSize(27, 25);
+    this->button_project_save->setToolTip(tr("Save as new revision (available when database integration is implemented)"));
+    this->button_project_save->setEnabled(false);
+    actions->addWidget(this->button_project_save);
 
-    QToolButton *button_import_project = new QToolButton(project_revision_container);
-    button_import_project->setAutoRaise(true);
-    button_import_project->setIcon(QIcon(QStringLiteral(":/icon/download_export.png")));
-    button_import_project->setIconSize(QSize(28, 28));
-    button_import_project->setFixedSize(30, 30);
-    button_import_project->setToolTip(QStringLiteral("Import project"));
-    button_import_project->setStyleSheet(QStringLiteral("padding: 0;"));
-    connect(button_import_project, &QToolButton::clicked,
-            this, &TopControlBar::signalImportProject);
+    QToolButton *history_button = new QToolButton(workspace_context);
+    history_button->setIcon(QIcon(QStringLiteral(":/icon/history.png")));
+    history_button->setIconSize(QSize(20, 20));
+    history_button->setFixedSize(27, 25);
+    history_button->setToolTip(tr("Open revision history in Projects"));
+    connect(history_button, &QToolButton::clicked,
+            this, &TopControlBar::signalProjectHistoryRequested);
+    actions->addWidget(history_button);
+    layout->addLayout(actions);
 
-    QToolButton *button_show_on_map = new QToolButton(project_revision_container);
-    button_show_on_map->setAutoRaise(true);
-    button_show_on_map->setIcon(QIcon(QStringLiteral(":/icon/target.png")));
-    button_show_on_map->setIconSize(QSize(28, 28));
-    button_show_on_map->setFixedSize(30, 30);
-    button_show_on_map->setToolTip(QStringLiteral("Show on map"));
-    button_show_on_map->setStyleSheet(QStringLiteral("padding: 0;"));
-    connect(button_show_on_map, &QToolButton::clicked,
-            this, &TopControlBar::signalShowNetworkOnMap);
-
-    connect(this->combo_project, &QComboBox::currentIndexChanged, this, [this](int)
-    {
-        updateRevisionControls();
-    });
-
-    connect(this->combo_revision, &QComboBox::currentIndexChanged, this, [this](int)
-    {
-        const QString resource_path =
-            this->combo_revision->currentData(Qt::UserRole).toString();
-        const QString file_name =
-            this->combo_revision->currentData(Qt::UserRole + 1).toString();
-        if (resource_path.isEmpty() || file_name.isEmpty())
-            return;
-
-        emit signalBuiltinRevisionActivationRequested(resource_path, file_name);
-    });
-
-    QLabel *project_caption = createCaption(
-        QStringLiteral("Project"), project_revision_container);
-    QLabel *revision_caption = createCaption(
-        QStringLiteral("Revision"), project_revision_container);
-    const int caption_width = qMax(
-        project_caption->sizeHint().width(),
-        revision_caption->sizeHint().width());
-    project_caption->setFixedWidth(caption_width);
-    revision_caption->setFixedWidth(caption_width);
-
-    QHBoxLayout *project_layout = new QHBoxLayout();
-    project_layout->setContentsMargins(0, 0, 0, 0);
-    project_layout->setSpacing(6);
-    project_layout->addWidget(project_caption);
-    project_layout->addWidget(this->combo_project);
-    project_layout->addWidget(button_import_project);
-    project_layout->addWidget(button_show_on_map);
-    project_layout->addStretch(1);
-
-    QHBoxLayout *revision_layout = new QHBoxLayout();
-    revision_layout->setContentsMargins(0, 0, 0, 0);
-    revision_layout->setSpacing(6);
-    revision_layout->addWidget(revision_caption);
-    revision_layout->addWidget(this->combo_revision);
-    revision_layout->addStretch(1);
-
-    project_revision_layout->addLayout(project_layout);
-    project_revision_layout->addLayout(revision_layout);
-    bar_content->leftLayout()->addWidget(project_revision_container);
+    connect(this->combo_project, &QComboBox::currentTextChanged,
+            this, &TopControlBar::signalProjectSelected);
+    connect(this->combo_branch, &QComboBox::currentTextChanged,
+            this, &TopControlBar::signalBranchSelected);
+    connect(this->button_project_save, &QToolButton::clicked,
+            this, &TopControlBar::signalProjectSaveRequested);
+    bar_content->leftLayout()->addWidget(workspace_context);
+    setProjectContext({}, QString(), {}, QString());
 }
 
-void TopControlBar::updateRevisionControls()
+void TopControlBar::setProjectContext(const QStringList &projects,
+                                      const QString &project,
+                                      const QStringList &branches,
+                                      const QString &branch)
 {
-    if (this->combo_project == nullptr || this->combo_revision == nullptr)
+    if (this->combo_project == nullptr || this->combo_branch == nullptr)
         return;
+    const QSignalBlocker project_blocker(this->combo_project);
+    const QSignalBlocker branch_blocker(this->combo_branch);
+    this->combo_project->clear();
+    this->combo_project->addItems(projects);
+    this->combo_project->setCurrentIndex(projects.indexOf(project));
+    this->combo_branch->clear();
+    this->combo_branch->addItems(branches);
+    this->combo_branch->setCurrentIndex(branches.indexOf(branch));
+    this->combo_branch->setEnabled(!branch.isEmpty());
+}
 
-    const QString project_id =
-        this->combo_project->currentData(Qt::UserRole).toString();
-    const QSignalBlocker blocker(this->combo_revision);
-
-    this->combo_revision->clear();
-    this->combo_revision->addItem(QStringLiteral("Select revision"), QString());
-
-    if (project_id == QStringLiteral("builtin_examples"))
-    {
-        const QList<BuiltinExampleRevision> &revisions = builtinExampleRevisions();
-        for (const BuiltinExampleRevision &revision : revisions)
-        {
-            this->combo_revision->addItem(
-                revision.display_name,
-                revision.resource_path);
-            const int item_index = this->combo_revision->count() - 1;
-            this->combo_revision->setItemData(
-                item_index,
-                revision.file_name,
-                Qt::UserRole + 1);
-        }
-    }
-
-    const bool has_revisions = this->combo_revision->count() > 1;
-    this->combo_revision->setEnabled(has_revisions);
+void TopControlBar::setWorkingCopyModified(bool modified)
+{
+    if (this->label_modified == nullptr) return;
+    this->label_modified->setText(modified ? tr("PREVIEW  ·  Modified")
+                                          : tr("PREVIEW  ·  No database session"));
+    // UI design phase: no persistent save operation exists yet.
+    if (this->button_project_save != nullptr)
+        this->button_project_save->setEnabled(false);
 }
 
 void TopControlBar::addFlowUnitCombo()

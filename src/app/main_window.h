@@ -71,6 +71,7 @@
 
 class QShortcut;
 class MapWorkspaceWidget;
+class ProjectsWidget;
 
 class MainWindow : public QMainWindow
 {
@@ -142,6 +143,7 @@ private:
     int settings_page_index = -1;
     QShortcut *shortcut_toggle_right_docks = nullptr;
     MapWorkspaceWidget *map_workspace = nullptr;
+    ProjectsWidget *projects_workspace = nullptr;
     void updateActiveMapPanels();
     MapMonitorContainer *map_monitor;
     MapEditorContainer *map_editor;
