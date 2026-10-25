@@ -773,6 +773,20 @@ void TopControlBar::addProjectControls()
     this->combo_branch->setToolTip(tr("Preview branch context; manage revisions in the Projects tab"));
     selectors->addWidget(this->combo_project);
     selectors->addWidget(this->combo_branch);
+
+    // Restore the original target-icon map-fit action to the main toolbar.
+    // It uses the same signal/handler as before the Projects workspace redesign.
+    QToolButton *button_show_on_map = new QToolButton(workspace_context);
+    button_show_on_map->setObjectName(QStringLiteral("toolbarShowNetworkOnMap"));
+    button_show_on_map->setAutoRaise(true);
+    button_show_on_map->setIcon(QIcon(QStringLiteral(":/icon/target.png")));
+    button_show_on_map->setIconSize(QSize(28, 28));
+    button_show_on_map->setFixedSize(30, 30);
+    button_show_on_map->setToolTip(tr("Show network on map"));
+    button_show_on_map->setStyleSheet(QStringLiteral("padding: 0;"));
+    connect(button_show_on_map, &QToolButton::clicked,
+            this, &TopControlBar::signalShowNetworkOnMap);
+    selectors->addWidget(button_show_on_map);
     layout->addLayout(selectors);
 
     QHBoxLayout *actions = new QHBoxLayout();

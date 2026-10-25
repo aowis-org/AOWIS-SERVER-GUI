@@ -67,7 +67,6 @@ signals:
                                const QString &branch);
     void builtinExampleRequested(const QString &resource_path, const QString &file_name);
     void importProjectRequested();
-    void showNetworkOnMapRequested();
 
 private:
     enum class SelectionKind { None, Project, Branch, Revision, Example };

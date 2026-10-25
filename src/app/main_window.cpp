@@ -415,8 +415,6 @@ MainWindow::MainWindow(QWidget *parent)
     });
     connect(this->simulation_manager, &SimulationManager::signalEpanetNetworkImported,
             this->top_control_bar, &TopControlBar::signalShowNetworkOnMap);
-    connect(this->projects_workspace, &ProjectsWidget::showNetworkOnMapRequested,
-            this->top_control_bar, &TopControlBar::signalShowNetworkOnMap);
     connect(this->top_control_bar, &TopControlBar::signalShowNetworkOnMap, this, [this]
     {
         if (!this->hydraulic_data->boundingBoxWgs84Valid())

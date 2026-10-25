@@ -78,6 +78,13 @@ int main(int argc, char **argv)
                      && graph->isVisible() && graph->width() > 200 && graph->height() > 200,
                  "project tree or revision graph is missing from the visible layout"))
         return 1;
+    // The map-fit action belongs to the application's top toolbar, not this sidebar.
+    for (QPushButton *button : projects.findChildren<QPushButton *>())
+    {
+        if (!require(button->text() != QStringLiteral("Show network on map"),
+                     "obsolete Show network on map button remains in Projects sidebar"))
+            return 1;
+    }
     if (!require(host->dockWidgetArea(dock) == Qt::RightDockWidgetArea,
                  "inspector is not docked on the right of the projects workspace"))
         return 1;

@@ -134,9 +134,6 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     example_actions->addWidget(import_button);
     example_actions->addWidget(this->load_example_button);
     projects_layout->addLayout(example_actions);
-    QPushButton *show_on_map = compactButton(tr("Show network on map"),
-        tr("Fit the currently loaded hydraulic network in Maps"), projects_group);
-    projects_layout->addWidget(show_on_map);
     left_layout->addWidget(projects_group, 1);
 
     GroupBoxCollapsible *revisions_group = new GroupBoxCollapsible(tr("Revisions"), left);
@@ -270,8 +267,6 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     connect(this->create_branch_button, &QPushButton::clicked, this, [this] { createBranch(); });
     connect(import_button, &QPushButton::clicked, this, &ProjectsWidget::importProjectRequested);
     connect(this->load_example_button, &QPushButton::clicked, this, &ProjectsWidget::loadSelectedExample);
-    connect(show_on_map, &QPushButton::clicked,
-            this, &ProjectsWidget::showNetworkOnMapRequested);
     connect(fit_button, &QPushButton::clicked, this->graph, &ProjectRevisionGraph::fitGraph);
     connect(direction_button, &QPushButton::toggled, this,
             [this, direction_button](bool bottom_up)
