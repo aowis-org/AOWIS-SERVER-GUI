@@ -28,7 +28,13 @@ current editor network; **it is not a DB project/branch checkout**.
   history), branch lanes, revision title/short hash, HEAD badges, selection
   highlights, inertial drag/keyboard pan, smooth wheel/key zoom and fit-to-view.
   Navigation shares the map's configurable pan/zoom shortcuts, with no hover
-  tooltip or instructional overlay obscuring graph nodes. Selecting a node selects its revision
+  tooltip or instructional overlay obscuring graph nodes. A **Top down / Bottom up**
+  toggle above the graph controls revision flow (default: Top down, oldest
+  root above its descendants, newest HEAD at the bottom), reflecting only the DAG's vertical layout so labels and hit targets
+  remain upright. **Fit graph** remains available, but the graph also fits
+  automatically on first display (after the dock/splitter geometry settles), when a
+  different project is loaded, or when revision topology changes. Ordinary
+  selections and dock resize preserve the user's camera. Selecting a node selects its revision
   in the left list and inspector. Selecting a branch pill selects that branch
   and updates the toolbar. The viewport is a **renderer-neutral QWidget with
   a QPainter implementation for now**, not a second bgfx renderer.

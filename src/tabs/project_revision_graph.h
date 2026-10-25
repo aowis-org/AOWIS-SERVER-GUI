@@ -27,6 +27,7 @@ struct ProjectGraphNode
 
 class QFocusEvent;
 class QHideEvent;
+class QShowEvent;
 class QKeyEvent;
 class QMouseEvent;
 class QWheelEvent;
@@ -43,10 +44,13 @@ public:
     void setNodes(const QVector<ProjectGraphNode> &nodes);
     void setSelection(const QString &revision_id);
     void fitGraph();
+    void setTopDown(bool top_down);
+    bool isTopDown() const;
 
     // Camera inspection also allows hit testing and graph overlays to use
     // exactly the same transform as the renderer.
     QPointF graphToViewport(const QPointF &point) const;
+    QPointF revisionViewportPosition(const QString &revision_id) const;
     double zoomFactor() const;
 
 signals:
@@ -56,6 +60,7 @@ signals:
 protected:
     void paintEvent(QPaintEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
+    void showEvent(QShowEvent *event) override;
     void mousePressEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
     void mouseReleaseEvent(QMouseEvent *event) override;
@@ -67,6 +72,8 @@ protected:
     void hideEvent(QHideEvent *event) override;
 
 private:
+    void rebuildDisplayNodes();
+    void scheduleInitialFit();
     QPointF mapToGraph(const QPointF &point) const;
     QRectF nodeRect(const ProjectGraphNode &node) const;
     const ProjectGraphNode *hitNode(const QPointF &point) const;
@@ -85,6 +92,7 @@ private:
                                   const NavigationKeyIdentity &second);
     void setZoomAnchor(const QPointF &anchor);
     QPointF keyboardDirection() const;
+    QVector<ProjectGraphNode> source_nodes;
     QVector<ProjectGraphNode> nodes;
     QString selected_revision;
     QPointF offset;
@@ -94,11 +102,14 @@ private:
     QPointF zoom_anchor;
     QPointF zoom_graph_anchor;
     QTimer navigation_timer;
+    QTimer initial_fit_timer;
     QElapsedTimer frame_elapsed;
     QElapsedTimer drag_elapsed;
     MapZoomMotion zoom_motion;
     double zoom = 1.0;
     double drag_distance = 0.0;
+    bool top_down = true;
+    bool pending_fit = true;
     bool dragging = false;
     bool mouse_pressed = false;
     bool mouse_inertia = false;

@@ -2,15 +2,19 @@
 
 #include <QApplication>
 #include <QDockWidget>
+#include <QEventLoop>
 #include <QLineEdit>
+#include <QPushButton>
 #include <QMainWindow>
 #include <QSplitter>
 #include <QStackedWidget>
 #include <QTemporaryDir>
+#include <QTimer>
 #include <QToolButton>
 #include <QTreeWidget>
 
 #include <cstdio>
+#include <cmath>
 
 namespace
 {
@@ -19,6 +23,18 @@ bool require(bool condition, const char *reason)
     if (!condition)
         std::fprintf(stderr, "projects_inspector_dock: %s\n", reason);
     return condition;
+}
+
+void waitFor(int milliseconds)
+{
+    QEventLoop loop;
+    QTimer::singleShot(milliseconds, &loop, &QEventLoop::quit);
+    loop.exec();
+}
+
+bool near(double a, double b)
+{
+    return std::abs(a - b) < 0.001;
 }
 }
 
@@ -34,6 +50,7 @@ int main(int argc, char **argv)
     projects.resize(1250, 740);
     projects.show();
     app.processEvents();
+    waitFor(120); // first fit follows the embedded dock/splitter layout
 
     QMainWindow *host = projects.findChild<QMainWindow *>(QStringLiteral("projectsDockHost"));
     QDockWidget *dock = projects.findChild<QDockWidget *>(QStringLiteral("projectsInspectorDock"));
@@ -69,6 +86,42 @@ int main(int argc, char **argv)
                  "inspector does not support close, move and float"))
         return 1;
     if (!require(dock->isVisible(), "inspector should start open"))
+        return 1;
+    QPushButton *orientation_toggle = projects.findChild<QPushButton *>(
+        QStringLiteral("projectsGraphOrientationToggle"));
+    if (!require(orientation_toggle != nullptr && orientation_toggle->isCheckable()
+                     && !orientation_toggle->isChecked() && graph->isTopDown(),
+                 "graph orientation toggle did not default to Top down"))
+        return 1;
+    const QString root_id = QStringLiteral("93f0de41");
+    const QString head_id = QStringLiteral("c8d102ab");
+    if (!require(graph->revisionViewportPosition(root_id).y()
+                     < graph->revisionViewportPosition(head_id).y(),
+                 "default Top down graph must place root above HEAD"))
+        return 1;
+    // Automatic startup fit must match an explicit press of Fit graph, not
+    // merely use the temporary size from widget construction.
+    QPushButton *fit_button = projects.findChild<QPushButton *>(
+        QStringLiteral("projectsGraphFitButton"));
+    if (!require(fit_button != nullptr, "Fit graph control is missing"))
+        return 1;
+    const double startup_zoom = graph->zoomFactor();
+    const QPointF startup_head = graph->revisionViewportPosition(head_id);
+    fit_button->click();
+    if (!require(near(startup_zoom, graph->zoomFactor())
+                     && near(startup_head.x(), graph->revisionViewportPosition(head_id).x())
+                     && near(startup_head.y(), graph->revisionViewportPosition(head_id).y()),
+                 "first graph display was not already fitted as if Fit graph was clicked"))
+        return 1;
+    orientation_toggle->click();
+    if (!require(orientation_toggle->isChecked() && !graph->isTopDown()
+                     && graph->revisionViewportPosition(head_id).y()
+                        < graph->revisionViewportPosition(root_id).y(),
+                 "Bottom up toggle did not put HEAD above root"))
+        return 1;
+    orientation_toggle->click();
+    if (!require(!orientation_toggle->isChecked() && graph->isTopDown(),
+                 "Top down toggle did not restore the default orientation"))
         return 1;
     if (!require(projects.findChild<QToolButton *>(QStringLiteral("projectsInspectorToggle")) == nullptr,
                  "obsolete inspector toggle must not exist above the graph"))
@@ -109,6 +162,11 @@ int main(int argc, char **argv)
     app.processEvents();
     if (!require(dock->isVisible() && name->text() == QStringLiteral("Sample Pump Station"),
                  "selecting a project in the tree did not reopen its inspector"))
+        return 1;
+    const QPointF south_node_center = graph->graphToViewport(QPointF(0.0, 0.0));
+    if (!require(std::abs(south_node_center.x() - graph->width() / 2.0) < 1.0
+                     && std::abs(south_node_center.y() - graph->height() / 2.0) < 1.0,
+                 "switching projects did not automatically fit the newly loaded DAG"))
         return 1;
 
     // Toolbar-driven project and branch changes use the same selection path.
@@ -179,6 +237,7 @@ int main(int argc, char **argv)
     app.processEvents();
     navigator.setCurrentIndex(0);
     app.processEvents();
+    waitFor(120); // stack activation is a separate first-visible layout path
 
     QMainWindow *embedded_host = embedded_projects->findChild<QMainWindow *>(
         QStringLiteral("projectsDockHost"));
@@ -198,6 +257,15 @@ int main(int argc, char **argv)
                      && embedded_graph->width() > 200 && embedded_graph->height() > 200
                      && embedded_dock != nullptr && embedded_dock->isVisible(),
                  "embedded page must show project tree, graph and inspector together"))
+        return 1;
+    const double embedded_startup_zoom = embedded_graph->zoomFactor();
+    const QPointF embedded_head_before = embedded_graph->revisionViewportPosition(head_id);
+    embedded_graph->fitGraph();
+    const QPointF embedded_head_after = embedded_graph->revisionViewportPosition(head_id);
+    if (!require(near(embedded_startup_zoom, embedded_graph->zoomFactor())
+                     && near(embedded_head_before.x(), embedded_head_after.x())
+                     && near(embedded_head_before.y(), embedded_head_after.y()),
+                 "the initially hidden Projects tab was not automatically fitted on activation"))
         return 1;
     embedded_dock->close();
     app.processEvents();

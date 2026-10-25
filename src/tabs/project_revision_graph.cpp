@@ -13,6 +13,7 @@
 #include <QPaintEvent>
 #include <QPalette>
 #include <QResizeEvent>
+#include <QShowEvent>
 #include <QWheelEvent>
 #include <QtMath>
 #include <cmath>
@@ -22,6 +23,8 @@ namespace
 constexpr double node_width = 224.0;
 constexpr double node_height = 84.0;
 constexpr int frame_interval_ms = 16;
+// Let the nested dock host and splitter settle before the very first fit.
+constexpr int initial_fit_settle_ms = 50;
 constexpr double pan_speed = 900.0;
 constexpr double fast_pan_multiplier = 2.0;
 constexpr double pan_acceleration = 2800.0;
@@ -70,6 +73,13 @@ ProjectRevisionGraph::ProjectRevisionGraph(QWidget *parent)
     this->navigation_timer.setInterval(frame_interval_ms);
     this->navigation_timer.setTimerType(Qt::PreciseTimer);
     connect(&this->navigation_timer, &QTimer::timeout, this, &ProjectRevisionGraph::updateNavigation);
+    this->initial_fit_timer.setSingleShot(true);
+    this->initial_fit_timer.setInterval(initial_fit_settle_ms);
+    connect(&this->initial_fit_timer, &QTimer::timeout, this, [this]()
+    {
+        if (this->pending_fit && isVisible())
+            fitGraph();
+    });
     // Navigation bindings are shared with the map, but no overlay or
     // hover tooltip is drawn over the revision graph.
     connect(&guiShortcutRegistry(), &GuiShortcutRegistry::shortcutChanged, this,
@@ -98,21 +108,73 @@ ProjectRevisionGraph::ProjectRevisionGraph(QWidget *parent)
     });
 }
 
+void ProjectRevisionGraph::rebuildDisplayNodes()
+{
+    // The source list is newest-first. In a *top-down* history the root is
+    // above its descendants and HEAD is near the bottom. The source layout
+    // therefore needs reflecting for the default orientation. Bottom-up
+    // keeps the original newest-at-the-top coordinates. Reflect positions,
+    // not QPainter's coordinate system, so all labels and hit targets are
+    // upright in both orientations.
+    this->nodes = this->source_nodes;
+    if (!this->top_down || this->nodes.isEmpty())
+        return;
+
+    double min_y = this->nodes.first().position.y();
+    double max_y = min_y;
+    for (const ProjectGraphNode &node : this->nodes)
+    {
+        min_y = qMin(min_y, node.position.y());
+        max_y = qMax(max_y, node.position.y());
+    }
+    for (ProjectGraphNode &node : this->nodes)
+        node.position.setY(min_y + max_y - node.position.y());
+}
+
 void ProjectRevisionGraph::setNodes(const QVector<ProjectGraphNode> &nodes)
 {
-    bool same_history = this->nodes.size() == nodes.size();
-    if (same_history)
+    // Metadata-only edits should not reset a manually positioned camera.
+    // A changed DAG topology or layout is a new graph and should be fitted.
+    bool same_layout = this->source_nodes.size() == nodes.size();
+    if (same_layout)
     {
         for (int i = 0; i < nodes.size(); ++i)
-            if (this->nodes.at(i).id != nodes.at(i).id)
+        {
+            const ProjectGraphNode &old_node = this->source_nodes.at(i);
+            const ProjectGraphNode &new_node = nodes.at(i);
+            if (old_node.id != new_node.id || old_node.position != new_node.position
+                || old_node.parents != new_node.parents)
             {
-                same_history = false;
+                same_layout = false;
                 break;
             }
+        }
     }
-    this->nodes = nodes;
-    if (same_history) update();
-    else fitGraph();
+    this->source_nodes = nodes;
+    rebuildDisplayNodes();
+    if (same_layout)
+        update();
+    else if (this->pending_fit)
+        scheduleInitialFit();
+    else
+        fitGraph();
+}
+
+void ProjectRevisionGraph::setTopDown(bool top_down)
+{
+    if (this->top_down == top_down)
+        return;
+    this->top_down = top_down;
+    rebuildDisplayNodes();
+    if (this->pending_fit)
+        scheduleInitialFit();
+    else
+        fitGraph();
+}
+
+bool ProjectRevisionGraph::isTopDown() const
+{
+    return this->top_down;
 }
 
 void ProjectRevisionGraph::setSelection(const QString &revision_id)
@@ -140,6 +202,14 @@ QPointF ProjectRevisionGraph::graphToViewport(const QPointF &point) const
     return point * this->zoom + this->offset;
 }
 
+QPointF ProjectRevisionGraph::revisionViewportPosition(const QString &revision_id) const
+{
+    for (const ProjectGraphNode &node : this->nodes)
+        if (node.id == revision_id)
+            return graphToViewport(node.position);
+    return QPointF();
+}
+
 double ProjectRevisionGraph::zoomFactor() const
 {
     return this->zoom;
@@ -155,8 +225,26 @@ const ProjectGraphNode *ProjectRevisionGraph::hitNode(const QPointF &point) cons
     return nullptr;
 }
 
+void ProjectRevisionGraph::scheduleInitialFit()
+{
+    this->pending_fit = true;
+    // Restart after every layout change. This matters when a QStackedWidget
+    // shows the Projects page while the QMainWindow/docks/splitter are still
+    // negotiating their final sizes.
+    if (isVisible())
+        this->initial_fit_timer.start();
+    update();
+}
+
 void ProjectRevisionGraph::fitGraph()
 {
+    if (!isVisible() || width() <= 0 || height() <= 0)
+    {
+        scheduleInitialFit();
+        return;
+    }
+    this->initial_fit_timer.stop();
+    this->pending_fit = false;
     stopNavigation();
     if (this->nodes.isEmpty())
     {
@@ -176,18 +264,31 @@ void ProjectRevisionGraph::fitGraph()
     update();
 }
 
+void ProjectRevisionGraph::showEvent(QShowEvent *event)
+{
+    QWidget::showEvent(event);
+    if (this->pending_fit)
+        scheduleInitialFit();
+}
+
 void ProjectRevisionGraph::resizeEvent(QResizeEvent *event)
 {
     QWidget::resizeEvent(event);
+    if (this->pending_fit)
+    {
+        // The first geometry may still be the placeholder size. Wait until
+        // the last startup resize before applying the initial camera fit.
+        scheduleInitialFit();
+        return;
+    }
     if (!event->oldSize().isValid())
     {
         fitGraph();
         return;
     }
 
-    // A dock appearing/disappearing changes the canvas dimensions, not the
-    // user's chosen camera. Keep the current center and zoom instead of
-    // unexpectedly fitting/resetting the graph on each sidebar toggle.
+    // Later dock changes are NOT graph loads. They preserve zoom and the
+    // viewport center rather than repeatedly discarding manual navigation.
     this->offset += QPointF((event->size().width() - event->oldSize().width()) / 2.0,
                             (event->size().height() - event->oldSize().height()) / 2.0);
     update();
@@ -239,10 +340,13 @@ void ProjectRevisionGraph::paintEvent(QPaintEvent *event)
             {
                 if (parent.id != parent_id)
                     continue;
-                const QPointF begin = parent.position + QPointF(0, -node_height / 2);
-                const QPointF end = node.position + QPointF(0, node_height / 2);
+                // Links attach to the facing edges in both orientations.
+                const double sign = this->top_down ? 1.0 : -1.0;
+                const QPointF begin = parent.position + QPointF(0, sign * node_height / 2.0);
+                const QPointF end = node.position - QPointF(0, sign * node_height / 2.0);
                 QPainterPath path(begin);
-                path.cubicTo(begin + QPointF(0, -42), end + QPointF(0, 42), end);
+                path.cubicTo(begin + QPointF(0, sign * 42.0),
+                             end - QPointF(0, sign * 42.0), end);
                 painter.setPen(QPen(tint(accent, 115), 3.0, Qt::SolidLine, Qt::RoundCap));
                 painter.setBrush(Qt::NoBrush);
                 painter.drawPath(path);

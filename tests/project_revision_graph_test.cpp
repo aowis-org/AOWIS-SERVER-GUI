@@ -10,6 +10,7 @@
 #include <QTemporaryDir>
 #include <QTimer>
 #include <QWheelEvent>
+#include <QVBoxLayout>
 
 #include <cmath>
 
@@ -87,6 +88,7 @@ int main(int argc, char **argv)
     node.position = QPointF(0.0, 0.0);
     graph.setNodes(QVector<ProjectGraphNode>{node});
     graph.setSelection(node.id);
+    waitFor(110); // allow first-show geometry and automatic fit to settle
 
     QString revision_clicked;
     QString branch_clicked;
@@ -110,6 +112,98 @@ int main(int argc, char **argv)
     click(graph, QPointF(400 - 50 * 1.5, 250 + 25 * 1.5));
     if (!require(branch_clicked == node.branch, "branch badge click did not emit branch name"))
         return 1;
+
+    // Top-down is the default: a parent/root sits above its descendants.
+    // Bottom-up mirrors node positions without flipping their labels or hit
+    // targets. The canonical input list is intentionally newest-first.
+    ProjectGraphNode previous = node;
+    previous.id = QStringLiteral("parent-revision");
+    previous.position = QPointF(0.0, 320.0);
+    ProjectGraphNode latest = node;
+    latest.parents = {previous.id};
+    graph.setNodes(QVector<ProjectGraphNode>{latest, previous});
+    if (!require(graph.isTopDown(), "graph did not default to top-down"))
+        return 1;
+    if (!require(graph.revisionViewportPosition(previous.id).y()
+                     < graph.revisionViewportPosition(latest.id).y(),
+                 "top-down graph must put the root above its descendants"))
+        return 1;
+    revision_clicked.clear();
+    click(graph, graph.revisionViewportPosition(previous.id));
+    if (!require(revision_clicked == previous.id,
+                 "root revision hit testing failed in the default orientation"))
+        return 1;
+    graph.setTopDown(false);
+    if (!require(!graph.isTopDown(), "bottom-up orientation was not applied"))
+        return 1;
+    if (!require(graph.revisionViewportPosition(latest.id).y()
+                     < graph.revisionViewportPosition(previous.id).y(),
+                 "bottom-up graph did not put HEAD above its parent"))
+        return 1;
+    revision_clicked.clear();
+    click(graph, graph.revisionViewportPosition(latest.id));
+    if (!require(revision_clicked == latest.id,
+                 "revision hit testing broke after flipping the DAG"))
+        return 1;
+    graph.setTopDown(true);
+    if (!require(graph.revisionViewportPosition(previous.id).y()
+                     < graph.revisionViewportPosition(latest.id).y(),
+                 "returning to top-down did not restore parent-first layout"))
+        return 1;
+    graph.setNodes(QVector<ProjectGraphNode>{node});
+    graph.fitGraph();
+
+    // A graph populated before its containing page first appears must fit
+    // against the *final* visible size, not its unlaid-out default size.
+    QWidget graph_page;
+    QVBoxLayout page_layout(&graph_page);
+    page_layout.setContentsMargins(0, 0, 0, 0);
+    ProjectRevisionGraph *first_show_graph = new ProjectRevisionGraph(&graph_page);
+    page_layout.addWidget(first_show_graph);
+    ProjectGraphNode start_node = latest;
+    start_node.parents.clear();
+    ProjectGraphNode end_node = previous;
+    end_node.position = QPointF(0.0, 500.0);
+    first_show_graph->setNodes(QVector<ProjectGraphNode>{start_node, end_node});
+    graph_page.resize(960, 340);
+    graph_page.show();
+    app.processEvents();
+    waitFor(110); // dock/splitter startup geometry must settle before fitting
+    const double expected_fit = qBound(0.25,
+        qMin((first_show_graph->width() - 32.0) / (224.0 + 152.0),
+             (first_show_graph->height() - 32.0) / (500.0 + 84.0 + 170.0)), 1.5);
+    if (!require(std::abs(first_show_graph->zoomFactor() - expected_fit) < 0.02,
+                 "initial graph was not fitted after the page received its final size"))
+        return 1;
+    // Simulate a late dock/splitter resize during the FIRST show. The
+    // automatic fit must use the new geometry, without any user button press.
+    QWidget late_layout_page;
+    QVBoxLayout late_layout(&late_layout_page);
+    late_layout.setContentsMargins(0, 0, 0, 0);
+    ProjectRevisionGraph *late_graph = new ProjectRevisionGraph(&late_layout_page);
+    late_layout.addWidget(late_graph);
+    late_graph->setNodes(QVector<ProjectGraphNode>{start_node, end_node});
+    late_layout_page.resize(800, 300);
+    late_layout_page.show();
+    app.processEvents();
+    late_layout_page.resize(1020, 650);
+    app.processEvents();
+    waitFor(110);
+    const double late_fit = qBound(0.25,
+        qMin((late_graph->width() - 32.0) / (224.0 + 152.0),
+             (late_graph->height() - 32.0) / (500.0 + 84.0 + 170.0)), 1.5);
+    if (!require(std::abs(late_graph->zoomFactor() - late_fit) < 0.02,
+                 "initial fit used stale geometry after a delayed page resize"))
+        return 1;
+    late_layout_page.close();
+    // A genuinely new graph fits automatically without the Fit button.
+    first_show_graph->setNodes(QVector<ProjectGraphNode>{node});
+    const QPointF new_graph_center = first_show_graph->graphToViewport(node.position);
+    if (!require(std::abs(new_graph_center.x() - first_show_graph->width() / 2.0) < 1.0
+                     && std::abs(new_graph_center.y() - first_show_graph->height() / 2.0) < 1.0,
+                 "loading a different graph did not automatically center it"))
+        return 1;
+    graph_page.close();
 
     // Key movement accelerates while held, then glides to a stop when released.
     graph.fitGraph();

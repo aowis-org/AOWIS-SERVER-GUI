@@ -164,7 +164,13 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     graph_title->setFont(graph_font);
     graph_header->addWidget(graph_title);
     graph_header->addStretch();
+    QPushButton *direction_button = compactButton(tr("Top down ↓"),
+        tr("Switch the order of revisions between top-down and bottom-up"), center);
+    direction_button->setObjectName(QStringLiteral("projectsGraphOrientationToggle"));
+    direction_button->setCheckable(true);
+    graph_header->addWidget(direction_button);
     QPushButton *fit_button = compactButton(tr("Fit graph"), tr("Fit all revisions to the canvas"), center);
+    fit_button->setObjectName(QStringLiteral("projectsGraphFitButton"));
     graph_header->addWidget(fit_button);
     center_layout->addLayout(graph_header);
     this->graph = new ProjectRevisionGraph(center);
@@ -237,6 +243,12 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     connect(show_on_map, &QPushButton::clicked,
             this, &ProjectsWidget::showNetworkOnMapRequested);
     connect(fit_button, &QPushButton::clicked, this->graph, &ProjectRevisionGraph::fitGraph);
+    connect(direction_button, &QPushButton::toggled, this,
+            [this, direction_button](bool bottom_up)
+    {
+        direction_button->setText(bottom_up ? tr("Bottom up ↑") : tr("Top down ↓"));
+        this->graph->setTopDown(!bottom_up);
+    });
     connect(this->project_tree, &QTreeWidget::itemSelectionChanged, this, [this]
     {
         const QList<QTreeWidgetItem *> items = this->project_tree->selectedItems();
@@ -464,6 +476,7 @@ void ProjectsWidget::select(SelectionKind kind, const QString &id)
                 ? project->branches.first().id : QString();
             populateRevisionTree();
             rebuildGraph();
+            this->graph->fitGraph();
         }
     }
     else if (kind == SelectionKind::Branch)
@@ -478,6 +491,7 @@ void ProjectsWidget::select(SelectionKind kind, const QString &id)
                         this->project_id = project.id;
                         populateRevisionTree();
                         rebuildGraph();
+                        this->graph->fitGraph();
                     }
                     this->branch_id = branch.id;
                     found = true;

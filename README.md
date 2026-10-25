@@ -206,3 +206,32 @@ performance settings save as you adjust them. The server stores catalog edits
 in its own persistent state, leaving its administrator-owned `/etc` INI
 untouched. For deployment ownership and HTTP API details, see the map-server
 README. The provider-editing API currently has no authentication.
+
+## Applying patch ZIPs and refreshing project snapshots
+
+Apply a GUI patch (named `aowis-server-gui-*.zip`, with entries under
+`AOWIS-SERVER-GUI/`) using:
+
+```bash
+./tools/apply_patch.sh /path/to/aowis-server-gui-change.zip
+```
+
+The script extracts the patch, updates file and directory modification times,
+then **automatically rebuilds the relevant source ZIP snapshots** in the parent
+of `AOWIS-SERVER-GUI/`:
+
+- Changes to GUI files (including `tools/`, `src/`, `tests/`, or docs) invoke
+  `tools/zip_gui_project.sh` to regenerate `gui.zip`.
+- Changes beneath `external/AOWIS-SERVER-MODEL/` invoke
+  `tools/zip_model_project.sh` to regenerate `model.zip`.
+- Changes beneath `external/AOWIS-SERVER-EPANET/` invoke
+  `tools/zip_epanet_project.sh` to regenerate `epanet.zip`.
+
+Mixed patches run every affected snapshot script once. Directory-only entries
+are ignored. Unaffected ZIPs are left untouched. These snapshots are for sharing
+sources; the scripts do not compile or run tests. The `zip` and `unzip` tools
+must be available. Because the snapshot scripts run after extraction, a snapshot
+failure returns a nonzero status **without reverting the applied patch**.
+
+The routing behavior can be checked independently of Qt with
+`bash tests/apply_patch_script_test.sh`.
