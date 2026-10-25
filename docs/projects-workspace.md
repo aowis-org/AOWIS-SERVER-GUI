@@ -21,9 +21,19 @@ current editor network; **it is not a DB project/branch checkout**.
 - Toolbar: preview project selector, branch selector, session status, disabled
   future Save-to-revision action, working History action. The previous revision
   dropdown is removed. The selectors and Projects sidebar stay synchronized.
-- Left pane: reusable `GroupBoxCollapsible` **Projects** and **Revisions**
-  groups. Projects tree contains branches and built-in examples; project and
-  branch actions work on the preview; revisions are separately selectable.
+- Left pane: reusable `GroupBoxCollapsible` **Projects & Branches** and
+  **Revisions** groups. Projects tree contains branches and built-in examples;
+  project and branch actions work on the preview. The Revisions section offers
+  a two-state **Editable heads / Full tree** switch (Full tree by default).
+  Both modes display **revision titles only**, never IDs or hashes. **Full tree**
+  nests each revision under its first known parent, including unreferenced
+  historical revisions; a merge revision appears once in this sidebar and all
+  its parent edges remain visible in the center DAG. **Editable heads** shows
+  one entry for each distinct revision currently referenced by a branch HEAD.
+  Branch heads are movable pointers: their underlying revision snapshots are
+  still immutable. Graph selection of a historical revision switches the list
+  to Full tree so that it can be highlighted. Filtering an already selected
+  historical revision down to heads selects its branch's head instead.
 - Center: branch/revision DAG showing parent edges (not just first-parent
   history), branch lanes, revision title/short hash, HEAD badges, selection
   highlights, inertial drag/keyboard pan, smooth wheel/key zoom and fit-to-view.

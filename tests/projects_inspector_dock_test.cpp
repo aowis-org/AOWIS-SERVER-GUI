@@ -15,6 +15,7 @@
 #include <QTimer>
 #include <QToolButton>
 #include <QTreeWidget>
+#include <QTreeWidgetItemIterator>
 
 #include <cstdio>
 #include <cmath>
@@ -96,6 +97,113 @@ int main(int argc, char **argv)
                  "inspector does not support close, move and float"))
         return 1;
     if (!require(dock->isVisible(), "inspector should start open"))
+        return 1;
+
+    QPushButton *heads_view = projects.findChild<QPushButton *>(
+        QStringLiteral("revisionsHeadsOnlyButton"));
+    QPushButton *full_tree_view = projects.findChild<QPushButton *>(
+        QStringLiteral("revisionsFullTreeButton"));
+    if (!require(heads_view != nullptr && full_tree_view != nullptr
+                     && heads_view->isCheckable() && full_tree_view->isCheckable()
+                     && full_tree_view->isChecked() && !heads_view->isChecked(),
+                 "Revisions must default to the Full tree view"))
+        return 1;
+    const auto find_revision = [revisions](const QString &revision_id) -> QTreeWidgetItem *
+    {
+        for (QTreeWidgetItemIterator it(revisions); *it; ++it)
+            if ((*it)->data(0, Qt::UserRole).toString()
+                == QStringLiteral("r:") + revision_id)
+                return *it;
+        return nullptr;
+    };
+    const QString baseline_id = QStringLiteral("93f0de41");
+    const QString main_head_id = QStringLiteral("c8d102ab");
+    const QString scenario_start_id = QStringLiteral("a24f918d");
+    const QString scenario_head_id = QStringLiteral("ec9045df");
+    QTreeWidgetItem *baseline = find_revision(baseline_id);
+    QTreeWidgetItem *main_head = find_revision(main_head_id);
+    QTreeWidgetItem *scenario_start = find_revision(scenario_start_id);
+    QTreeWidgetItem *scenario_head = find_revision(scenario_head_id);
+    if (!require(revisions->topLevelItemCount() == 1 && baseline != nullptr
+                     && main_head != nullptr && scenario_start != nullptr
+                     && scenario_head != nullptr && baseline->parent() == nullptr
+                     && main_head->parent() == baseline
+                     && scenario_start->parent() == baseline
+                     && scenario_head->parent() == scenario_start,
+                 "Full tree should nest revisions under their parents"))
+        return 1;
+    if (!require(baseline->text(0) == QStringLiteral("Network baseline")
+                     && main_head->text(0) == QStringLiteral("Validated network")
+                     && scenario_start->text(0) == QStringLiteral("Scenario start")
+                     && scenario_head->text(0) == QStringLiteral("Pressure tuning"),
+                 "Revision labels must contain names only, never hashes"))
+        return 1;
+
+    heads_view->click();
+    app.processEvents();
+    if (!require(heads_view->isChecked() && !full_tree_view->isChecked()
+                     && revisions->topLevelItemCount() == 2
+                     && find_revision(main_head_id) != nullptr
+                     && find_revision(scenario_head_id) != nullptr
+                     && find_revision(baseline_id) == nullptr
+                     && find_revision(scenario_start_id) == nullptr,
+                 "Editable heads mode must show only distinct branch heads"))
+        return 1;
+    // The filter must also follow the active project instead of keeping
+    // stale branch heads from the previously opened project.
+    projects.selectProjectByName(QStringLiteral("Sample Pump Station"));
+    app.processEvents();
+    if (!require(revisions->topLevelItemCount() == 1
+                     && revisions->topLevelItem(0)->text(0) == QStringLiteral("Initial layout")
+                     && find_revision(main_head_id) == nullptr,
+                 "Heads-only view retained revisions from the previous project"))
+        return 1;
+    projects.selectProjectByName(QStringLiteral("Sample North Network"));
+    app.processEvents();
+    if (!require(heads_view->isChecked() && revisions->topLevelItemCount() == 2
+                     && find_revision(main_head_id) != nullptr,
+                 "Heads-only view did not follow a project switch"))
+        return 1;
+    revisions->setCurrentItem(find_revision(scenario_head_id));
+    app.processEvents();
+    if (!require(name->text() == QStringLiteral("Pressure tuning")
+                     && find_revision(scenario_head_id)->isSelected(),
+                 "Selecting a head did not synchronize the inspector and tree"))
+        return 1;
+    full_tree_view->click();
+    app.processEvents();
+    if (!require(full_tree_view->isChecked() && revisions->topLevelItemCount() == 1
+                     && find_revision(scenario_head_id) != nullptr
+                     && find_revision(scenario_head_id)->isSelected(),
+                 "Returning to Full tree did not keep the selected head"))
+        return 1;
+    revisions->setCurrentItem(find_revision(baseline_id));
+    app.processEvents();
+    heads_view->click();
+    app.processEvents();
+    if (!require(heads_view->isChecked() && find_revision(baseline_id) == nullptr
+                     && find_revision(main_head_id) != nullptr
+                     && find_revision(main_head_id)->isSelected()
+                     && name->text() == QStringLiteral("Validated network"),
+                 "Filtering a historical selection must select its branch head"))
+        return 1;
+    // A historical revision picked in the central DAG should be made visible
+    // in the sidebar rather than silently losing tree synchronization.
+    graph->revisionActivated(baseline_id);
+    app.processEvents();
+    if (!require(full_tree_view->isChecked()
+                     && find_revision(baseline_id) != nullptr
+                     && find_revision(baseline_id)->isSelected()
+                     && name->text() == QStringLiteral("Network baseline"),
+                 "Graph selection of history should reveal the Full tree"))
+        return 1;
+    // Selecting history must change the branch-creation *source*, not inflate
+    // its button label and potentially break the compact three-action row.
+    QPushButton *revision_branch_action = projects.findChild<QPushButton *>(
+        QStringLiteral("projectsCreateBranchButton"));
+    if (!require(revision_branch_action != nullptr
+                     && revision_branch_action->text() == QStringLiteral("+ Branch"),
+                 "historical revision selection expanded the + Branch button label"))
         return 1;
     QPushButton *orientation_toggle = projects.findChild<QPushButton *>(
         QStringLiteral("projectsGraphOrientationToggle"));
@@ -248,7 +356,7 @@ int main(int argc, char **argv)
     if (!require(revisions->topLevelItemCount() > 0,
                  "preview revision tree is unexpectedly empty"))
         return 1;
-    revisions->setCurrentItem(revisions->topLevelItem(0));
+    revisions->setCurrentItem(find_revision(main_head_id));
     app.processEvents();
     if (!require(dock->isVisible() && name->text() == QStringLiteral("Validated network"),
                  "selecting a revision in the tree did not reopen its inspector"))

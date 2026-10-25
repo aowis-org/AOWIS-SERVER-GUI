@@ -73,6 +73,7 @@ private:
     void seedPreview();
     void populateProjectTree();
     void populateRevisionTree();
+    bool isBranchHead(const QString &revision_id) const;
     void rebuildGraph();
     void updateInspector();
     void updateButtons();
@@ -99,6 +100,8 @@ private:
     QString selected_id;
     QTreeWidget *project_tree = nullptr;
     QTreeWidget *revision_tree = nullptr;
+    QPushButton *full_tree_button = nullptr;
+    bool show_full_revision_tree = true;
     ProjectRevisionGraph *graph = nullptr;
     QDockWidget *inspector_dock = nullptr;
     QLabel *inspector_heading = nullptr;

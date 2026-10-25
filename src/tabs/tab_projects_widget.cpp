@@ -5,12 +5,15 @@
 #include "widgets/group_box_collapsible.h"
 
 #include <QAbstractItemView>
+#include <QButtonGroup>
 #include <QDockWidget>
 #include <QMainWindow>
 #include <QFormLayout>
 #include <QFrame>
+#include <QHash>
 #include <QHBoxLayout>
 #include <QInputDialog>
+#include <QSet>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
@@ -25,6 +28,8 @@
 #include <QTreeWidgetItemIterator>
 #include <QUuid>
 #include <QVBoxLayout>
+
+#include <functional>
 
 namespace
 {
@@ -166,6 +171,28 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     QLabel *history_caption = new QLabel(tr("Select a revision to inspect it. Earlier revisions remain read-only."), revisions_group);
     history_caption->setWordWrap(true);
     revisions_layout->addWidget(history_caption);
+    // Two exclusive views over the same immutable revisions. The "editable"
+    // heads are branch pointers, not mutable historical snapshots.
+    QHBoxLayout *revision_views = new QHBoxLayout();
+    revision_views->setSpacing(4);
+    QPushButton *heads_button = compactButton(tr("Editable heads"),
+        tr("Show only the latest revision referenced by each branch"), revisions_group);
+    heads_button->setObjectName(QStringLiteral("revisionsHeadsOnlyButton"));
+    this->full_tree_button = compactButton(tr("Full tree"),
+        tr("Show all revisions nested by their parent relationships"), revisions_group);
+    this->full_tree_button->setObjectName(QStringLiteral("revisionsFullTreeButton"));
+    QButtonGroup *revision_views_group = new QButtonGroup(revisions_group);
+    revision_views_group->setExclusive(true);
+    for (QPushButton *button : {heads_button, this->full_tree_button})
+    {
+        button->setCheckable(true);
+        button->setMinimumWidth(0);
+        button->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+        revision_views_group->addButton(button);
+        revision_views->addWidget(button, 1);
+    }
+    this->full_tree_button->setChecked(true);
+    revisions_layout->addLayout(revision_views);
     this->revision_tree = new QTreeWidget(revisions_group);
     this->revision_tree->setObjectName(QStringLiteral("revisionsTree"));
     this->revision_tree->setHeaderHidden(true);
@@ -308,6 +335,33 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
         else if (key.startsWith(QStringLiteral("b:"))) select(SelectionKind::Branch, key.mid(2));
         else if (key.startsWith(QStringLiteral("e:"))) select(SelectionKind::Example, key.mid(2));
     });
+    connect(heads_button, &QPushButton::clicked, this, [this]
+    {
+        this->show_full_revision_tree = false;
+        populateRevisionTree();
+        // A historical selection cannot remain highlighted in Heads-only mode.
+        // Follow its branch to the editable head and synchronize all panes.
+        if (this->selection_kind == SelectionKind::Revision && !isBranchHead(this->selected_id))
+        {
+            if (ProjectPreviewBranch *branch = currentBranch())
+                if (isBranchHead(branch->head))
+                {
+                    select(SelectionKind::Revision, branch->head);
+                    return;
+                }
+        }
+        selectTreeItem(this->revision_tree,
+            this->selection_kind == SelectionKind::Revision
+                ? keyFor(QStringLiteral("r"), this->selected_id) : QString());
+    });
+    connect(this->full_tree_button, &QPushButton::clicked, this, [this]
+    {
+        this->show_full_revision_tree = true;
+        populateRevisionTree();
+        selectTreeItem(this->revision_tree,
+            this->selection_kind == SelectionKind::Revision
+                ? keyFor(QStringLiteral("r"), this->selected_id) : QString());
+    });
     connect(this->revision_tree, &QTreeWidget::itemSelectionChanged, this, [this]
     {
         const QList<QTreeWidgetItem *> items = this->revision_tree->selectedItems();
@@ -442,19 +496,99 @@ void ProjectsWidget::populateProjectTree()
     }
 }
 
+bool ProjectsWidget::isBranchHead(const QString &revision_id) const
+{
+    if (revision_id.isEmpty()) return false;
+    const ProjectPreviewData *project = currentProject();
+    if (project == nullptr) return false;
+    for (const ProjectPreviewBranch &branch : project->branches)
+        if (branch.head == revision_id) return true;
+    return false;
+}
+
 void ProjectsWidget::populateRevisionTree()
 {
     const QSignalBlocker blocked(this->revision_tree);
     this->revision_tree->clear();
     const ProjectPreviewData *project = currentProject();
     if (project == nullptr) return;
+
+    QHash<QString, const ProjectPreviewRevision *> revisions_by_id;
     for (const ProjectPreviewRevision &revision : project->revisions)
+        revisions_by_id.insert(revision.id, &revision);
+
+    const auto displayTitle = [this](const ProjectPreviewRevision &revision)
     {
-        QTreeWidgetItem *item = newTreeItem(this->revision_tree,
-                                            revision.title + QStringLiteral("  ·  ") + revision.id.left(8),
-                                            keyFor(QStringLiteral("r"), revision.id));
-        item->setToolTip(0, revision.branch + QStringLiteral("  /  ") + revision.description);
+        const QString title = revision.title.trimmed();
+        return title.isEmpty() ? tr("Untitled revision") : title;
+    };
+    const auto labelRevision = [project](QTreeWidgetItem *item,
+                                         const ProjectPreviewRevision &revision)
+    {
+        // The tree displays titles only: identities remain in Qt::UserRole so
+        // duplicate names still select their own revision in the graph.
+        QStringList head_branches;
+        for (const ProjectPreviewBranch &branch : project->branches)
+            if (branch.head == revision.id) head_branches.append(branch.name);
+        QStringList details;
+        if (!head_branches.isEmpty())
+        {
+            QFont label_font = item->font(0);
+            label_font.setBold(true);
+            item->setFont(0, label_font);
+            details.append(QObject::tr("Editable head: %1").arg(head_branches.join(QStringLiteral(", "))));
+        }
+        if (!revision.description.isEmpty()) details.append(revision.description);
+        item->setToolTip(0, details.join(QLatin1Char('\n')));
+    };
+
+    if (!this->show_full_revision_tree)
+    {
+        // One entry per *revision*, even when several branches share a head.
+        QSet<QString> shown;
+        for (const ProjectPreviewBranch &branch : project->branches)
+        {
+            const ProjectPreviewRevision *revision = revisions_by_id.value(branch.head, nullptr);
+            if (revision == nullptr || shown.contains(revision->id)) continue;
+            shown.insert(revision->id);
+            QTreeWidgetItem *item = newTreeItem(this->revision_tree, displayTitle(*revision),
+                keyFor(QStringLiteral("r"), revision->id));
+            labelRevision(item, *revision);
+        }
+        return;
     }
+
+    // QTreeWidget represents a tree rather than a DAG. Nest every revision
+    // under its first available parent; additional merge edges stay visible in
+    // the center graph, while each revision appears only once in the sidebar.
+    QHash<QString, QTreeWidgetItem *> items_by_id;
+    QSet<QString> visiting;
+    std::function<QTreeWidgetItem *(const ProjectPreviewRevision &)> append_revision;
+    append_revision = [&](const ProjectPreviewRevision &revision) -> QTreeWidgetItem *
+    {
+        if (QTreeWidgetItem *item = items_by_id.value(revision.id, nullptr)) return item;
+        if (visiting.contains(revision.id)) return nullptr; // protect against bad preview data
+        visiting.insert(revision.id);
+        QTreeWidgetItem *parent_item = nullptr;
+        for (const QString &parent_id : revision.parents)
+        {
+            if (const ProjectPreviewRevision *parent_revision = revisions_by_id.value(parent_id, nullptr))
+            {
+                parent_item = append_revision(*parent_revision);
+                if (parent_item != nullptr) break;
+            }
+        }
+        QTreeWidgetItem *item = parent_item != nullptr
+            ? newTreeChild(parent_item, displayTitle(revision), keyFor(QStringLiteral("r"), revision.id))
+            : newTreeItem(this->revision_tree, displayTitle(revision), keyFor(QStringLiteral("r"), revision.id));
+        items_by_id.insert(revision.id, item);
+        labelRevision(item, revision);
+        visiting.remove(revision.id);
+        return item;
+    };
+    for (const ProjectPreviewRevision &revision : project->revisions)
+        append_revision(revision);
+    this->revision_tree->expandAll();
 }
 
 void ProjectsWidget::rebuildGraph()
@@ -563,6 +697,14 @@ void ProjectsWidget::select(SelectionKind kind, const QString &id)
                 break;
             }
         if (!found) return;
+        // The graph can select historical revisions even when the sidebar is
+        // filtered to heads. Reveal the full tree to keep that selection visible.
+        if (!this->show_full_revision_tree && !isBranchHead(id))
+        {
+            this->show_full_revision_tree = true;
+            this->full_tree_button->setChecked(true);
+            populateRevisionTree();
+        }
     }
     else if (kind == SelectionKind::Example && !guiConfiguration().examples_builtin_enable)
         return;
@@ -675,8 +817,9 @@ void ProjectsWidget::updateButtons()
     this->rename_button->setEnabled(project_selected || branch_selected);
     this->delete_button->setEnabled(project_selected || branch_selected);
     this->create_branch_button->setEnabled(currentProject() != nullptr);
-    this->create_branch_button->setText(this->selection_kind == SelectionKind::Revision
-        ? tr("+ Branch from revision") : tr("+ Branch"));
+    // Keep the action label short and stable so the three-button row never
+    // changes width when selecting a historical revision. createBranch()
+    // already uses the selected revision as the branch base when applicable.
     this->load_example_button->setEnabled(this->selection_kind == SelectionKind::Example);
 }
 
@@ -776,6 +919,7 @@ void ProjectsWidget::createBranch(const QString &source_revision)
     const QString id = branch.id;
     project->branches.append(branch);
     populateProjectTree();
+    populateRevisionTree();
     rebuildGraph();
     select(SelectionKind::Branch, id);
 }
