@@ -26,6 +26,9 @@ namespace
 {
 constexpr double node_width = 224.0;
 constexpr double node_height = 84.0;
+constexpr double project_node_height = 68.0;
+constexpr double server_node_width = 252.0;
+constexpr double server_node_height = 76.0;
 constexpr int frame_interval_ms = 16;
 // Let the nested dock host and splitter settle before the very first fit.
 constexpr int initial_fit_settle_ms = 50;
@@ -157,6 +160,11 @@ void ProjectRevisionGraph::rebuildDisplayNodes()
 
         for (const ProjectGraphNode &node : this->source_nodes)
         {
+            if (node.kind != ProjectGraphNode::Kind::Revision)
+            {
+                visible.insert(node.id);
+                continue;
+            }
             if (!node.head_branch.isEmpty() || this->expanded_revisions.contains(node.id))
                 visible.insert(node.id);
             const int count = descendant_head_counts.value(node.id);
@@ -185,6 +193,8 @@ void ProjectRevisionGraph::rebuildDisplayNodes()
     {
         for (const ProjectGraphNode &node : this->nodes)
         {
+            if (node.kind != ProjectGraphNode::Kind::Revision)
+                continue;
             for (const QString &parent_id : node.parents)
             {
                 if (visible.contains(parent_id) || !by_id.contains(parent_id))
@@ -257,6 +267,23 @@ void ProjectRevisionGraph::rebuildDisplayNodes()
             omission.position.setY(double(std::lower_bound(levels.begin(), levels.end(),
                 omission.position.y()) - levels.begin()) * 155.0);
     }
+
+    // In heads-only mode the oldest loaded revision may be folded away.
+    // Attach the project card to the oldest *visible* revision(s), accounting
+    // for omission links, so the hierarchy remains connected in either mode.
+    QSet<QString> has_visible_revision_parent;
+    for (const ProjectGraphNode &node : this->nodes)
+        if (node.kind == ProjectGraphNode::Kind::Revision)
+            for (const QString &parent_id : node.parents)
+                if (visible.contains(parent_id))
+                    has_visible_revision_parent.insert(node.id);
+    for (const Omission &omission : this->omissions)
+        if (!omission.visible_parent_id.isEmpty())
+            has_visible_revision_parent.insert(omission.visible_child_id);
+    for (ProjectGraphNode &node : this->nodes)
+        if (node.kind == ProjectGraphNode::Kind::Revision)
+            node.container_id = has_visible_revision_parent.contains(node.id)
+                ? QString() : node.project_group_id;
 
     // Reflect positions, not the painter transform: labels and click targets
     // stay upright. Source positions run from newest to oldest.
@@ -373,7 +400,10 @@ void ProjectRevisionGraph::setNodes(const QVector<ProjectGraphNode> &nodes)
             const ProjectGraphNode &new_node = nodes.at(i);
             if (old_node.id != new_node.id || old_node.position != new_node.position
                 || old_node.parents != new_node.parents
-                || old_node.head_branch != new_node.head_branch)
+                || old_node.head_branch != new_node.head_branch
+                || old_node.kind != new_node.kind
+                || old_node.container_id != new_node.container_id
+                || old_node.project_group_id != new_node.project_group_id)
             {
                 same_layout = false;
                 break;
@@ -460,9 +490,13 @@ void ProjectRevisionGraph::setSelection(const QString &revision_id)
 
 QRectF ProjectRevisionGraph::nodeRect(const ProjectGraphNode &node) const
 {
-    return QRectF(node.position.x() - node_width / 2.0,
-                  node.position.y() - node_height / 2.0,
-                  node_width, node_height);
+    const double width = node.kind == ProjectGraphNode::Kind::Server
+        ? server_node_width : node_width;
+    const double height = node.kind == ProjectGraphNode::Kind::Server
+        ? server_node_height : node.kind == ProjectGraphNode::Kind::Project
+            ? project_node_height : node_height;
+    return QRectF(node.position.x() - width / 2.0,
+                  node.position.y() - height / 2.0, width, height);
 }
 
 QPointF ProjectRevisionGraph::mapToGraph(const QPointF &point) const
@@ -478,7 +512,15 @@ QPointF ProjectRevisionGraph::graphToViewport(const QPointF &point) const
 QPointF ProjectRevisionGraph::revisionViewportPosition(const QString &revision_id) const
 {
     for (const ProjectGraphNode &node : this->nodes)
-        if (node.id == revision_id)
+        if (node.kind == ProjectGraphNode::Kind::Revision && node.id == revision_id)
+            return graphToViewport(node.position);
+    return QPointF();
+}
+
+QPointF ProjectRevisionGraph::nodeViewportPosition(const QString &id) const
+{
+    for (const ProjectGraphNode &node : this->nodes)
+        if (node.id == id)
             return graphToViewport(node.position);
     return QPointF();
 }
@@ -605,6 +647,41 @@ void ProjectRevisionGraph::paintEvent(QPaintEvent *event)
     painter.translate(this->offset);
     painter.scale(this->zoom, this->zoom);
 
+    // Database -> project -> oldest loaded revision edges are layout edges,
+    // never revision parents. Do not let them affect DAG folding or checkout.
+    QHash<QString, const ProjectGraphNode *> visible_by_id;
+    for (const ProjectGraphNode &node : this->nodes)
+        visible_by_id.insert(node.id, &node);
+    const double structural_sign = this->top_down ? 1.0 : -1.0;
+    for (const ProjectGraphNode &node : this->nodes)
+    {
+        const ProjectGraphNode *container = visible_by_id.value(node.container_id, nullptr);
+        if (container == nullptr)
+            continue;
+        const QRectF start_box = nodeRect(*container);
+        const QRectF end_box = nodeRect(node);
+        const QPointF begin(container->position.x(), container->position.y()
+            + structural_sign * start_box.height() / 2.0);
+        QPointF end(node.position.x(), node.position.y()
+            - structural_sign * end_box.height() / 2.0);
+        // When the loaded root was folded into a summary marker, terminate
+        // the project edge at that marker rather than crossing it to HEAD.
+        if (node.kind == ProjectGraphNode::Kind::Revision)
+            for (const Omission &omission : this->omissions)
+                if (omission.visible_child_id == node.id && omission.visible_parent_id.isEmpty())
+                {
+                    end = omission.position - QPointF(0, structural_sign * 29.0);
+                    break;
+                }
+        const double bend = qMax(24.0, std::abs(end.y() - begin.y()) * 0.45);
+        QPainterPath path(begin);
+        path.cubicTo(begin + QPointF(0, structural_sign * bend),
+                     end - QPointF(0, structural_sign * bend), end);
+        painter.setPen(QPen(tint(accent, 145), 2.5, Qt::SolidLine, Qt::RoundCap));
+        painter.setBrush(Qt::NoBrush);
+        painter.drawPath(path);
+    }
+
     // A collapsed path is a real edge between its visible ancestor and
     // descendant, passing through a clickable omission marker. Both halves
     // remain drawn so branch connectivity does not disappear in heads mode.
@@ -669,6 +746,51 @@ void ProjectRevisionGraph::paintEvent(QPaintEvent *event)
         const QRectF box = nodeRect(node);
         const bool selected = node.id == this->selected_revision;
         const QColor surface = palette().color(QPalette::Window);
+        if (node.kind != ProjectGraphNode::Kind::Revision)
+        {
+            const bool server = node.kind == ProjectGraphNode::Kind::Server;
+            const QColor group_color = server ? QColor(50, 174, 173) : accent;
+            painter.setPen(QPen(tint(group_color, server ? 230 : 140), server ? 2.2 : 1.6));
+            painter.setBrush(tint(group_color, server ? 64 : 24));
+            painter.drawRoundedRect(box, server ? 15 : 11, server ? 15 : 11);
+            if (server)
+            {
+                // Compact database cylinder icon: unmistakably different
+                // from a revision/branch card, with no platform icon dependency.
+                const QRectF icon_box(box.left() + 16, box.top() + 20, 27, 26);
+                painter.setPen(QPen(group_color, 1.7));
+                painter.setBrush(tint(group_color, 45));
+                painter.drawRoundedRect(icon_box, 5, 5);
+                painter.drawEllipse(QRectF(icon_box.left(), icon_box.top(),
+                                           icon_box.width(), 8));
+                painter.drawArc(QRectF(icon_box.left(), icon_box.top() + 9,
+                                       icon_box.width(), 8), 180 * 16, 180 * 16);
+                painter.setFont(title_font);
+                painter.setPen(ink);
+                painter.drawText(box.adjusted(53, 10, -12, -29),
+                    Qt::AlignVCenter | Qt::AlignLeft,
+                    painter.fontMetrics().elidedText(node.title, Qt::ElideRight,
+                        int(box.width() - 70)));
+                painter.setFont(small_font);
+                painter.setPen(muted);
+                painter.drawText(box.adjusted(53, 40, -12, -9),
+                    Qt::AlignVCenter | Qt::AlignLeft, node.branch);
+            }
+            else
+            {
+                painter.setFont(title_font);
+                painter.setPen(ink);
+                painter.drawText(box.adjusted(15, 8, -12, -31),
+                    Qt::AlignVCenter | Qt::AlignLeft,
+                    painter.fontMetrics().elidedText(node.title, Qt::ElideRight,
+                        int(box.width() - 27)));
+                painter.setFont(small_font);
+                painter.setPen(muted);
+                painter.drawText(box.adjusted(15, 34, -12, -8),
+                    Qt::AlignVCenter | Qt::AlignLeft, node.branch);
+            }
+            continue;
+        }
         painter.setBrush(surface);
         painter.setPen(QPen(selected ? accent : tint(muted, 125), selected ? 3 : 1.4));
         painter.drawRoundedRect(box, 12, 12);
@@ -687,7 +809,7 @@ void ProjectRevisionGraph::paintEvent(QPaintEvent *event)
         painter.setFont(small_font);
         painter.setPen(muted);
         painter.drawText(box.adjusted(16, 38, -12, -26), Qt::AlignLeft,
-                         node.id.left(12));
+                         (node.display_id.isEmpty() ? node.id : node.display_id).left(12));
 
         const QRectF pill(box.left() + 14, box.bottom() - 26, 118, 19);
         painter.setBrush(tint(accent, selected ? 80 : 38));
@@ -695,7 +817,9 @@ void ProjectRevisionGraph::paintEvent(QPaintEvent *event)
         painter.drawRoundedRect(pill, 8, 8);
         painter.setPen(ink);
         painter.drawText(pill.adjusted(7, 1, -7, -1), Qt::AlignVCenter | Qt::AlignLeft,
-                         painter.fontMetrics().elidedText(node.branch, Qt::ElideRight, 101));
+                         painter.fontMetrics().elidedText(
+                             node.display_branch.isEmpty() ? node.branch : node.display_branch,
+                             Qt::ElideRight, 101));
 
         if (!node.head_branch.isEmpty())
         {
@@ -909,6 +1033,12 @@ void ProjectRevisionGraph::mouseReleaseEvent(QMouseEvent *event)
             }
             else if (const ProjectGraphNode *node = hitNode(point))
             {
+                if (node->kind == ProjectGraphNode::Kind::Server)
+                    emit serverActivated(node->id.mid(QStringLiteral("group:server:").size()));
+                else if (node->kind == ProjectGraphNode::Kind::Project)
+                    emit projectActivated(node->id.mid(QStringLiteral("group:project:").size()));
+                else
+                {
                 // The branch badge has a separate hit target from the revision.
                 const QRectF pill(nodeRect(*node).left() + 14,
                                   nodeRect(*node).bottom() - 26, 118, 19);
@@ -916,6 +1046,7 @@ void ProjectRevisionGraph::mouseReleaseEvent(QMouseEvent *event)
                     emit branchActivated(node->branch);
                 else
                     emit revisionActivated(node->id);
+                }
             }
         }
         else if (this->drag_elapsed.isValid()

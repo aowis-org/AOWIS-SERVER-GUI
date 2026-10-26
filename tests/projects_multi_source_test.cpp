@@ -17,6 +17,7 @@
 #include <QTimer>
 
 #include <cstdio>
+#include <cmath>
 #include <functional>
 #include <memory>
 
@@ -141,6 +142,18 @@ int main(int argc, char **argv)
     if (!require(!graph->revisionViewportPosition(first_graph_id).isNull()
                  && !graph->revisionViewportPosition(second_graph_id).isNull(),
                  "aggregate graph omitted a source or merged same-hash revisions")) return 1;
+    const QPointF first_server = graph->nodeViewportPosition(QStringLiteral("group:server:source-a"));
+    const QPointF second_server = graph->nodeViewportPosition(QStringLiteral("group:server:source-b"));
+    const QPointF first_project = graph->nodeViewportPosition(
+        QStringLiteral("group:project:source-a|p1"));
+    if (!require(!first_server.isNull() && !second_server.isNull() && !first_project.isNull(),
+                 "graph must expose a separate node for each database and project")) return 1;
+    if (!require(first_server.y() < first_project.y()
+                 && first_project.y() < graph->revisionViewportPosition(first_graph_id).y(),
+                 "database/project hierarchy is not above its revisions")) return 1;
+    const double separation = std::abs(first_server.x() - second_server.x()) / graph->zoomFactor();
+    if (!require(separation >= 280.0 && separation <= 400.0,
+                 "single-project databases are spaced too far apart")) return 1;
     if (!require(projects.findChild<QPushButton *>(QStringLiteral("projectsSourceConnectButton")) == nullptr,
                  "legacy manual connect/disconnect control still exists")) return 1;
 
@@ -150,6 +163,8 @@ int main(int argc, char **argv)
                  && loadProjectServerProfiles().at(1).visible == false
                  && graph->revisionViewportPosition(second_graph_id).isNull(),
                  "unchecking a source did not persistently filter navigator and graph")) return 1;
+    if (!require(graph->nodeViewportPosition(QStringLiteral("group:server:source-b")).isNull(),
+                 "hidden database still has a graph header")) return 1;
     sources->topLevelItem(1)->setCheckState(0, Qt::Checked);
     app.processEvents();
     if (!require(tree->topLevelItemCount() == 2 && loadProjectServerProfiles().at(1).visible,

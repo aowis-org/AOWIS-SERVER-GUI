@@ -17,13 +17,20 @@
 // GUI-only graph data. No database IDs are inferred from these preview labels.
 struct ProjectGraphNode
 {
+    enum class Kind { Revision, Project, Server };
     QString id;
     QString title;
     QString branch;
+    QString display_id;
+    QString display_branch;
     QStringList parents;
     QStringList tags;
     QString head_branch;
     QPointF position;
+    Kind kind = Kind::Revision;
+    // Structural hierarchy, separate from immutable revision ancestry.
+    QString container_id;
+    QString project_group_id;
 };
 
 class QFocusEvent;
@@ -57,11 +64,14 @@ public:
     // exactly the same transform as the renderer.
     QPointF graphToViewport(const QPointF &point) const;
     QPointF revisionViewportPosition(const QString &revision_id) const;
+    QPointF nodeViewportPosition(const QString &id) const;
     double zoomFactor() const;
 
 signals:
     void revisionActivated(const QString &revision_id);
     void branchActivated(const QString &branch_name);
+    void serverActivated(const QString &server_id);
+    void projectActivated(const QString &project_id);
 
 protected:
     void paintEvent(QPaintEvent *event) override;

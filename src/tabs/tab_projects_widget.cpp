@@ -722,6 +722,14 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
         select(SelectionKind::Project, target.first);
         select(SelectionKind::Revision, target.second);
     });
+    connect(this->graph, &ProjectRevisionGraph::serverActivated, this, [this](const QString &id)
+    {
+        select(SelectionKind::Server, id);
+    });
+    connect(this->graph, &ProjectRevisionGraph::projectActivated, this, [this](const QString &id)
+    {
+        select(SelectionKind::Project, id);
+    });
     connect(this->graph, &ProjectRevisionGraph::branchActivated, this, [this](const QString &name)
     {
         // The graph has qualified lane names across all databases.
@@ -1381,41 +1389,106 @@ void ProjectsWidget::rebuildGraph()
 {
     QVector<ProjectGraphNode> nodes;
     this->graph_revision_lookup.clear();
-    int next_lane = 0;
+    // Pack groups by their real width. The old "one spare branch lane per
+    // project" doubled the empty space between unrelated single-head nodes.
+    constexpr double node_width = 224.0;
+    constexpr double lane_spacing = 264.0;
+    constexpr double project_spacing = 76.0;
+    constexpr double server_spacing = 110.0;
+    constexpr double revision_spacing = 155.0;
+    double next_left = 0.0;
     for (const ProjectServerProfile &source : this->servers)
     {
         if (!source.visible) continue;
         const bool preview = source.id == QStringLiteral("preview-local")
             || source.id == QStringLiteral("preview-remote");
         if (preview && source.id != this->server_id) continue;
+        const double server_left = next_left;
+        int project_count = 0;
+        const QString server_node_id = QStringLiteral("group:server:") + source.id;
         for (const ProjectPreviewData &project : this->projects)
         {
             if (project.server_id != source.id || (preview && project.id != this->project_id)) continue;
+            if (project_count > 0)
+                next_left += project_spacing;
             QStringList lanes;
             for (const ProjectPreviewBranch &branch : project.branches)
                 if (!lanes.contains(branch.name)) lanes.append(branch.name);
-            const int start_lane = next_lane;
-            next_lane += qMax(1, lanes.size()) + 1;
-            int row = 0;
+            const double project_width = node_width + (qMax(1, lanes.size()) - 1) * lane_spacing;
+            const double project_left = next_left;
+            const double project_center = project_left + project_width / 2.0;
+            const QString project_node_id = QStringLiteral("group:project:") + project.id;
+            ProjectGraphNode project_node;
+            project_node.kind = ProjectGraphNode::Kind::Project;
+            project_node.id = project_node_id;
+            project_node.title = project.name;
+            project_node.branch = tr("PROJECT · %n branch(es)", nullptr, project.branches.size());
+            project_node.container_id = server_node_id;
+            project_node.position = QPointF(project_center, revision_spacing);
+            nodes.append(project_node);
+            // Revision snapshots can contain overlapping branch histories and
+            // are not guaranteed to be in one globally topological order.
+            // Resolve height from actual parent relationships instead of the
+            // arbitrary order in which branch pages were returned.
+            QHash<QString, const ProjectPreviewRevision *> revisions_by_id;
+            for (const ProjectPreviewRevision &revision : project.revisions)
+                revisions_by_id.insert(revision.id, &revision);
+            QHash<QString, int> depths;
+            QSet<QString> visiting;
+            std::function<int(const QString &)> depthFor;
+            depthFor = [&](const QString &id) -> int
+            {
+                if (depths.contains(id)) return depths.value(id);
+                if (visiting.contains(id)) return 0; // malformed cycle
+                const ProjectPreviewRevision *revision = revisions_by_id.value(id, nullptr);
+                if (revision == nullptr) return -1;
+                visiting.insert(id);
+                int depth = 0;
+                for (const QString &parent : revision->parents)
+                    depth = qMax(depth, depthFor(parent) + 1);
+                visiting.remove(id);
+                depths.insert(id, depth);
+                return depth;
+            };
             for (const ProjectPreviewRevision &revision : project.revisions)
             {
                 ProjectGraphNode node;
                 node.id = preview ? revision.id : project.id + QStringLiteral("|") + revision.id;
-                node.title = preview ? revision.title
-                    : tr("%1 / %2 · %3").arg(source.name, project.name, revision.title);
+                node.title = revision.title;
                 node.branch = preview ? revision.branch
                     : tr("%1 / %2 / %3").arg(source.name, project.name, revision.branch);
+                node.display_id = revision.id;
+                node.display_branch = revision.branch;
                 for (const QString &parent : revision.parents)
                     node.parents.append(preview ? parent : project.id + QStringLiteral("|") + parent);
                 node.tags = revision.tags;
                 const int lane = qMax(0, lanes.indexOf(revision.branch));
-                node.position = QPointF((start_lane + lane) * 285.0, row * 155.0);
+                // All roots align beneath their project card. Mirroring makes
+                // the project/server hierarchy read top-to-bottom while HEADs
+                // remain farther down the graph than their ancestors.
+                node.position = QPointF(project_left + node_width / 2.0 + lane * lane_spacing,
+                    -depthFor(revision.id) * revision_spacing);
+                node.project_group_id = project_node_id;
                 for (const ProjectPreviewBranch &branch : project.branches)
                     if (branch.head == revision.id) node.head_branch = branch.name;
                 this->graph_revision_lookup.insert(node.id, qMakePair(project.id, revision.id));
                 nodes.append(node);
-                ++row;
             }
+            next_left += project_width;
+            ++project_count;
+        }
+        if (project_count > 0)
+        {
+            ProjectGraphNode server_node;
+            server_node.kind = ProjectGraphNode::Kind::Server;
+            server_node.id = server_node_id;
+            server_node.title = source.name;
+            server_node.branch = source.connection_type == QStringLiteral("local")
+                ? tr("LOCAL DATABASE") : tr("REST SERVER");
+            server_node.position = QPointF((server_left + next_left) / 2.0,
+                                           2.0 * revision_spacing);
+            nodes.append(server_node);
+            next_left += server_spacing;
         }
     }
     this->graph->setNodes(nodes);

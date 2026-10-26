@@ -460,6 +460,43 @@ int main(int argc, char **argv)
                  "focus loss did not stop navigation"))
         return 1;
 
-    std::puts("Project revision graph navigation tests passed");
+    // Structural graph cards are separate from revision DAG nodes. Their hit
+    // targets must select the owning source/project without fabricating a
+    // revision, and they must remain visible in folded history mode.
+    ProjectGraphNode server_card;
+    server_card.kind = ProjectGraphNode::Kind::Server;
+    server_card.id = QStringLiteral("group:server:test-source");
+    server_card.title = QStringLiteral("Test database");
+    server_card.position = QPointF(0, 310);
+    ProjectGraphNode project_card;
+    project_card.kind = ProjectGraphNode::Kind::Project;
+    project_card.id = QStringLiteral("group:project:test-project");
+    project_card.title = QStringLiteral("Test project");
+    project_card.container_id = server_card.id;
+    project_card.position = QPointF(0, 155);
+    ProjectGraphNode revision_card = node;
+    revision_card.id = QStringLiteral("revision-with-project");
+    revision_card.project_group_id = project_card.id;
+    revision_card.position = QPointF(0, 0);
+    graph.setShowFullTree(true);
+    graph.setNodes({server_card, project_card, revision_card});
+    graph.fitGraph();
+    QString selected_source;
+    QString selected_project;
+    QObject::connect(&graph, &ProjectRevisionGraph::serverActivated,
+        &graph, [&selected_source](const QString &id) { selected_source = id; });
+    QObject::connect(&graph, &ProjectRevisionGraph::projectActivated,
+        &graph, [&selected_project](const QString &id) { selected_project = id; });
+    click(graph, graph.nodeViewportPosition(server_card.id));
+    click(graph, graph.nodeViewportPosition(project_card.id));
+    if (!require(selected_source == QStringLiteral("test-source")
+                 && selected_project == QStringLiteral("test-project"),
+                 "server/project cards did not emit their own selection signals")) return 1;
+    graph.setShowFullTree(false);
+    if (!require(!graph.nodeViewportPosition(server_card.id).isNull()
+                 && !graph.nodeViewportPosition(project_card.id).isNull(),
+                 "folded revision mode removed the server/project hierarchy")) return 1;
+
+    std::puts("Project revision graph navigation and hierarchy tests passed");
     return 0;
 }
