@@ -31,6 +31,7 @@
 #include <QTreeWidget>
 #include <QTreeWidgetItem>
 #include <QTreeWidgetItemIterator>
+#include <QUrl>
 #include <QUuid>
 #include <QVBoxLayout>
 
@@ -71,6 +72,22 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
 {
     setObjectName(QStringLiteral("projectsWorkspace"));
     seedPreview();
+    this->servers = loadProjectServerProfiles();
+    this->server_id.clear();
+    this->project_id.clear();
+    this->branch_id.clear();
+    if (!this->servers.isEmpty())
+    {
+        this->server_id = this->servers.first().id;
+        for (const ProjectPreviewData &project : this->projects)
+            if (project.server_id == this->server_id)
+            {
+                this->project_id = project.id;
+                if (!project.branches.isEmpty())
+                    this->branch_id = project.branches.first().id;
+                break;
+            }
+    }
 
     QVBoxLayout *outer = new QVBoxLayout(this);
     outer->setContentsMargins(0, 0, 0, 0);
@@ -87,7 +104,7 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     page_title->setFont(title_font);
     header_layout->addWidget(page_title);
     header_layout->addStretch();
-    QLabel *preview = new QLabel(tr("LOCAL UI PREVIEW  ·  NOT CONNECTED TO DATABASE"), header);
+    QLabel *preview = new QLabel(tr("PROJECT DATA PREVIEW  ·  NOT CONNECTED TO DATABASE"), header);
     preview->setObjectName(QStringLiteral("projectsPreviewBanner"));
     header_layout->addWidget(preview);
     outer->addWidget(header);
@@ -121,12 +138,12 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     left_layout->setContentsMargins(8, 8, 8, 8);
     left_layout->setSpacing(10);
 
-    // Server settings are a GUI-only preview. Selecting a server scopes the
+    // Server profiles are persisted locally. Selecting one scopes the preview
     // project/branch/revision panels; no connection is opened or tested.
     GroupBoxCollapsible *servers_group = new GroupBoxCollapsible(tr("Servers"), left);
     servers_group->setObjectName(QStringLiteral("serversCollapsibleGroup"));
     QVBoxLayout *servers_layout = new QVBoxLayout(servers_group);
-    QPushButton *add_server = compactButton(tr("+ Server"), tr("Add a server profile (preview only)"), servers_group);
+    QPushButton *add_server = compactButton(tr("+ Server"), tr("Add a server profile to the GUI configuration"), servers_group);
     add_server->setObjectName(QStringLiteral("serversCreateButton"));
     add_server->setMinimumWidth(0);
     add_server->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
@@ -143,7 +160,7 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     this->server_tree->setMaximumHeight(112);
     this->server_tree->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     servers_layout->addWidget(this->server_tree, 1);
-    QLabel *server_notice = new QLabel(tr("Preview · Offline"), servers_group);
+    QLabel *server_notice = new QLabel(tr("Saved profiles · Offline"), servers_group);
     server_notice->setObjectName(QStringLiteral("serversPreviewStatus"));
     servers_layout->addWidget(server_notice);
     left_layout->addWidget(servers_group, 0);
@@ -381,10 +398,12 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     this->server_endpoint_edit->setPlaceholderText(tr("https://database.example.invalid"));
     this->server_auth_combo = new QComboBox(this->server_options);
     this->server_auth_combo->setObjectName(QStringLiteral("projectServerAuthMode"));
-    this->server_auth_combo->addItems({tr("None"), tr("API token"), tr("User login")});
+    this->server_auth_combo->addItem(tr("None"), QStringLiteral("None"));
+    this->server_auth_combo->addItem(tr("API token"), QStringLiteral("API token"));
+    this->server_auth_combo->addItem(tr("User login"), QStringLiteral("User login"));
     server_form->addRow(tr("Server URL"), this->server_endpoint_edit);
     server_form->addRow(tr("Authentication (future)"), this->server_auth_combo);
-    QLabel *server_warning = new QLabel(tr("Preview settings only. No connection, credentials, or tokens are stored."), this->server_options);
+    QLabel *server_warning = new QLabel(tr("Profile stored locally. No connection is made and no credentials or tokens are stored."), this->server_options);
     server_warning->setWordWrap(true);
     server_form->addRow(server_warning);
     right_layout->addWidget(this->server_options);
@@ -393,14 +412,14 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     this->metadata_info->setWordWrap(true);
     this->metadata_info->setTextInteractionFlags(Qt::TextSelectableByMouse);
     right_layout->addWidget(this->metadata_info);
-    QLabel *preview_note = new QLabel(tr("Changes here update only this in-memory preview. No server records are written."), right);
+    QLabel *preview_note = new QLabel(tr("Project and revision changes are still in-memory previews. Server profile changes are saved in the GUI configuration."), right);
     preview_note->setWordWrap(true);
     preview_note->setObjectName(QStringLiteral("inspectorPreviewNote"));
     right_layout->addWidget(preview_note);
     // Renaming is handled by the Name field. Destructive operations belong
     // in the inspector for the selected server/project/branch, not in trees.
     this->inspector_delete_button = compactButton(tr("Delete"),
-        tr("Remove the selected item from the in-memory preview"), right);
+        tr("Remove the selected item; server profiles are deleted from the GUI configuration"), right);
     this->inspector_delete_button->setObjectName(QStringLiteral("projectInspectorDeleteButton"));
     QHBoxLayout *inspector_actions = new QHBoxLayout();
     inspector_actions->addStretch(1);
@@ -523,7 +542,16 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     populateProjectTree();
     populateRevisionTree();
     rebuildGraph();
-    select(SelectionKind::Branch, this->branch_id);
+    if (!this->branch_id.isEmpty())
+        select(SelectionKind::Branch, this->branch_id);
+    else if (!this->server_id.isEmpty())
+        select(SelectionKind::Server, this->server_id);
+    else
+    {
+        updateInspector();
+        updateButtons();
+        broadcastContext();
+    }
 }
 
 QString ProjectsWidget::makeId(const QString &prefix)
@@ -549,14 +577,10 @@ void ProjectsWidget::seedPreview()
         {QStringLiteral("a24f918d"), tr("Scenario start"), tr("Branch off the network baseline."), QStringLiteral("pressure-study"), {QStringLiteral("93f0de41")}, {}, tr("Preview author"), QStringLiteral("2026-10-23")},
         {QStringLiteral("93f0de41"), tr("Network baseline"), tr("Initial imported hydraulic model."), QStringLiteral("main"), {}, {QStringLiteral("baseline")}, tr("Preview author"), QStringLiteral("2026-10-22")}
     };
-    this->servers = {
-        {QStringLiteral("preview-local"), tr("Local preview"), QStringLiteral("http://localhost:8080"),
-         tr("Illustrative local database server profile; no connection is made."), {}, QStringLiteral("None")},
-        {QStringLiteral("preview-remote"), tr("Remote preview"), QStringLiteral("https://database.example.invalid"),
-         tr("Illustrative remote database profile for future multi-server workflows."), {}, QStringLiteral("API token")}
-    };
-    this->server_id = this->servers.first().id;
-    north.server_id = this->server_id;
+    // Historical example data is retained for the version-explorer prototype,
+    // but is only shown by explicitly configured profiles with this demo ID.
+    // Real newly added servers never acquire fictional projects automatically.
+    north.server_id = QStringLiteral("preview-local");
     this->projects.append(north);
     ProjectPreviewData south;
     south.id = QStringLiteral("preview-south");
@@ -565,15 +589,13 @@ void ProjectsWidget::seedPreview()
     south.tags = {QStringLiteral("preview")};
     south.branches = {{QStringLiteral("south-main"), QStringLiteral("main"), QString(), {}, QStringLiteral("742b0a90")}};
     south.revisions = {{QStringLiteral("742b0a90"), tr("Initial layout"), tr("Demo revision."), QStringLiteral("main"), {}, {}, tr("Preview author"), QStringLiteral("2026-10-23")}};
-    south.server_id = this->server_id;
+    south.server_id = QStringLiteral("preview-local");
     this->projects.append(south);
-    this->project_id = north.id;
-    this->branch_id = north.branches.first().id;
 }
 
-ProjectPreviewServer *ProjectsWidget::currentServer()
+ProjectServerProfile *ProjectsWidget::currentServer()
 {
-    for (ProjectPreviewServer &server : this->servers)
+    for (ProjectServerProfile &server : this->servers)
         if (server.id == this->server_id) return &server;
     return nullptr;
 }
@@ -582,11 +604,11 @@ void ProjectsWidget::populateServerTree()
 {
     const QSignalBlocker blocked(this->server_tree);
     this->server_tree->clear();
-    for (const ProjectPreviewServer &server : this->servers)
+    for (const ProjectServerProfile &server : this->servers)
     {
         QTreeWidgetItem *item = newTreeItem(this->server_tree, server.name,
             keyFor(QStringLiteral("s"), server.id));
-        item->setToolTip(0, tr("%1\nPreview only · Not connected").arg(server.endpoint));
+        item->setToolTip(0, tr("%1\nSaved profile · Not connected").arg(server.endpoint));
     }
 }
 
@@ -803,7 +825,7 @@ void ProjectsWidget::select(SelectionKind kind, const QString &id)
     if (kind == SelectionKind::Server)
     {
         bool found = false;
-        for (const ProjectPreviewServer &server : this->servers)
+        for (const ProjectServerProfile &server : this->servers)
             if (server.id == id) { found = true; break; }
         if (!found) return;
         if (this->server_id != id)
@@ -929,13 +951,13 @@ void ProjectsWidget::updateInspector()
     ProjectPreviewData *project = currentProject();
     if (this->selection_kind == SelectionKind::Server)
     {
-        if (ProjectPreviewServer *server = currentServer())
+        if (ProjectServerProfile *server = currentServer())
         {
             heading = tr("Server");
             name = server->name;
             description = server->description;
             tags = server->tags;
-            subtitle = tr("Configuration preview · not connected");
+            subtitle = tr("Saved GUI profile · not connected");
             metadata = tr("Profile: %1\nStatus: Not connected").arg(server->id);
         }
     }
@@ -991,9 +1013,9 @@ void ProjectsWidget::updateInspector()
     this->server_options->setVisible(server_selected);
     if (server_selected)
     {
-        const ProjectPreviewServer *server = currentServer();
+        const ProjectServerProfile *server = currentServer();
         this->server_endpoint_edit->setText(server->endpoint);
-        const int index = this->server_auth_combo->findText(server->auth_mode);
+        const int index = this->server_auth_combo->findData(server->auth_mode);
         this->server_auth_combo->setCurrentIndex(index < 0 ? 0 : index);
     }
     this->inspector_heading->setText(heading);
@@ -1090,20 +1112,26 @@ void ProjectsWidget::showRevisionHistory()
 void ProjectsWidget::createServer()
 {
     bool accepted = false;
-    const QString name = QInputDialog::getText(this, tr("New server (preview)"),
+    const QString name = QInputDialog::getText(this, tr("New server"),
         tr("Server name"), QLineEdit::Normal, QString(), &accepted).trimmed();
     if (!accepted || name.isEmpty()) return;
-    for (const ProjectPreviewServer &server : this->servers)
+    for (const ProjectServerProfile &server : this->servers)
         if (server.name.compare(name, Qt::CaseInsensitive) == 0)
         {
             QMessageBox::information(this, tr("Already exists"), tr("Choose a different server name."));
             return;
         }
-    ProjectPreviewServer server;
+    ProjectServerProfile server;
     server.id = makeId(QStringLiteral("s-"));
     server.name = name;
     server.auth_mode = QStringLiteral("None");
     this->servers.append(server);
+    if (!saveProjectServerProfiles(this->servers))
+    {
+        this->servers.removeLast();
+        reportServerSaveFailure();
+        return;
+    }
     populateServerTree();
     select(SelectionKind::Server, server.id);
 }
@@ -1111,14 +1139,21 @@ void ProjectsWidget::createServer()
 void ProjectsWidget::deleteServer()
 {
     if (currentServer() == nullptr) return;
-    if (QMessageBox::question(this, tr("Delete server preview"),
-        tr("Remove this server profile and its local preview projects? No database server is contacted."))
+    if (QMessageBox::question(this, tr("Delete server profile"),
+        tr("Remove this server profile from the GUI configuration and discard its local preview projects? No database server is contacted."))
         != QMessageBox::Yes) return;
     const QString removed = this->server_id;
-    for (int i = this->projects.size() - 1; i >= 0; --i)
-        if (this->projects.at(i).server_id == removed) this->projects.removeAt(i);
+    const QList<ProjectServerProfile> previous_servers = this->servers;
     for (int i = this->servers.size() - 1; i >= 0; --i)
         if (this->servers.at(i).id == removed) this->servers.removeAt(i);
+    if (!saveProjectServerProfiles(this->servers))
+    {
+        this->servers = previous_servers;
+        reportServerSaveFailure();
+        return;
+    }
+    for (int i = this->projects.size() - 1; i >= 0; --i)
+        if (this->projects.at(i).server_id == removed) this->projects.removeAt(i);
     this->server_id.clear();
     this->project_id.clear();
     this->branch_id.clear();
@@ -1135,6 +1170,13 @@ void ProjectsWidget::deleteServer()
         updateButtons();
         broadcastContext();
     }
+}
+
+void ProjectsWidget::reportServerSaveFailure()
+{
+    QMessageBox::warning(this, tr("Cannot save server profiles"),
+        tr("The server profile change could not be written to the GUI configuration:\n%1")
+            .arg(guiConfigurationFilePath()));
 }
 
 void ProjectsWidget::createProject()
@@ -1382,7 +1424,7 @@ void ProjectsWidget::createProjectFromExample(const BuiltinExampleRevision &exam
     fields->setRowWrapPolicy(QFormLayout::WrapAllRows);
     QComboBox *server = new QComboBox(&dialog);
     server->setObjectName(QStringLiteral("exampleCreateServer"));
-    for (const ProjectPreviewServer &entry : this->servers)
+    for (const ProjectServerProfile &entry : this->servers)
         server->addItem(entry.name, entry.id);
     const int selected_server = server->findData(this->server_id);
     if (selected_server >= 0) server->setCurrentIndex(selected_server);
@@ -1466,24 +1508,66 @@ void ProjectsWidget::applyInspectorEdits()
     bool tree_changed = false;
     if (this->selection_kind == SelectionKind::Server)
     {
-        ProjectPreviewServer *server = currentServer();
+        ProjectServerProfile *server = currentServer();
         if (server == nullptr) return;
-        if (!name.isEmpty() && name != server->name)
+        const ProjectServerProfile previous = *server;
+        if (name.isEmpty())
+        {
+            if (sender() == this->name_edit)
+            {
+                QMessageBox::warning(this, tr("Invalid server name"), tr("A server name cannot be empty."));
+                this->name_edit->setText(server->name);
+            }
+        }
+        else if (name != server->name)
         {
             bool exists = false;
-            for (const ProjectPreviewServer &other : this->servers)
+            for (const ProjectServerProfile &other : this->servers)
                 if (other.id != server->id && other.name.compare(name, Qt::CaseInsensitive) == 0)
                     exists = true;
-            if (!exists) { server->name = name; tree_changed = true; }
+            if (exists)
+            {
+                if (sender() == this->name_edit)
+                {
+                    QMessageBox::warning(this, tr("Already exists"), tr("Choose a different server name."));
+                    this->name_edit->setText(server->name);
+                }
+            }
+            else server->name = name;
         }
-        server->endpoint = this->server_endpoint_edit->text().trimmed();
-        server->auth_mode = this->server_auth_combo->currentText();
+        const QString endpoint = this->server_endpoint_edit->text().trimmed();
+        const QUrl url(endpoint);
+        if (!endpoint.isEmpty() && (!url.isValid()
+                || (url.scheme() != QStringLiteral("http")
+                    && url.scheme() != QStringLiteral("https")) || url.host().isEmpty()
+                || !url.userInfo().isEmpty() || url.hasQuery() || url.hasFragment()))
+        {
+            if (sender() == this->server_endpoint_edit)
+            {
+                QMessageBox::warning(this, tr("Invalid server URL"),
+                    tr("Use an http:// or https:// URL with a host, without embedded credentials, query or fragment."));
+                this->server_endpoint_edit->setText(server->endpoint);
+            }
+        }
+        else server->endpoint = endpoint;
+        server->auth_mode = this->server_auth_combo->currentData().toString();
         server->description = description;
         server->tags = tags;
-        // Keep the server tooltip and list selection in sync after changing
-        // even just the endpoint or authentication preview.
-        populateServerTree();
-        selectTreeItem(this->server_tree, keyFor(QStringLiteral("s"), this->server_id));
+        if (server->name != previous.name || server->endpoint != previous.endpoint
+            || server->auth_mode != previous.auth_mode
+            || server->description != previous.description || server->tags != previous.tags)
+        {
+            if (!saveProjectServerProfiles(this->servers))
+            {
+                *server = previous;
+                updateInspector();
+                reportServerSaveFailure();
+                return;
+            }
+            // Keep tooltips and selection synchronized after any persisted edit.
+            populateServerTree();
+            selectTreeItem(this->server_tree, keyFor(QStringLiteral("s"), this->server_id));
+        }
     }
     else if (this->selection_kind == SelectionKind::Project)
     {

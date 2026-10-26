@@ -169,6 +169,8 @@ qt_add_executable(aowis-server-gui
     src/config/gui_configuration.h
     src/config/map_server_client_configuration.cpp
     src/config/map_server_client_configuration.h
+    src/config/project_server_profile_storage.cpp
+    src/config/project_server_profile_storage.h
     src/config/shortcut_registry.cpp
     src/config/shortcut_registry.h
 
@@ -642,6 +644,8 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
         src/tabs/project_revision_graph.cpp
         src/tabs/project_revision_graph.h
         src/app/builtin_examples.cpp
+        src/config/project_server_profile_storage.cpp
+        src/config/project_server_profile_storage.h
         src/widgets/group_box_collapsible.cpp
         src/widgets/group_box_collapsible.h
         src/config/gui_configuration.cpp

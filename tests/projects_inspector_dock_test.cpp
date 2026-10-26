@@ -1,5 +1,7 @@
 #include "tabs/tab_projects_widget.h"
 #include "widgets/group_box_collapsible.h"
+#include "config/gui_configuration.h"
+#include "config/project_server_profile_storage.h"
 
 #include <QApplication>
 #include <QDockWidget>
@@ -9,14 +11,17 @@
 #include <QLabel>
 #include <QFrame>
 #include <QEventLoop>
+#include <QInputDialog>
 #include <QLineEdit>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QScrollBar>
+#include <QSettings>
 #include <QMainWindow>
 #include <QMessageBox>
 #include <QSplitter>
 #include <QStackedWidget>
+#include <QTextEdit>
 #include <QTemporaryDir>
 #include <QTimer>
 #include <QToolButton>
@@ -55,6 +60,29 @@ int main(int argc, char **argv)
         return 1;
     qputenv("XDG_DATA_HOME", configuration_dir.path().toUtf8());
     QApplication app(argc, argv);
+
+    // A fresh GUI must not present fictional entries as configured servers.
+    {
+        ProjectsWidget empty_profiles;
+        QTreeWidget *empty_tree = empty_profiles.findChild<QTreeWidget *>(
+            QStringLiteral("serversTree"));
+        if (!require(empty_tree != nullptr && empty_tree->topLevelItemCount() == 0,
+                     "a fresh configuration contains fictitious server profiles"))
+            return 1;
+    }
+
+    // Explicit demo fixtures retain the existing version-explorer regression
+    // coverage without forcing fake servers on users of a new installation.
+    const QList<ProjectServerProfile> sample_profiles{
+        {QStringLiteral("preview-local"), QStringLiteral("Local preview"),
+         QStringLiteral("http://localhost:8080"), QStringLiteral("Local test profile"),
+         {}, QStringLiteral("None")},
+        {QStringLiteral("preview-remote"), QStringLiteral("Remote preview"),
+         QStringLiteral("https://database.example.invalid"), QStringLiteral("Remote test profile"),
+         {}, QStringLiteral("API token")}
+    };
+    if (!require(saveProjectServerProfiles(sample_profiles), "could not seed profile fixtures"))
+        return 1;
 
     ProjectsWidget projects;
     projects.resize(1250, 740);
@@ -137,11 +165,14 @@ int main(int argc, char **argv)
         QStringLiteral("serversCollapsibleGroup"));
     QTreeWidget *servers = projects.findChild<QTreeWidget *>(QStringLiteral("serversTree"));
     QLineEdit *endpoint = projects.findChild<QLineEdit *>(QStringLiteral("projectServerEndpoint"));
+    QLineEdit *tags_edit = projects.findChild<QLineEdit *>(QStringLiteral("projectInspectorTags"));
+    QTextEdit *description_edit = projects.findChild<QTextEdit *>(QStringLiteral("projectInspectorDescription"));
     QComboBox *auth_mode = projects.findChild<QComboBox *>(QStringLiteral("projectServerAuthMode"));
     QWidget *server_options = projects.findChild<QWidget *>(QStringLiteral("projectServerOptions"));
     if (!require(server_section != nullptr && servers != nullptr
                      && servers->topLevelItemCount() == 2
-                     && endpoint != nullptr && auth_mode != nullptr && server_options != nullptr,
+                     && endpoint != nullptr && tags_edit != nullptr && description_edit != nullptr
+                     && auth_mode != nullptr && server_options != nullptr,
                  "Servers panel or inspector configuration fields are missing"))
         return 1;
     if (!require(servers->parentWidget() != nullptr && server_section->isVisible(),
@@ -182,6 +213,9 @@ int main(int argc, char **argv)
     endpoint->setText(QStringLiteral("https://new-preview.example.invalid"));
     QMetaObject::invokeMethod(endpoint, "editingFinished", Qt::DirectConnection);
     auth_mode->setCurrentIndex(2);
+    tags_edit->setText(QStringLiteral("remote, study"));
+    QMetaObject::invokeMethod(tags_edit, "editingFinished", Qt::DirectConnection);
+    description_edit->setPlainText(QStringLiteral("Persisted remote server description"));
     app.processEvents();
     servers->setCurrentItem(servers->topLevelItem(0));
     app.processEvents();
@@ -194,6 +228,17 @@ int main(int argc, char **argv)
     if (!require(endpoint->text() == QStringLiteral("https://new-preview.example.invalid")
                      && auth_mode->currentText() == QStringLiteral("User login"),
                  "server configuration preview was lost on profile switch"))
+        return 1;
+    const QList<ProjectServerProfile> saved_profiles = loadProjectServerProfiles();
+    QSettings saved_ini(guiConfigurationFilePath(), QSettings::IniFormat);
+    if (!require(saved_profiles.size() == 2
+                     && saved_profiles.at(1).name == QStringLiteral("Remote preview")
+                     && saved_profiles.at(1).endpoint == QStringLiteral("https://new-preview.example.invalid")
+                     && saved_profiles.at(1).auth_mode == QStringLiteral("User login")
+                     && saved_profiles.at(1).description == QStringLiteral("Persisted remote server description")
+                     && saved_profiles.at(1).tags == QStringList({QStringLiteral("remote"), QStringLiteral("study")})
+                     && saved_ini.contains(QStringLiteral("projects/servers")),
+                 "inspector modifications were not saved in the GUI INI file"))
         return 1;
     servers->setCurrentItem(servers->topLevelItem(0));
     projects.selectBranchByName(QStringLiteral("main"));
@@ -817,6 +862,44 @@ int main(int argc, char **argv)
                      && delete_projects->topLevelItem(0)->text(0)
                         == QStringLiteral("Sample North Network"),
                  "inspector Delete project action did not remove the preview project"))
+        return 1;
+
+    // + Server writes immediately and appears after a fresh widget reload.
+    QTimer::singleShot(0, []
+    {
+        if (QInputDialog *dialog = qobject_cast<QInputDialog *>(QApplication::activeModalWidget()))
+        {
+            dialog->setTextValue(QStringLiteral("Added server"));
+            dialog->accept();
+        }
+    });
+    add_server->click();
+    app.processEvents();
+    if (!require(servers->topLevelItemCount() == 3
+                     && loadProjectServerProfiles().size() == 3,
+                 "+ Server did not persist a new server profile"))
+        return 1;
+    ProjectsWidget reloaded;
+    QTreeWidget *reloaded_servers = reloaded.findChild<QTreeWidget *>(
+        QStringLiteral("serversTree"));
+    if (!require(reloaded_servers != nullptr && reloaded_servers->topLevelItemCount() == 3
+                     && reloaded_servers->topLevelItem(2)->text(0) == QStringLiteral("Added server"),
+                 "created server profile was not restored at startup"))
+        return 1;
+
+    // Deletion must remove the profile from disk, without deleting any DVMDB data.
+    servers->setCurrentItem(servers->topLevelItem(2));
+    app.processEvents();
+    QTimer::singleShot(0, []
+    {
+        if (QMessageBox *confirmation = qobject_cast<QMessageBox *>(QApplication::activeModalWidget()))
+            confirmation->done(QMessageBox::Yes);
+    });
+    delete_in_inspector->click();
+    app.processEvents();
+    if (!require(servers->topLevelItemCount() == 2
+                     && loadProjectServerProfiles().size() == 2,
+                 "server deletion was not persisted"))
         return 1;
 
     std::puts("Projects inspector dock tests passed");

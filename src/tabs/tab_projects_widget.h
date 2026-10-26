@@ -1,5 +1,6 @@
 #pragma once
 
+#include "config/project_server_profile_storage.h"
 #include "tabs/project_revision_graph.h"
 
 #include <QList>
@@ -39,16 +40,6 @@ struct ProjectPreviewBranch
     QString head;
 };
 
-struct ProjectPreviewServer
-{
-    QString id;
-    QString name;
-    QString endpoint;
-    QString description;
-    QStringList tags;
-    QString auth_mode;
-};
-
 struct ProjectPreviewData
 {
     QString id;
@@ -61,8 +52,8 @@ struct ProjectPreviewData
     QList<ProjectPreviewRevision> revisions;
 };
 
-// Projects tab prototype: all project/branch/metadata mutations below are
-// in-memory GUI state only. It does not issue requests to the DB server.
+// Server profiles are locally persisted. Project/branch/revision changes are
+// still in-memory preview data, with no DVMDB requests in this step.
 class ProjectsWidget final : public QWidget
 {
     Q_OBJECT
@@ -103,7 +94,8 @@ private:
     void browseExamples();
     void createProjectFromExample(const BuiltinExampleRevision &example);
     void applyInspectorEdits();
-    ProjectPreviewServer *currentServer();
+    void reportServerSaveFailure();
+    ProjectServerProfile *currentServer();
     ProjectPreviewData *currentProject();
     const ProjectPreviewData *currentProject() const;
     ProjectPreviewBranch *currentBranch();
@@ -111,7 +103,7 @@ private:
     static QString makeId(const QString &prefix);
     static QStringList parseTags(const QString &text);
 
-    QList<ProjectPreviewServer> servers;
+    QList<ProjectServerProfile> servers;
     QString server_id;
     QList<ProjectPreviewData> projects;
     QString project_id;
