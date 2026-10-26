@@ -1,4 +1,5 @@
 #include "tabs/project_revision_graph.h"
+#include "tabs/project_graph_placement.h"
 #include "config/shortcut_registry.h"
 
 #include <QApplication>
@@ -496,6 +497,108 @@ int main(int argc, char **argv)
     if (!require(!graph.nodeViewportPosition(server_card.id).isNull()
                  && !graph.nodeViewportPosition(project_card.id).isNull(),
                  "folded revision mode removed the server/project hierarchy")) return 1;
+
+    // Placement regression: three independent databases and uneven project
+    // revision histories should not become an infinite horizontal strip.
+    QVector<ProjectGraphNode> compound;
+    for (int database_index = 0; database_index < 8; ++database_index)
+    {
+        const QString database_id = QStringLiteral("group:server:db-%1").arg(database_index);
+        ProjectGraphNode database;
+        database.id = database_id;
+        database.kind = ProjectGraphNode::Kind::Server;
+        compound.append(database);
+        const int project_count = database_index == 0 ? 5 : 1;
+        for (int project_index = 0; project_index < project_count; ++project_index)
+        {
+            const QString project_id = QStringLiteral("group:project:db-%1:p-%2")
+                .arg(database_index).arg(project_index);
+            ProjectGraphNode project;
+            project.id = project_id;
+            project.kind = ProjectGraphNode::Kind::Project;
+            project.container_id = database_id;
+            compound.append(project);
+            const int history_length = project_index == 0 && database_index == 0 ? 9 : 2;
+            for (int revision_index = 0; revision_index < history_length; ++revision_index)
+            {
+                ProjectGraphNode revision;
+                revision.id = QStringLiteral("db-%1:p-%2:r-%3")
+                    .arg(database_index).arg(project_index).arg(revision_index);
+                revision.project_group_id = project_id;
+                if (revision_index > 0)
+                    revision.parents.append(QStringLiteral("db-%1:p-%2:r-%3")
+                        .arg(database_index).arg(project_index).arg(revision_index - 1));
+                compound.append(revision);
+            }
+        }
+    }
+    ProjectGraphPlacement::place(compound, 1.8);
+    int distinct_database_rows = 0;
+    QSet<int> database_rows;
+    for (const ProjectGraphNode &placed : compound)
+    {
+        if (placed.kind == ProjectGraphNode::Kind::Server)
+            database_rows.insert(qRound(placed.position.y()));
+        if (placed.kind == ProjectGraphNode::Kind::Revision)
+        {
+            for (const QString &parent_id : placed.parents)
+                for (const ProjectGraphNode &parent : compound)
+                    if (parent.id == parent_id
+                        && !require(parent.position.y() > placed.position.y(),
+                            "layout must place all ancestors above descendants")) return 1;
+        }
+    }
+    distinct_database_rows = database_rows.size();
+    if (!require(distinct_database_rows >= 2 && distinct_database_rows <= 5,
+                 "database layout must wrap into balanced rows")) return 1;
+    for (int index = 0; index < compound.size(); ++index)
+    {
+        const ProjectGraphNode &lhs = compound.at(index);
+        const double lw = lhs.kind == ProjectGraphNode::Kind::Server ? 252.0 : 224.0;
+        const double lh = lhs.kind == ProjectGraphNode::Kind::Server ? 76.0
+            : lhs.kind == ProjectGraphNode::Kind::Project ? 68.0 : 84.0;
+        for (int other = index + 1; other < compound.size(); ++other)
+        {
+            const ProjectGraphNode &rhs = compound.at(other);
+            const double rw = rhs.kind == ProjectGraphNode::Kind::Server ? 252.0 : 224.0;
+            const double rh = rhs.kind == ProjectGraphNode::Kind::Server ? 76.0
+                : rhs.kind == ProjectGraphNode::Kind::Project ? 68.0 : 84.0;
+            const bool collision = std::abs(lhs.position.x() - rhs.position.x()) < (lw + rw) / 2.0
+                && std::abs(lhs.position.y() - rhs.position.y()) < (lh + rh) / 2.0;
+            if (!require(!collision, "compound layout allows overlapping node cards")) return 1;
+        }
+    }
+
+    // Same-depth branches must have separate cards even when their textual
+    // branch label is identical. Order should be stable across API responses.
+    QVector<ProjectGraphNode> same_branch;
+    ProjectGraphNode db = server_card;
+    db.id = QStringLiteral("group:server:stable");
+    ProjectGraphNode proj = project_card;
+    proj.id = QStringLiteral("group:project:stable");
+    proj.container_id = db.id;
+    same_branch.append(db);
+    same_branch.append(proj);
+    for (const QString &suffix : {QStringLiteral("a"), QStringLiteral("b"), QStringLiteral("c")})
+    {
+        ProjectGraphNode rev;
+        rev.id = suffix;
+        rev.branch = QStringLiteral("main");
+        rev.project_group_id = proj.id;
+        same_branch.append(rev);
+    }
+    ProjectGraphPlacement::place(same_branch, 1.8);
+    QHash<QString, QPointF> expected;
+    for (const ProjectGraphNode &entry : same_branch)
+        expected.insert(entry.id, entry.position);
+    if (!require(std::abs(expected.value(QStringLiteral("a")).x()
+                          - expected.value(QStringLiteral("b")).x()) >= 224.0,
+                 "same-branch revisions at one layer overlap")) return 1;
+    std::swap(same_branch[2], same_branch[4]);
+    ProjectGraphPlacement::place(same_branch, 1.8);
+    for (const ProjectGraphNode &entry : same_branch)
+        if (!require(entry.position == expected.value(entry.id),
+                     "fetch order changed deterministic graph placement")) return 1;
 
     std::puts("Project revision graph navigation and hierarchy tests passed");
     return 0;

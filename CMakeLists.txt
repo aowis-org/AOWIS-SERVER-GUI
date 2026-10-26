@@ -226,6 +226,7 @@ qt_add_executable(aowis-server-gui
     src/projects/project_source_writer.h
     src/tabs/project_revision_graph.cpp
     src/tabs/project_revision_graph.h
+    src/tabs/project_graph_placement.h
     src/tabs/tab_map_workspace.cpp
     src/tabs/map_workspace_viewport_page.cpp
     src/tabs/tab_map_workspace.h
@@ -627,6 +628,7 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
         tests/project_revision_graph_test.cpp
         src/tabs/project_revision_graph.cpp
         src/tabs/project_revision_graph.h
+        src/tabs/project_graph_placement.h
         src/config/gui_configuration.cpp
         src/config/shortcut_registry.cpp
         src/config/shortcut_registry.h)
@@ -674,6 +676,7 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
         src/projects/project_source_writer.h
         src/tabs/project_revision_graph.cpp
         src/tabs/project_revision_graph.h
+        src/tabs/project_graph_placement.h
         src/app/builtin_examples.cpp
         src/config/project_server_profile_storage.cpp
         src/config/project_server_profile_storage.h
@@ -701,6 +704,7 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
         src/projects/project_source_writer.h
         src/tabs/project_revision_graph.cpp
         src/tabs/project_revision_graph.h
+        src/tabs/project_graph_placement.h
         src/app/builtin_examples.cpp
         src/config/project_server_profile_storage.cpp
         src/config/project_server_profile_storage.h
@@ -1370,6 +1374,8 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
             aowis-project-revision-graph-tests
             aowis-projects-inspector-dock-tests
             aowis-project-source-reader-tests
+            aowis-project-source-writer-tests
+            aowis-projects-multi-source-tests
             aowis-map-workspace-contract-tests
             aowis-map-bgfx-layer-visibility-tests
             aowis-map-workspace-diagnostics-tests

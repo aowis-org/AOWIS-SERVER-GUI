@@ -1,4 +1,5 @@
 #include "tabs/tab_projects_widget.h"
+#include "tabs/project_graph_placement.h"
 
 #include "app/builtin_examples.h"
 #include "config/gui_configuration.h"
@@ -318,7 +319,7 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
         // vertically Preferred QGroupBox may absorb the extra viewport height
         // without growing its capped tree, leaving blank space while the two
         // actual project/revision trees are starved.
-        servers_group->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
+        servers_group->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
         projects_group->setSizePolicy(QSizePolicy::Preferred,
             projects_expanded ? QSizePolicy::Expanding : QSizePolicy::Maximum);
         revisions_group->setSizePolicy(QSizePolicy::Preferred,
@@ -1389,34 +1390,20 @@ void ProjectsWidget::rebuildGraph()
 {
     QVector<ProjectGraphNode> nodes;
     this->graph_revision_lookup.clear();
-    // Pack groups by their real width. The old "one spare branch lane per
-    // project" doubled the empty space between unrelated single-head nodes.
-    constexpr double node_width = 224.0;
-    constexpr double lane_spacing = 264.0;
-    constexpr double project_spacing = 76.0;
-    constexpr double server_spacing = 110.0;
-    constexpr double revision_spacing = 155.0;
-    double next_left = 0.0;
+    // Build the immutable graph topology first. Placement is a separate,
+    // deterministic compound-layered pass over database, project and revision
+    // nodes; fetching order and branch labels must not dictate geometry.
     for (const ProjectServerProfile &source : this->servers)
     {
         if (!source.visible) continue;
         const bool preview = source.id == QStringLiteral("preview-local")
             || source.id == QStringLiteral("preview-remote");
         if (preview && source.id != this->server_id) continue;
-        const double server_left = next_left;
-        int project_count = 0;
         const QString server_node_id = QStringLiteral("group:server:") + source.id;
         for (const ProjectPreviewData &project : this->projects)
         {
-            if (project.server_id != source.id || (preview && project.id != this->project_id)) continue;
-            if (project_count > 0)
-                next_left += project_spacing;
-            QStringList lanes;
-            for (const ProjectPreviewBranch &branch : project.branches)
-                if (!lanes.contains(branch.name)) lanes.append(branch.name);
-            const double project_width = node_width + (qMax(1, lanes.size()) - 1) * lane_spacing;
-            const double project_left = next_left;
-            const double project_center = project_left + project_width / 2.0;
+            if (project.server_id != source.id
+                || (preview && project.id != this->project_id)) continue;
             const QString project_node_id = QStringLiteral("group:project:") + project.id;
             ProjectGraphNode project_node;
             project_node.kind = ProjectGraphNode::Kind::Project;
@@ -1424,32 +1411,7 @@ void ProjectsWidget::rebuildGraph()
             project_node.title = project.name;
             project_node.branch = tr("PROJECT · %n branch(es)", nullptr, project.branches.size());
             project_node.container_id = server_node_id;
-            project_node.position = QPointF(project_center, revision_spacing);
             nodes.append(project_node);
-            // Revision snapshots can contain overlapping branch histories and
-            // are not guaranteed to be in one globally topological order.
-            // Resolve height from actual parent relationships instead of the
-            // arbitrary order in which branch pages were returned.
-            QHash<QString, const ProjectPreviewRevision *> revisions_by_id;
-            for (const ProjectPreviewRevision &revision : project.revisions)
-                revisions_by_id.insert(revision.id, &revision);
-            QHash<QString, int> depths;
-            QSet<QString> visiting;
-            std::function<int(const QString &)> depthFor;
-            depthFor = [&](const QString &id) -> int
-            {
-                if (depths.contains(id)) return depths.value(id);
-                if (visiting.contains(id)) return 0; // malformed cycle
-                const ProjectPreviewRevision *revision = revisions_by_id.value(id, nullptr);
-                if (revision == nullptr) return -1;
-                visiting.insert(id);
-                int depth = 0;
-                for (const QString &parent : revision->parents)
-                    depth = qMax(depth, depthFor(parent) + 1);
-                visiting.remove(id);
-                depths.insert(id, depth);
-                return depth;
-            };
             for (const ProjectPreviewRevision &revision : project.revisions)
             {
                 ProjectGraphNode node;
@@ -1462,35 +1424,27 @@ void ProjectsWidget::rebuildGraph()
                 for (const QString &parent : revision.parents)
                     node.parents.append(preview ? parent : project.id + QStringLiteral("|") + parent);
                 node.tags = revision.tags;
-                const int lane = qMax(0, lanes.indexOf(revision.branch));
-                // All roots align beneath their project card. Mirroring makes
-                // the project/server hierarchy read top-to-bottom while HEADs
-                // remain farther down the graph than their ancestors.
-                node.position = QPointF(project_left + node_width / 2.0 + lane * lane_spacing,
-                    -depthFor(revision.id) * revision_spacing);
                 node.project_group_id = project_node_id;
                 for (const ProjectPreviewBranch &branch : project.branches)
                     if (branch.head == revision.id) node.head_branch = branch.name;
                 this->graph_revision_lookup.insert(node.id, qMakePair(project.id, revision.id));
                 nodes.append(node);
             }
-            next_left += project_width;
-            ++project_count;
         }
-        if (project_count > 0)
-        {
-            ProjectGraphNode server_node;
-            server_node.kind = ProjectGraphNode::Kind::Server;
-            server_node.id = server_node_id;
-            server_node.title = source.name;
-            server_node.branch = source.connection_type == QStringLiteral("local")
-                ? tr("LOCAL DATABASE") : tr("REST SERVER");
-            server_node.position = QPointF((server_left + next_left) / 2.0,
-                                           2.0 * revision_spacing);
-            nodes.append(server_node);
-            next_left += server_spacing;
-        }
+        // Also show checked databases with an empty catalogue when the graph
+        // contains projects from other sources. A server does not cease to
+        // exist just because it currently contains no projects.
+        ProjectGraphNode server_node;
+        server_node.kind = ProjectGraphNode::Kind::Server;
+        server_node.id = server_node_id;
+        server_node.title = source.name;
+        server_node.branch = source.connection_type == QStringLiteral("local")
+            ? tr("LOCAL DATABASE") : tr("REST SERVER");
+        nodes.append(server_node);
     }
+    const double aspect = double(qMax(1, this->graph->width()))
+        / double(qMax(1, this->graph->height()));
+    ProjectGraphPlacement::place(nodes, aspect);
     this->graph->setNodes(nodes);
     const QString graph_selection = currentProject() != nullptr
         && this->selection_kind == SelectionKind::Revision
