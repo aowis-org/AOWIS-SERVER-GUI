@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify that four-mode map switching retains one bgfx renderer.
+"""Verify that map mode or main-navigation switching retains one bgfx renderer.
 
 Consumes AOWIS_MAP_RENDER_DIAGNOSTICS=1 output (stderr/stdout combined).
 This is an end-to-end log checker, not a substitute for visual/UI tests.
@@ -26,8 +26,8 @@ REQUIRED = (
 def inspect_log(text: str, min_switches: int = 8,
                 min_cache_switches: int = 4) -> dict:
     """Return a summary; raise DiagnosticsError on an invalid trace."""
-    if min_switches < 1 or min_cache_switches < 0:
-        raise ValueError("switch thresholds must be non-negative, with at least one switch")
+    if min_switches < 0 or min_cache_switches < 0:
+        raise ValueError("switch thresholds must be non-negative")
 
     samples = []
     for lineno, line in enumerate(text.splitlines(), 1):
@@ -113,7 +113,7 @@ def main() -> int:
     except (OSError, DiagnosticsError, ValueError) as exc:
         print(f"FAIL: {exc}", file=sys.stderr)
         return 1
-    print("PASS: persistent four-mode bgfx renderer lifecycle")
+    print("PASS: persistent bgfx renderer lifecycle")
     for key, value in report.items():
         print(f"  {key}: {value}")
     return 0

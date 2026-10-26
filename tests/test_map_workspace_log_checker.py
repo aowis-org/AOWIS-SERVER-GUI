@@ -38,6 +38,20 @@ class DiagnosticsCheckerTests(unittest.TestCase):
         self.assertEqual(result["switches_after_last_preparation"], 9)
         self.assertEqual(result["bgfx_started"], 1)
 
+    def test_main_navigation_only_switches_retain_renderer(self):
+        # The Maps tab may be left and re-entered without changing its map
+        # mode. A stable GPU lifecycle must still pass with zero mode changes.
+        trace = snapshot(0) + "\n" + snapshot(0) + "\n"
+        result = inspect_log(trace, min_switches=0, min_cache_switches=0)
+        self.assertEqual(result["mode_switches"], 0)
+        self.assertEqual(result["bgfx_started"], 1)
+        self.assertEqual(result["bgfx_stopped"], 0)
+
+    def test_main_navigation_only_switches_detect_restart(self):
+        trace = snapshot(0) + "\n" + snapshot(0, starts=2, stops=1) + "\n"
+        with self.assertRaisesRegex(DiagnosticsError, "initialized more than once"):
+            inspect_log(trace, min_switches=0, min_cache_switches=0)
+
     def test_rejects_device_restart(self):
         with self.assertRaisesRegex(DiagnosticsError, "initialized more than once"):
             inspect_log(self.valid_log() + snapshot(15, starts=2, stops=1))

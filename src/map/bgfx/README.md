@@ -385,10 +385,16 @@ as in the monitor.
   (`MapEditorMenuWidget::triggerButtonShortcut()`), as the shortcut map would
   have.
 
-One bgfx device per process belongs to the visible surface: hiding a map
-(tab switch) shuts bgfx down, showing the other one starts it (the
-fullscreen restart path). In the browser both maps share the one canvas;
-only the owner positions or hides it.
+The Maps workspace has one shared bgfx surface and one process-wide bgfx
+renderer. Changing **main-navigation tabs** only stops the map's frame loop;
+it retains the GPU device, shaders, textures, imagery atlases and terrain
+caches. Returning to Maps resumes the same device without `bgfx::init()` or
+asset uploads. In the browser the separate map canvas is hidden while Maps
+is not selected, so it cannot cover the active Qt page. A real native-window
+destruction/reparent (rather than a tab hide) still shuts bgfx down before
+the native surface is lost and reinitializes it when the replacement is exposed.
+If a second independent bgfx surface ever needs the global device, it can
+take ownership from the currently hidden surface explicitly.
 
 ## 2D imagery
 
@@ -957,6 +963,15 @@ Map Management's green/brown cache-selection overlay remains visible. It does no
 clear the retained scene or discard GPU network geometry. On returning to a
 distribution mode, the appropriate monitor/editor symbology and input handlers
 are restored. A mode change must not call `bgfx::shutdown()` or `bgfx::init()`.
+
+The same invariant applies when changing **main-navigation pages** (Maps to
+Projects/Dashboard/Settings and back): normal hides must not increase either
+`bgfx_device_started` or `bgfx_device_stopped`. Check with
+`AOWIS_MAP_RENDER_DIAGNOSTICS=1` when testing on a machine with the GPU.
+For main-page-only switching (zero map-mode switches are required), collect
+combined application output to a log, then run
+`python3 tools/check_map_workspace_diagnostics.py map-tabs.log --min-switches 0 --min-cache-switches 0`.
+The check rejects any GPU shutdown or repeated initialization.
 
 ### Globe icon overlap order
 

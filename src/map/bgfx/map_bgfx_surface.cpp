@@ -90,9 +90,10 @@ EM_JS(void, aowisBgfxMapRemove, (), {
 
 namespace {
 constexpr uint16_t kMapBgfxView = 0;
-// bgfx::init/bgfx::shutdown own a process-global renderer. It belongs to one
-// surface at a time: the visible one (Map Monitor or Map Editor tab). A
-// surface that becomes visible takes it over from a hidden owner.
+// bgfx::init/bgfx::shutdown own a process-global renderer. Normally the
+// workspace has one shared surface: it keeps ownership even while a different
+// main-navigation page is shown. A second surface can take ownership only
+// when needed (initializeBackend() explicitly retires an inactive owner).
 MapBgfxSurface *g_bgfx_device_owner = nullptr;
 // Room for the editor overlay (one icon quad per visible node) on top of the
 // HUD and imagery: bgfx's defaults are 6 MiB vertices / 2 MiB indices.
@@ -1748,14 +1749,17 @@ void MapBgfxSurface::hideEvent(QHideEvent *event)
     stopFrameLoop();
     // No popup survives the map being hidden (tab switch, fullscreen).
     this->hud.closePopup();
-    // The device follows the visible map: a hidden map releases it so the
-    // other tab's map can start (restarts on the next show). A fullscreen
-    // reparent has already suspended the backend; nothing to do then.
-    if (this->initialized)
-        shutdownBackend();
+    // A main-navigation tab change hides this widget, not its native window
+    // *identity*. Retain the bgfx device, shaders, textures and terrain GPU
+    // caches; only rendering pauses. Re-entering the tab takes the cheap
+    // initialized branch of showEvent() instead of bgfx::init(). Genuine
+    // native-surface destruction is handled in eventFilter(), and explicit
+    // native-window replacement still calls suspendForNativeWindowChange().
 #ifdef Q_OS_WASM
-    // The canvas is shared; hide it only when no other map owns it now.
-    if (g_bgfx_device_owner == nullptr)
+    // Unlike the desktop's embedded QWindow, the browser canvas lives above
+    // Qt's widgets. Hide it explicitly so it cannot cover another main page.
+    // Never hide a canvas already handed over to a different surface.
+    if (g_bgfx_device_owner == this || g_bgfx_device_owner == nullptr)
         aowisBgfxMapGeometry(0, 0, 0, 0, 0);
 #endif
 }
@@ -1893,6 +1897,13 @@ void MapBgfxSurface::synchronizeGeometry()
 #endif
     if (!this->initialized)
         return;
+#ifndef Q_OS_WASM
+    // Tab changes unmap the embedded QWindow. Do not reset a Vulkan/GL
+    // swapchain until the native window is exposed again; Qt may resize it
+    // while its page is hidden. The first resumed frame applies that resize.
+    if (!isVisible() || this->native_window == nullptr || !this->native_window->isExposed())
+        return;
+#endif
     const QSize pixels = physicalSize();
     if (pixels == this->last_physical_size)
         return;
