@@ -739,6 +739,77 @@ int main(int argc, char **argv)
         if (!require(entry.position == expected.value(entry.id),
                      "fetch order changed deterministic graph placement")) return 1;
 
+    // Camera ownership contract: the initial empty canvas may be framed,
+    // followed by the first server skeleton and the first real catalogue.
+    // Every later selection, rebuild, graph click and mode change preserves
+    // the user's camera (subject only to the scene boundary clamp).
+    ProjectRevisionGraph stable_camera;
+    stable_camera.resize(820, 520);
+    stable_camera.show();
+    waitFor(110); // the initial empty-canvas fit may already have occurred
+    ProjectGraphNode pending_server = server_card;
+    pending_server.id = QStringLiteral("group:server:delayed");
+    pending_server.position = QPointF(900, 600);
+    stable_camera.setNodes({pending_server});
+    waitFor(110);
+    if (!require(std::abs(stable_camera.nodeViewportPosition(pending_server.id).x() - 410.0) < 2.0,
+                 "the first available server did not receive its initial fit")) return 1;
+
+    ProjectGraphNode left_project = project_card;
+    left_project.id = QStringLiteral("group:project:camera-left");
+    left_project.container_id = pending_server.id;
+    left_project.position = QPointF(-1600, -200);
+    ProjectGraphNode right_project = left_project;
+    right_project.id = QStringLiteral("group:project:camera-right");
+    right_project.position = QPointF(1600, 200);
+    pending_server.position = QPointF(0, -200);
+    stable_camera.setNodes({pending_server, left_project, right_project});
+    waitFor(110);
+    const double first_catalogue_zoom = stable_camera.zoomFactor();
+    if (!require(first_catalogue_zoom < 0.5,
+                 "first real catalogue was not framed after the server skeleton")) return 1;
+
+    sendWheel(stable_camera, QPointF(410, 260), QPoint(0, 480));
+    waitFor(700);
+    const double manual_zoom = stable_camera.zoomFactor();
+    if (!require(manual_zoom > first_catalogue_zoom + 0.1,
+                 "could not establish a user-controlled camera zoom")) return 1;
+    const QPointF viewport_before = stable_camera.graphToViewport(QPointF(0, 0));
+    stable_camera.setSelection(right_project.id); // deliberately outside the viewport
+    if (!require(stable_camera.selectionId() == right_project.id
+                     && stable_camera.zoomFactor() == manual_zoom
+                     && stable_camera.graphToViewport(QPointF(0, 0)) == viewport_before,
+                 "selecting an off-screen project moved or fitted the camera")) return 1;
+
+    // Simulate a selection-triggered graph rebuild and a background catalogue
+    // refresh. Neither must undo the user's zoom or pan.
+    std::swap(left_project.title, right_project.title);
+    stable_camera.setNodes({right_project, pending_server, left_project});
+    if (!require(stable_camera.zoomFactor() == manual_zoom
+                     && stable_camera.graphToViewport(QPointF(0, 0)) == viewport_before,
+                 "rebuilding graph nodes changed the established camera")) return 1;
+    stable_camera.setSelection(left_project.id);
+    if (!require(stable_camera.zoomFactor() == manual_zoom
+                     && stable_camera.graphToViewport(QPointF(0, 0)) == viewport_before,
+                 "switching selected projects moved the camera")) return 1;
+
+    // Layout display controls may change the geometry, but never the zoom.
+    stable_camera.setShowFullTree(false);
+    stable_camera.setShowFullTree(true);
+    stable_camera.setTopDown(false);
+    stable_camera.setTopDown(true);
+    if (!require(stable_camera.zoomFactor() == manual_zoom,
+                 "graph mode or orientation controls unexpectedly fitted the camera")) return 1;
+
+    // Double-click is not an undocumented second Fit action.
+    sendMouse(stable_camera, QEvent::MouseButtonDblClick, QPointF(410, 260), Qt::LeftButton);
+    if (!require(stable_camera.zoomFactor() == manual_zoom,
+                 "double-click unexpectedly fitted the graph")) return 1;
+    stable_camera.fitGraph(); // only the explicit Fit action resets framing
+    if (!require(std::abs(stable_camera.zoomFactor() - manual_zoom) > 0.1
+                     && std::abs(stable_camera.zoomFactor() - first_catalogue_zoom) < 0.01,
+                 "explicit Fit graph did not restore the catalogue framing")) return 1;
+
     std::puts("Project revision graph navigation and hierarchy tests passed");
     return 0;
 }

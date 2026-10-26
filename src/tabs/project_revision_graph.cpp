@@ -324,7 +324,10 @@ void ProjectRevisionGraph::setShowFullTree(bool full_tree)
     if (this->pending_fit)
         scheduleInitialFit();
     else
-        fitGraph();
+    {
+        clampCamera();
+        update();
+    }
 }
 
 bool ProjectRevisionGraph::showsFullTree() const
@@ -364,7 +367,10 @@ void ProjectRevisionGraph::expandHiddenAncestors(const QString &parent_id)
     if (this->pending_fit)
         scheduleInitialFit();
     else
-        fitGraph();
+    {
+        clampCamera();
+        update();
+    }
 }
 
 void ProjectRevisionGraph::expandOmission(int index)
@@ -391,8 +397,9 @@ const ProjectRevisionGraph::Omission *ProjectRevisionGraph::hitOmission(const QP
 
 void ProjectRevisionGraph::setNodes(const QVector<ProjectGraphNode> &nodes)
 {
-    // Metadata-only edits should not reset a manually positioned camera.
-    // A changed DAG topology or layout is a new graph and should be fitted.
+    // Rebuilding the catalogue, including a changed DAG topology, must not
+    // reset an established camera. Only the first non-empty load is fitted;
+    // after that, users control framing with the Fit graph button.
     bool same_layout = this->source_nodes.size() == nodes.size();
     if (same_layout)
     {
@@ -418,12 +425,23 @@ void ProjectRevisionGraph::setNodes(const QVector<ProjectGraphNode> &nodes)
         this->expanded_revisions.clear();
     this->source_nodes = nodes;
     rebuildDisplayNodes();
-    if (same_layout)
-        update();
+    // The first server card can arrive before the asynchronous catalogue.
+    // Frame that placeholder once, then frame the first actual project load
+    // once. Later refreshes, clicks and selection-driven rebuilds only clamp.
+    const bool has_catalogue = std::any_of(this->nodes.cbegin(), this->nodes.cend(),
+        [](const ProjectGraphNode &node) { return node.kind != ProjectGraphNode::Kind::Server; });
+    if ((!this->has_fitted_content && !this->nodes.isEmpty())
+        || (has_catalogue && !this->has_fitted_catalogue))
+        scheduleInitialFit();
     else if (this->pending_fit)
         scheduleInitialFit();
     else
-        fitGraph();
+    {
+        // Bounds may change with source visibility or incoming revisions.
+        // Keep the zoom and viewport anchor whenever the new bounds allow it.
+        clampCamera();
+        update();
+    }
 }
 
 void ProjectRevisionGraph::setTopDown(bool top_down)
@@ -435,7 +453,10 @@ void ProjectRevisionGraph::setTopDown(bool top_down)
     if (this->pending_fit)
         scheduleInitialFit();
     else
-        fitGraph();
+    {
+        clampCamera();
+        update();
+    }
 }
 
 bool ProjectRevisionGraph::isTopDown() const
@@ -496,7 +517,7 @@ void ProjectRevisionGraph::setSelection(const QString &revision_id)
                 expandHiddenAncestors(revision_id);
         }
     }
-    revealSelection();
+    // Selection highlights a node but never pans or fits the camera.
     update();
 }
 
@@ -594,32 +615,6 @@ void ProjectRevisionGraph::clampCamera()
     this->zoom_anchor += correction;
 }
 
-void ProjectRevisionGraph::revealSelection()
-{
-    if (this->pending_fit || this->selected_revision.isEmpty() || width() <= 0 || height() <= 0)
-        return;
-    for (const ProjectGraphNode &node : this->nodes)
-    {
-        if (node.id != this->selected_revision)
-            continue;
-        const QRectF visible_box = QRectF(QPointF(0, 0), size()).adjusted(35, 35, -35, -35);
-        const QRectF bounds = QRectF(graphToViewport(nodeRect(node).topLeft()),
-                                     graphToViewport(nodeRect(node).bottomRight()));
-        QPointF delta;
-        if (bounds.left() < visible_box.left())
-            delta.setX(visible_box.left() - bounds.left());
-        else if (bounds.right() > visible_box.right())
-            delta.setX(visible_box.right() - bounds.right());
-        if (bounds.top() < visible_box.top())
-            delta.setY(visible_box.top() - bounds.top());
-        else if (bounds.bottom() > visible_box.bottom())
-            delta.setY(visible_box.bottom() - bounds.bottom());
-        this->offset += delta;
-        clampCamera();
-        return;
-    }
-}
-
 const ProjectGraphNode *ProjectRevisionGraph::hitNode(const QPointF &point) const
 {
     for (const ProjectGraphNode &node : this->nodes)
@@ -659,6 +654,13 @@ void ProjectRevisionGraph::fitGraph()
         return;
     }
 
+    this->has_fitted_content = true;
+    for (const ProjectGraphNode &node : this->nodes)
+        if (node.kind != ProjectGraphNode::Kind::Server)
+        {
+            this->has_fitted_catalogue = true;
+            break;
+        }
     QRectF bounds = graphBounds();
     bounds.adjust(-76, -85, 76, 85);
     this->zoom = qBound(min_zoom, qMin((width() - 32.0) / bounds.width(),
@@ -687,7 +689,10 @@ void ProjectRevisionGraph::resizeEvent(QResizeEvent *event)
     }
     if (!event->oldSize().isValid())
     {
-        fitGraph();
+        // An invalid old size is not a new graph load. Preserve a camera
+        // the user has already positioned instead of doing a second fit.
+        clampCamera();
+        update();
         return;
     }
 
@@ -1212,12 +1217,6 @@ void ProjectRevisionGraph::mouseReleaseEvent(QMouseEvent *event)
         return;
     }
     QWidget::mouseReleaseEvent(event);
-}
-
-void ProjectRevisionGraph::mouseDoubleClickEvent(QMouseEvent *event)
-{
-    fitGraph();
-    event->accept();
 }
 
 void ProjectRevisionGraph::wheelEvent(QWheelEvent *event)

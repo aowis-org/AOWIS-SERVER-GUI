@@ -675,8 +675,11 @@ int main(int argc, char **argv)
     app.processEvents();
     if (!require(project_tree->topLevelItemCount() >= 2, "preview project tree is empty"))
         return 1;
+    const double zoom_before_project_selection = graph->zoomFactor();
     project_tree->setCurrentItem(project_tree->topLevelItem(1));
     app.processEvents();
+    if (!require(near(zoom_before_project_selection, graph->zoomFactor()),
+                 "sidebar project selection unexpectedly fitted the graph")) return 1;
     if (!require(dock->isVisible() && name->text() == QStringLiteral("Sample Pump Station"),
                  "selecting a project in the tree did not reopen its inspector"))
         return 1;
@@ -688,11 +691,8 @@ int main(int argc, char **argv)
                      && delete_in_inspector->text() == QStringLiteral("Delete project…"),
                  "selecting a project did not offer deletion in the inspector"))
         return 1;
-    const QPointF selected_card = graph->nodeViewportPosition(graph->selectionId());
-    if (!require(selected_card.x() > 0.0 && selected_card.x() < graph->width()
-                     && selected_card.y() > 0.0 && selected_card.y() < graph->height(),
-                 "switching projects did not reveal the selected graph card"))
-        return 1;
+    // A selected card may intentionally be off-screen after manual zoom/pan.
+    // Selection must not move the camera to reveal it or implicitly Fit graph.
 
     // Toolbar-driven project and branch changes use the same selection path.
     dock->close();
@@ -727,8 +727,11 @@ int main(int argc, char **argv)
         return 1;
 
     dock->close();
+    const double zoom_before_graph_selection = graph->zoomFactor();
     graph->branchActivated(QStringLiteral("main"));
     app.processEvents();
+    if (!require(near(zoom_before_graph_selection, graph->zoomFactor()),
+                 "graph branch selection unexpectedly fitted the graph")) return 1;
     if (!require(dock->isVisible() && name->text() == QStringLiteral("main"),
                  "selecting a branch on the graph did not reopen its inspector"))
         return 1;

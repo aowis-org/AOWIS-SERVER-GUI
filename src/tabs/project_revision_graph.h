@@ -84,7 +84,6 @@ protected:
     void mousePressEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
     void mouseReleaseEvent(QMouseEvent *event) override;
-    void mouseDoubleClickEvent(QMouseEvent *event) override;
     void wheelEvent(QWheelEvent *event) override;
     void keyPressEvent(QKeyEvent *event) override;
     void keyReleaseEvent(QKeyEvent *event) override;
@@ -108,7 +107,6 @@ private:
     QPointF mapToGraph(const QPointF &point) const;
     QRectF nodeRect(const ProjectGraphNode &node) const;
     void clampCamera();
-    void revealSelection();
     const ProjectGraphNode *hitNode(const QPointF &point) const;
     void startNavigation();
     void updateNavigation();
@@ -146,6 +144,8 @@ private:
     bool top_down = true;
     bool show_full_tree = true;
     bool pending_fit = true;
+    bool has_fitted_content = false; // First visible server/graph content.
+    bool has_fitted_catalogue = false; // First actual project catalogue.
     bool dragging = false;
     bool mouse_pressed = false;
     bool mouse_inertia = false;

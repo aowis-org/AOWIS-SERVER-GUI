@@ -1541,7 +1541,6 @@ void ProjectsWidget::select(SelectionKind kind, const QString &id)
             populateProjectTree();
             populateRevisionTree();
             rebuildGraph();
-            if (isPreviewSource()) this->graph->fitGraph();
         }
     }
     else if (kind == SelectionKind::Project)
@@ -1567,7 +1566,6 @@ void ProjectsWidget::select(SelectionKind kind, const QString &id)
                 ? project->branches.first().id : QString();
             populateRevisionTree();
             rebuildGraph();
-            this->graph->fitGraph();
         }
     }
     else if (kind == SelectionKind::Branch)
@@ -1589,7 +1587,6 @@ void ProjectsWidget::select(SelectionKind kind, const QString &id)
                         this->project_id = project.id;
                         populateRevisionTree();
                         rebuildGraph();
-                        this->graph->fitGraph();
                     }
                     this->branch_id = branch.id;
                     found = true;
