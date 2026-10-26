@@ -72,3 +72,22 @@ present data-source profile storage uses Qt settings/JSON and introduces no SQL.
   fake project-creation workflow remains confined to demonstration profiles.
 - No native or REST write APIs, checkout, network enumeration, live sync, full
   DAG pagination, background polling, or SQL persistence are introduced yet.
+
+## Stage 3a — supported project/branch creation (current patch)
+
+- Native and REST backends now support project creation and branch creation,
+  including a new branch based on the selected historical revision. The native
+  write runs on a worker thread; REST uses a bounded asynchronous POST.
+- A successful write is **always** followed by a catalogue reload and selection
+  of the resulting project/branch. The GUI does not add an unverified item to
+  the navigator. Source switching, disconnect and repeated creates are blocked
+  while a write is in progress.
+- A failed/lost response also triggers a catalogue refresh: REST POST is not
+  automatically retried, since a timeout does not prove the write was rolled
+  back. Duplicate/conflict errors are displayed from DVMDB's structured 409.
+- Preview actions remain isolated from persisted DVMDB. Real project and branch
+  names are not locally editable, and Delete stays unavailable because neither
+  the DVMDB library nor its REST API currently implements rename/delete.
+- Native/REST checkout and model revision writes still require network
+  enumeration and pinned-session/expected-head integration; both are deferred.
+  Do not treat the absence of these backend operations as completed CRUD.

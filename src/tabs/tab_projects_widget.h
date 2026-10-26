@@ -3,6 +3,7 @@
 #include "config/project_server_profile_storage.h"
 #include "tabs/project_revision_graph.h"
 #include "projects/project_source_reader.h"
+#include "projects/project_source_writer.h"
 
 #include <QList>
 #include <QString>
@@ -92,6 +93,8 @@ private:
     void updateSourceFields();
     void updateButtons();
     void connectSource();
+    void finishSourceWrite(const QString &created_id, const QString &error,
+                           const QString &project_id, const QString &branch_name);
     void disconnectSource();
     void applySourceSnapshot(const SourceSnapshot &snapshot);
     void updateConnectionStatus();
@@ -151,6 +154,9 @@ private:
     QPushButton *source_cancel_button = nullptr;
     QPushButton *create_branch_button = nullptr;
     ProjectSourceReader *source_reader = nullptr;
+    ProjectSourceWriter *source_writer = nullptr;
+    QString select_after_write_project;
+    QString select_after_write_branch;
     QPushButton *source_connect_button = nullptr;
     QLabel *source_status = nullptr;
     QLabel *no_projects_description = nullptr;

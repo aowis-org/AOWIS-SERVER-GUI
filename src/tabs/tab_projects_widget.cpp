@@ -82,6 +82,7 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
 {
     setObjectName(QStringLiteral("projectsWorkspace"));
     this->source_reader = new ProjectSourceReader(this);
+    this->source_writer = new ProjectSourceWriter(this);
     seedPreview();
     this->servers = loadProjectServerProfiles();
     ensureDefaultLocalDvmdbProfile(this->servers);
@@ -196,7 +197,7 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     // button width hints so translations never force horizontal scrolling.
     QHBoxLayout *project_actions = new QHBoxLayout();
     project_actions->setSpacing(4);
-    QPushButton *create_project = compactButton(tr("+ Project"), tr("Add a project to this GUI preview"), projects_group);
+    QPushButton *create_project = compactButton(tr("+ Project"), tr("Create a project in the connected database"), projects_group);
     create_project->setObjectName(QStringLiteral("projectsCreateProjectButton"));
     this->create_branch_button = compactButton(tr("+ Branch"),
         tr("Create a branch from the current head or selected revision"), projects_group);
@@ -555,6 +556,7 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     connect(this->source_refresh_button, &QPushButton::clicked, this, &ProjectsWidget::connectSource);
     connect(this->source_connect_button, &QPushButton::clicked, this, [this]
     {
+        if (this->source_writer->isBusy()) return;
         if (this->source_state == SourceState::Loading || this->source_state == SourceState::Connected)
             disconnectSource();
         else connectSource();
@@ -800,12 +802,17 @@ void ProjectsWidget::updateConnectionStatus()
     const bool has_server = server != nullptr;
     this->source_connect_button->setVisible(has_server && !isPreviewSource()
         && this->selection_kind != SelectionKind::NewSource);
-    const QString status = this->source_state == SourceState::Loading ? tr("Loading database…")
-        : this->source_state == SourceState::Connected ? tr("Loaded snapshot · read-only")
+    const QString status = this->source_writer->isBusy() ? tr("Saving to DVMDB…")
+        : this->source_state == SourceState::Loading ? tr("Loading database…")
+        : this->source_state == SourceState::Connected ? tr("Catalogue loaded")
         : this->source_state == SourceState::Error ? tr("Connection failed: %1").arg(this->source_error)
         : tr("Not connected");
     this->source_status->setVisible(has_server);
     this->source_status->setText(isPreviewSource() ? tr("In-memory demonstration") : status);
+    this->source_connect_button->setEnabled(!this->source_writer->isBusy());
+    this->source_refresh_button->setEnabled(!this->source_writer->isBusy());
+    if (this->server_options != nullptr)
+        this->server_options->setEnabled(!this->source_writer->isBusy());
     this->source_refresh_button->setVisible(has_server && !isPreviewSource()
         && this->source_state == SourceState::Connected
         && this->selection_kind != SelectionKind::NewSource);
@@ -821,21 +828,22 @@ void ProjectsWidget::updateConnectionStatus()
         this->no_projects_description->setText(isPreviewSource()
             ? tr("This is an in-memory demonstration with no persisted data.")
             : this->source_state == SourceState::Loading ? tr("Reading DVMDB project catalogue…")
-            : this->source_state == SourceState::Connected ? tr("This database contains no projects.")
+            : this->source_state == SourceState::Connected ? tr("This database contains no projects. Use + Project to create one.")
             : this->source_state == SourceState::Error ? tr("Connection failed: %1").arg(this->source_error)
             : tr("Select Connect to load this database's projects."));
     if (this->preview_banner != nullptr)
         this->preview_banner->setText(isPreviewSource() ? tr("IN-MEMORY PREVIEW")
-            : this->source_state == SourceState::Connected ? tr("DVMDB SNAPSHOT · READ-ONLY · FIRST-PARENT HISTORY")
+            : this->source_state == SourceState::Connected ? tr("DVMDB · CATALOGUE WRITABLE · REVISIONS READ-ONLY")
             : tr("DATABASE NOT CONNECTED"));
     if (this->inspector_preview_note != nullptr)
         this->inspector_preview_note->setText(isPreviewSource()
             ? tr("Only this demonstration uses in-memory project and revision edits.")
-            : tr("DVMDB projects, branches and revisions are read-only. The service does not yet provide editable revision annotations or full DAG paging."));
+            : tr("DVMDB supports creating projects and branches. Rename, delete, revision editing and annotations are not available yet."));
 }
 
 void ProjectsWidget::disconnectSource()
 {
+    if (this->source_writer->isBusy()) return;
     this->source_reader->cancel();
     this->connected_source_id.clear();
     this->source_state = SourceState::Disconnected;
@@ -858,6 +866,7 @@ void ProjectsWidget::disconnectSource()
 
 void ProjectsWidget::connectSource()
 {
+    if (this->source_writer->isBusy()) return;
     ProjectServerProfile *server = currentServer();
     if (server == nullptr || isPreviewSource()) return;
     // Abort previous request and erase stale data before any asynchronous load.
@@ -881,6 +890,26 @@ void ProjectsWidget::connectSource()
         applySourceSnapshot(snapshot);
         this->source_state = SourceState::Connected;
         updateEmptyState();
+        const QString project_to_select = this->select_after_write_project;
+        const QString branch_to_select = this->select_after_write_branch;
+        this->select_after_write_project.clear();
+        this->select_after_write_branch.clear();
+        if (!project_to_select.isEmpty())
+        {
+            for (const ProjectPreviewData &item : this->projects)
+                if (item.server_id == requested_id && item.id == project_to_select)
+                {
+                    select(SelectionKind::Project, item.id);
+                    if (!branch_to_select.isEmpty())
+                        for (const ProjectPreviewBranch &branch : item.branches)
+                            if (branch.name == branch_to_select)
+                            {
+                                select(SelectionKind::Branch, branch.id);
+                                return;
+                            }
+                    return;
+                }
+        }
         if (!this->branch_id.isEmpty()) select(SelectionKind::Branch, this->branch_id);
         else if (!this->project_id.isEmpty()) select(SelectionKind::Project, this->project_id);
         else select(SelectionKind::Server, requested_id);
@@ -1161,6 +1190,11 @@ void ProjectsWidget::selectTreeItem(QTreeWidget *tree, const QString &key)
 
 void ProjectsWidget::select(SelectionKind kind, const QString &id)
 {
+    if (this->source_writer->isBusy() && kind == SelectionKind::Server && id != this->server_id)
+    {
+        selectTreeItem(this->server_tree, keyFor(QStringLiteral("s"), this->server_id));
+        return;
+    }
     if (kind == SelectionKind::Server)
     {
         bool found = false;
@@ -1197,6 +1231,7 @@ void ProjectsWidget::select(SelectionKind kind, const QString &id)
             for (const ProjectPreviewData &project : this->projects)
                 if (project.id == id && project.server_id != this->server_id)
                 {
+                    if (this->source_writer->isBusy()) return;
                     this->server_id = project.server_id;
                     populateServerTree();
                     populateProjectTree();
@@ -1222,6 +1257,7 @@ void ProjectsWidget::select(SelectionKind kind, const QString &id)
                     {
                         if (this->server_id != project.server_id)
                         {
+                            if (this->source_writer->isBusy()) return;
                             this->server_id = project.server_id;
                             populateServerTree();
                             populateProjectTree();
@@ -1407,12 +1443,16 @@ void ProjectsWidget::updateInspector()
 
 void ProjectsWidget::updateButtons()
 {
+    const bool ready = this->source_state == SourceState::Connected
+        && this->connected_source_id == this->server_id
+        && !this->source_writer->isBusy();
     if (QPushButton *create_project = findChild<QPushButton *>(QStringLiteral("projectsCreateProjectButton")))
-        create_project->setEnabled(isPreviewSource()
-            && this->selection_kind != SelectionKind::NewSource);
-    this->create_branch_button->setEnabled(isPreviewSource() && currentProject() != nullptr
-        && !currentProject()->database_backed
-        && this->selection_kind != SelectionKind::NewSource);
+        create_project->setEnabled(!this->source_writer->isBusy()
+            && this->selection_kind != SelectionKind::NewSource
+            && (isPreviewSource() || ready));
+    this->create_branch_button->setEnabled(!this->source_writer->isBusy()
+        && currentProject() != nullptr && this->selection_kind != SelectionKind::NewSource
+        && (isPreviewSource() || (ready && currentProject()->database_backed)));
     // Keep the action label short and stable so the three-button row never
     // changes width when selecting a historical revision. createBranch()
     // already uses the selected revision as the branch base when applicable.
@@ -1471,6 +1511,7 @@ void ProjectsWidget::showRevisionHistory()
 
 void ProjectsWidget::createServer()
 {
+    if (this->source_writer->isBusy()) return;
     if (this->source_state == SourceState::Loading) disconnectSource();
     this->selection_kind = SelectionKind::NewSource;
     this->selected_id.clear();
@@ -1578,6 +1619,7 @@ void ProjectsWidget::saveNewSource()
 
 void ProjectsWidget::deleteServer()
 {
+    if (this->source_writer->isBusy()) return;
     if (currentServer() == nullptr || this->server_id == QStringLiteral("local-default")) return;
     if (QMessageBox::question(this, tr("Delete database profile"),
         tr("Remove this database profile from the GUI configuration and discard its local preview projects? The database itself is not modified."))
@@ -1622,12 +1664,34 @@ void ProjectsWidget::reportServerSaveFailure()
             .arg(guiConfigurationFilePath()));
 }
 
+void ProjectsWidget::finishSourceWrite(const QString &created_id, const QString &error,
+                                       const QString &project_id, const QString &branch_name)
+{
+    updateConnectionStatus();
+    updateButtons();
+    if (!error.isEmpty())
+    {
+        QMessageBox::warning(this, tr("DVMDB write failed"), error);
+        // Even on a timed-out request, the server may have committed the write.
+        // Reload the authoritative catalogue rather than inventing local rows.
+        connectSource();
+        return;
+    }
+    this->select_after_write_project = project_id.isEmpty() ? created_id : project_id;
+    this->select_after_write_branch = branch_name;
+    connectSource();
+}
+
 void ProjectsWidget::createProject()
 {
-    if (!isPreviewSource()) return;
+    if (this->source_writer->isBusy() || this->selection_kind == SelectionKind::NewSource) return;
+    const bool preview = isPreviewSource();
+    if (!preview && (this->source_state != SourceState::Connected
+                     || this->connected_source_id != this->server_id)) return;
     bool accepted = false;
-    QString name = QInputDialog::getText(this, tr("New project (preview)"), tr("Project name"),
-                                         QLineEdit::Normal, QString(), &accepted).trimmed();
+    const QString name = QInputDialog::getText(this,
+        preview ? tr("New project (preview)") : tr("New DVMDB project"),
+        tr("Project name"), QLineEdit::Normal, {}, &accepted).trimmed();
     if (!accepted || name.isEmpty()) return;
     for (const ProjectPreviewData &project : this->projects)
         if (project.server_id == this->server_id && project.name.compare(name, Qt::CaseInsensitive) == 0)
@@ -1635,6 +1699,19 @@ void ProjectsWidget::createProject()
             QMessageBox::information(this, tr("Already exists"), tr("Choose a different project name."));
             return;
         }
+    if (!preview)
+    {
+        const ProjectServerProfile *server = currentServer();
+        if (server == nullptr) return;
+        this->source_writer->createProject(*server, name,
+            [this](const QString &id, const QString &error)
+            {
+                finishSourceWrite(id, error, {}, {});
+            });
+        updateConnectionStatus();
+        updateButtons();
+        return;
+    }
     ProjectPreviewData project;
     project.id = makeId(QStringLiteral("p-"));
     project.server_id = this->server_id;
@@ -1648,10 +1725,14 @@ void ProjectsWidget::createProject()
 void ProjectsWidget::createBranch(const QString &source_revision)
 {
     ProjectPreviewData *project = currentProject();
-    if (!isPreviewSource() || project == nullptr || project->database_backed) return;
+    if (this->source_writer->isBusy() || project == nullptr) return;
+    const bool preview = isPreviewSource();
+    if (!preview && (!project->database_backed || this->source_state != SourceState::Connected
+                     || this->connected_source_id != this->server_id)) return;
     bool accepted = false;
-    const QString name = QInputDialog::getText(this, tr("New branch (preview)"), tr("Branch name"),
-                                                QLineEdit::Normal, QString(), &accepted).trimmed();
+    const QString name = QInputDialog::getText(this,
+        preview ? tr("New branch (preview)") : tr("New DVMDB branch"),
+        tr("Branch name"), QLineEdit::Normal, {}, &accepted).trimmed();
     if (!accepted || name.isEmpty()) return;
     for (const ProjectPreviewBranch &branch : project->branches)
         if (branch.name.compare(name, Qt::CaseInsensitive) == 0)
@@ -1659,6 +1740,47 @@ void ProjectsWidget::createBranch(const QString &source_revision)
             QMessageBox::information(this, tr("Already exists"), tr("Choose a different branch name."));
             return;
         }
+    if (!preview)
+    {
+        const ProjectServerProfile *server = currentServer();
+        if (server == nullptr) return;
+        QString from_branch;
+        QString from_revision;
+        // Preserve an explicitly selected historical base. DVMDB requires the
+        // origin branch even when a specific revision hash is supplied.
+        if (this->selection_kind == SelectionKind::Revision)
+        {
+            if (const ProjectPreviewRevision *revision = selectedRevision())
+            {
+                from_branch = revision->branch;
+                from_revision = revision->id;
+            }
+        }
+        else if (!source_revision.isEmpty())
+        {
+            for (const ProjectPreviewRevision &revision : project->revisions)
+                if (revision.id == source_revision)
+                {
+                    from_branch = revision.branch;
+                    from_revision = revision.id;
+                    break;
+                }
+        }
+        if (from_branch.isEmpty())
+        {
+            if (const ProjectPreviewBranch *current = currentBranch())
+                from_branch = current->name;
+        }
+        const QString project_id = project->id;
+        this->source_writer->createBranch(*server, project_id, name, from_branch, from_revision,
+            [this, project_id, name](const QString &id, const QString &error)
+            {
+                finishSourceWrite(id, error, project_id, name);
+            });
+        updateConnectionStatus();
+        updateButtons();
+        return;
+    }
     ProjectPreviewBranch branch;
     branch.id = makeId(QStringLiteral("b-"));
     branch.name = name;
@@ -1958,7 +2080,7 @@ void ProjectsWidget::createProjectFromExample(const BuiltinExampleRevision &exam
 
 void ProjectsWidget::applyInspectorEdits()
 {
-    if (this->updating_ui) return;
+    if (this->updating_ui || this->source_writer->isBusy()) return;
     const QString name = this->name_edit->text().trimmed();
     const QString description = this->description_edit->toPlainText();
     const QStringList tags = parseTags(this->tags_edit->text());

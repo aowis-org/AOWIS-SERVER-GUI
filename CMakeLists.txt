@@ -222,6 +222,8 @@ qt_add_executable(aowis-server-gui
     src/tabs/tab_projects_widget.h
     src/projects/project_source_reader.cpp
     src/projects/project_source_reader.h
+    src/projects/project_source_writer.cpp
+    src/projects/project_source_writer.h
     src/tabs/project_revision_graph.cpp
     src/tabs/project_revision_graph.h
     src/tabs/tab_map_workspace.cpp
@@ -649,6 +651,17 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
     add_test(NAME aowis-project-source-reader COMMAND aowis-project-source-reader-tests)
     set_tests_properties(aowis-project-source-reader PROPERTIES LABELS "aowis")
 
+    # DVMDB write contract: POST project/branch only, with no external daemon.
+    add_executable(aowis-project-source-writer-tests
+        tests/project_source_writer_test.cpp
+        src/projects/project_source_writer.cpp
+        src/projects/project_source_writer.h)
+    target_include_directories(aowis-project-source-writer-tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(aowis-project-source-writer-tests PRIVATE Qt6::Core Qt6::Network)
+    add_test(NAME aowis-project-source-writer COMMAND aowis-project-source-writer-tests)
+    set_tests_properties(aowis-project-source-writer PROPERTIES LABELS "aowis")
+
     # Projects uses a real nested dock: closing it must leave the graph
     # visible and selections must still synchronize while it is hidden.
     add_executable(aowis-projects-inspector-dock-tests
@@ -657,6 +670,8 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
         src/tabs/tab_projects_widget.h
         src/projects/project_source_reader.cpp
         src/projects/project_source_reader.h
+        src/projects/project_source_writer.cpp
+        src/projects/project_source_writer.h
         src/tabs/project_revision_graph.cpp
         src/tabs/project_revision_graph.h
         src/app/builtin_examples.cpp
