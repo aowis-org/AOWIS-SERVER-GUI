@@ -152,11 +152,27 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     GroupBoxCollapsible *projects_group = new GroupBoxCollapsible(tr("Projects && Branches"), left);
     projects_group->setObjectName(QStringLiteral("projectsCollapsibleGroup"));
     QVBoxLayout *projects_layout = new QVBoxLayout(projects_group);
+    // Place all project actions above the tree, in one compact row. Ignore
+    // button width hints so translations never force horizontal scrolling.
+    QHBoxLayout *project_actions = new QHBoxLayout();
+    project_actions->setSpacing(4);
     QPushButton *create_project = compactButton(tr("+ Project"), tr("Add a project to this GUI preview"), projects_group);
     create_project->setObjectName(QStringLiteral("projectsCreateProjectButton"));
-    create_project->setMinimumWidth(0);
-    create_project->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
-    projects_layout->addWidget(create_project);
+    this->create_branch_button = compactButton(tr("+ Branch"),
+        tr("Create a branch from the current head or selected revision"), projects_group);
+    this->create_branch_button->setObjectName(QStringLiteral("projectsCreateBranchButton"));
+    QPushButton *import_button = compactButton(tr("Import"),
+        tr("Import an EPANET network using the existing importer"), projects_group);
+    import_button->setObjectName(QStringLiteral("projectsImportButton"));
+    for (QPushButton *button : {create_project, this->create_branch_button, import_button})
+    {
+        button->setMinimumWidth(0);
+        button->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+    }
+    project_actions->addWidget(create_project, 4);
+    project_actions->addWidget(this->create_branch_button, 4);
+    project_actions->addWidget(import_button, 3);
+    projects_layout->addLayout(project_actions);
     this->project_tree = new QTreeWidget(projects_group);
     this->project_tree->setObjectName(QStringLiteral("projectsTree"));
     this->project_tree->setHeaderHidden(true);
@@ -165,23 +181,6 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     this->project_tree->setMinimumWidth(0);
     this->project_tree->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     projects_layout->addWidget(this->project_tree, 1);
-    // Keep all three actions in one row even at the sidebar's minimum width.
-    // Ignored horizontal size hints allow Qt to shrink the buttons rather than
-    // expanding the scroll area's contents and producing a horizontal scrollbar.
-    QHBoxLayout *model_actions = new QHBoxLayout();
-    model_actions->setSpacing(4);
-    this->create_branch_button = compactButton(tr("+ Branch"), tr("Create a branch from the current head or selected revision"), projects_group);
-    this->create_branch_button->setObjectName(QStringLiteral("projectsCreateBranchButton"));
-    QPushButton *import_button = compactButton(tr("Import"), tr("Import an EPANET network using the existing importer"), projects_group);
-    import_button->setObjectName(QStringLiteral("projectsImportButton"));
-    for (QPushButton *button : {this->create_branch_button, import_button})
-    {
-        button->setMinimumWidth(0);
-        button->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
-    }
-    model_actions->addWidget(this->create_branch_button, 3);
-    model_actions->addWidget(import_button, 2);
-    projects_layout->addLayout(model_actions);
     left_layout->addWidget(projects_group, 1);
 
     // Bundled examples are templates, not objects in the selected DB server.

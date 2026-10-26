@@ -396,7 +396,8 @@ int main(int argc, char **argv)
         return 1;
     // Projects contain only project/branch records. The example library is a
     // separate entry point, independent of the selected server profile.
-    // The two editing actions must fit on one row without horizontal overflow.
+    // All three project actions must share one row ABOVE the project tree,
+    // without altering the scroll area's normal horizontal scrollbar policy.
     QScrollArea *sidebar = projects.findChild<QScrollArea *>(
         QStringLiteral("projectsSidebarScrollArea"));
     QPushButton *branch_action = projects.findChild<QPushButton *>(
@@ -416,28 +417,31 @@ int main(int argc, char **argv)
         return 1;
     const auto actions_fit = [&]()
     {
+        const QRect project = add_project->geometry();
         const QRect branch = branch_action->geometry();
         const QRect import = import_action->geometry();
-        const QPoint branch_left = branch_action->mapTo(sidebar->viewport(), QPoint(0, 0));
+        const QPoint project_left = add_project->mapTo(sidebar->viewport(), QPoint(0, 0));
         const QPoint import_right = import_action->mapTo(
             sidebar->viewport(), QPoint(import_action->width() - 1, 0));
         const QPoint browse_right = browse_action->mapTo(
             sidebar->viewport(), QPoint(browse_action->width() - 1, 0));
-        return branch.y() == import.y() && branch.right() < import.left()
-            && branch.width() > 0 && import.width() > 0
+        return project.y() == branch.y() && branch.y() == import.y()
+            && project.right() < branch.left() && branch.right() < import.left()
+            && project.width() > 0 && branch.width() > 0 && import.width() > 0
+            && project.bottom() < project_tree->geometry().top()
             && browse_action->geometry().y() >= 0
-            && branch_left.x() >= 0 && import_right.x() < sidebar->viewport()->width()
+            && project_left.x() >= 0 && import_right.x() < sidebar->viewport()->width()
             && browse_right.x() < sidebar->viewport()->width()
             && sidebar->horizontalScrollBarPolicy() == Qt::ScrollBarAsNeeded
             && sidebar->horizontalScrollBar()->maximum() == 0
             && !sidebar->horizontalScrollBar()->isVisible();
     };
-    if (!require(actions_fit(), "sidebar buttons are not in a single non-scrolling row"))
+    if (!require(actions_fit(), "the three project buttons must fit above the tree on one row"))
         return 1;
     // Simulate the minimum-width pane, regardless of the current user splitter size.
     splitter->setSizes(QList<int>{240, 900});
     app.processEvents();
-    if (!require(actions_fit(), "narrow sidebar creates an overflowing action row"))
+    if (!require(actions_fit(), "narrow sidebar overflows or breaks up the three-button row"))
         return 1;
     splitter->setSizes(QList<int>{295, 720});
     app.processEvents();
