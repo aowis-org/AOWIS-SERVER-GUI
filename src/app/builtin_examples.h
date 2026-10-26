@@ -3,12 +3,14 @@
 
 #include <QList>
 #include <QString>
+#include <QStringList>
 
 struct BuiltinExampleRevision
 {
     QString display_name;
     QString file_name;
     QString resource_path;
+    QString description;
 };
 
 const QList<BuiltinExampleRevision> &builtinExampleRevisions();

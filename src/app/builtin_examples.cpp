@@ -3,12 +3,12 @@
 const QList<BuiltinExampleRevision> &builtinExampleRevisions()
 {
     static const QList<BuiltinExampleRevision> revisions = {
-        {QStringLiteral("NET3"), QStringLiteral("NET3.INP"), QStringLiteral(":/examples/epanet/NET3.INP")},
-        {QStringLiteral("EXNET-3"), QStringLiteral("exnet-3.inp"), QStringLiteral(":/examples/epanet/exnet-3.inp")},
-        {QStringLiteral("KY4"), QStringLiteral("ky4.inp"), QStringLiteral(":/examples/epanet/ky4.inp")},
-        {QStringLiteral("Tutorial - Extended Period"), QStringLiteral("tutorial-eps.inp"), QStringLiteral(":/examples/epanet/tutorial-eps.inp")},
-        {QStringLiteral("Tutorial - Leakage"), QStringLiteral("tutorial-leakage.inp"), QStringLiteral(":/examples/epanet/tutorial-leakage.inp")},
-        {QStringLiteral("AOWIS 4 Tanks"), QStringLiteral("4tanks.inp"), QStringLiteral(":/examples/epanet/4tanks.inp")}
+        {QStringLiteral("NET3"), QStringLiteral("NET3.INP"), QStringLiteral(":/examples/epanet/NET3.INP"), QStringLiteral("EPANET network 3: a distribution-system example for exploration and simulation.")},
+        {QStringLiteral("EXNET-3"), QStringLiteral("exnet-3.inp"), QStringLiteral(":/examples/epanet/exnet-3.inp"), QStringLiteral("Extended water-distribution network for larger network scenarios.")},
+        {QStringLiteral("KY4"), QStringLiteral("ky4.inp"), QStringLiteral(":/examples/epanet/ky4.inp"), QStringLiteral("KY4 hydraulic network example for investigating network behavior.")},
+        {QStringLiteral("Tutorial - Extended Period"), QStringLiteral("tutorial-eps.inp"), QStringLiteral(":/examples/epanet/tutorial-eps.inp"), QStringLiteral("Tutorial network for extended-period hydraulic simulations.")},
+        {QStringLiteral("Tutorial - Leakage"), QStringLiteral("tutorial-leakage.inp"), QStringLiteral(":/examples/epanet/tutorial-leakage.inp"), QStringLiteral("Tutorial network for exploring leakage scenarios.")},
+        {QStringLiteral("AOWIS 4 Tanks"), QStringLiteral("4tanks.inp"), QStringLiteral(":/examples/epanet/4tanks.inp"), QStringLiteral("Four-tank network for experimenting with storage and controls.")}
     };
 
     return revisions;

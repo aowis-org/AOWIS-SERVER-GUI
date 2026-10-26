@@ -7,6 +7,8 @@
 #include <QAbstractItemView>
 #include <QButtonGroup>
 #include <QComboBox>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QDockWidget>
 #include <QMainWindow>
 #include <QFormLayout>
@@ -17,10 +19,12 @@
 #include <QSet>
 #include <QLabel>
 #include <QLineEdit>
+#include <QListWidget>
 #include <QMessageBox>
 #include <QPushButton>
 #include <QSizePolicy>
 #include <QScrollArea>
+#include <QSpacerItem>
 #include <QSignalBlocker>
 #include <QSplitter>
 #include <QTextEdit>
@@ -144,7 +148,12 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     this->server_tree->setHeaderHidden(true);
     this->server_tree->setMinimumWidth(0);
     this->server_tree->setMinimumHeight(86);
-    this->server_tree->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    // Keep the server selector compact. Without an upper bound its QTreeWidget
+    // size hint reserves hundreds of pixels before the two revision/project
+    // trees receive their stretch, even when only two servers are listed.
+    // The tree remains scrollable, and its section can still be collapsed.
+    this->server_tree->setMaximumHeight(112);
+    this->server_tree->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     servers_layout->addWidget(this->server_tree, 1);
     QLabel *server_notice = new QLabel(tr("Preview · Offline"), servers_group);
     server_notice->setObjectName(QStringLiteral("serversPreviewStatus"));
@@ -188,18 +197,29 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     this->create_branch_button->setObjectName(QStringLiteral("projectsCreateBranchButton"));
     QPushButton *import_button = compactButton(tr("Import"), tr("Import an EPANET network using the existing importer"), projects_group);
     import_button->setObjectName(QStringLiteral("projectsImportButton"));
-    this->load_example_button = compactButton(tr("Load"), tr("Load the selected built-in example with the existing importer"), projects_group);
-    this->load_example_button->setObjectName(QStringLiteral("projectsLoadExampleButton"));
-    for (QPushButton *button : {this->create_branch_button, import_button, this->load_example_button})
+    for (QPushButton *button : {this->create_branch_button, import_button})
     {
         button->setMinimumWidth(0);
         button->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
     }
     model_actions->addWidget(this->create_branch_button, 3);
     model_actions->addWidget(import_button, 2);
-    model_actions->addWidget(this->load_example_button, 2);
     projects_layout->addLayout(model_actions);
     left_layout->addWidget(projects_group, 1);
+
+    // Bundled examples are templates, not objects in the selected DB server.
+    // The library stays accessible while any server profile is selected.
+    QPushButton *browse_examples_button = nullptr;
+    if (guiConfiguration().examples_builtin_enable)
+    {
+        browse_examples_button = compactButton(tr("Browse examples…"),
+            tr("Open a bundled network or prepare a project from it"), left);
+        browse_examples_button->setObjectName(QStringLiteral("projectsBrowseExamplesButton"));
+        // A long translated label must not widen the sidebar's scroll content.
+        browse_examples_button->setMinimumWidth(0);
+        browse_examples_button->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+        left_layout->addWidget(browse_examples_button, 0);
+    }
 
     GroupBoxCollapsible *revisions_group = new GroupBoxCollapsible(tr("Revisions"), left);
     revisions_group->setObjectName(QStringLiteral("revisionsCollapsibleGroup"));
@@ -237,18 +257,25 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     this->revision_tree->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     revisions_layout->addWidget(this->revision_tree, 1);
     left_layout->addWidget(revisions_group, 1);
-    left_layout->addStretch(0);
+    // Keep the footer inert while either tree can grow. An always-expanding
+    // spacer competes for height with the tree sections inside QScrollArea.
+    QSpacerItem *footer_spacer = new QSpacerItem(0, 0, QSizePolicy::Minimum,
+                                                QSizePolicy::Fixed);
+    left_layout->addItem(footer_spacer);
 
     // Give the trees any spare sidebar height without reducing their existing
     // minimum heights. When a section is collapsed, its header should remain
     // compact and the other expanded tree should use the freed space.
-    const auto update_section_stretches = [left_layout, servers_group, projects_group, revisions_group]()
+    const auto update_section_stretches = [left_layout, footer_spacer, servers_group,
+                                           projects_group, revisions_group]()
     {
-        const bool servers_expanded = !servers_group->isCollapsed();
         const bool projects_expanded = !projects_group->isCollapsed();
         const bool revisions_expanded = !revisions_group->isCollapsed();
-        servers_group->setSizePolicy(QSizePolicy::Preferred,
-            servers_expanded ? QSizePolicy::Preferred : QSizePolicy::Maximum);
+        // The server selector must occupy only its own content height. A
+        // vertically Preferred QGroupBox may absorb the extra viewport height
+        // without growing its capped tree, leaving blank space while the two
+        // actual project/revision trees are starved.
+        servers_group->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
         projects_group->setSizePolicy(QSizePolicy::Preferred,
             projects_expanded ? QSizePolicy::Expanding : QSizePolicy::Maximum);
         revisions_group->setSizePolicy(QSizePolicy::Preferred,
@@ -256,8 +283,11 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
         left_layout->setStretch(left_layout->indexOf(servers_group), 0);
         left_layout->setStretch(left_layout->indexOf(projects_group), projects_expanded ? 1 : 0);
         left_layout->setStretch(left_layout->indexOf(revisions_group), revisions_expanded ? 1 : 0);
-        left_layout->setStretch(left_layout->count() - 1,
-            (!projects_expanded && !revisions_expanded) ? 1 : 0);
+        // Only use the footer as a filler when neither tree can expand.
+        const bool expand_footer = !projects_expanded && !revisions_expanded;
+        footer_spacer->changeSize(0, 0, QSizePolicy::Minimum,
+            expand_footer ? QSizePolicy::Expanding : QSizePolicy::Fixed);
+        left_layout->setStretch(left_layout->count() - 1, expand_footer ? 1 : 0);
         left_layout->invalidate();
     };
     connect(servers_group, &GroupBoxCollapsible::signalExpanded, left,
@@ -386,6 +416,7 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     server_form->addRow(server_warning);
     right_layout->addWidget(this->server_options);
     this->metadata_info = new QLabel(right);
+    this->metadata_info->setObjectName(QStringLiteral("projectInspectorMetadata"));
     this->metadata_info->setWordWrap(true);
     this->metadata_info->setTextInteractionFlags(Qt::TextSelectableByMouse);
     right_layout->addWidget(this->metadata_info);
@@ -423,7 +454,9 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     connect(this->delete_button, &QPushButton::clicked, this, &ProjectsWidget::deleteSelection);
     connect(this->create_branch_button, &QPushButton::clicked, this, [this] { createBranch(); });
     connect(import_button, &QPushButton::clicked, this, &ProjectsWidget::importProjectRequested);
-    connect(this->load_example_button, &QPushButton::clicked, this, &ProjectsWidget::loadSelectedExample);
+    if (browse_examples_button != nullptr)
+        connect(browse_examples_button, &QPushButton::clicked,
+                this, &ProjectsWidget::browseExamples);
     connect(graph_heads_button, &QPushButton::clicked, this, [this]
     {
         // A historical selection must not silently remain offscreen when the
@@ -452,7 +485,6 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
         const QString key = items.first()->data(0, role_key).toString();
         if (key.startsWith(QStringLiteral("p:"))) select(SelectionKind::Project, key.mid(2));
         else if (key.startsWith(QStringLiteral("b:"))) select(SelectionKind::Branch, key.mid(2));
-        else if (key.startsWith(QStringLiteral("e:"))) select(SelectionKind::Example, key.mid(2));
     });
     connect(heads_button, &QPushButton::clicked, this, [this]
     {
@@ -487,11 +519,6 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
         if (items.isEmpty() || this->updating_ui) return;
         const QString key = items.first()->data(0, role_key).toString();
         if (key.startsWith(QStringLiteral("r:"))) select(SelectionKind::Revision, key.mid(2));
-    });
-    connect(this->project_tree, &QTreeWidget::itemDoubleClicked, this, [this](QTreeWidgetItem *item, int)
-    {
-        if (item->data(0, role_key).toString().startsWith(QStringLiteral("e:")))
-            loadSelectedExample();
     });
     connect(this->graph, &ProjectRevisionGraph::revisionActivated, this, [this](const QString &id)
     {
@@ -636,15 +663,6 @@ void ProjectsWidget::populateProjectTree()
         for (const ProjectPreviewBranch &branch : project.branches)
             newTreeChild(parent, QStringLiteral("⑂  ") + branch.name,
                          keyFor(QStringLiteral("b"), branch.id));
-    }
-    if (guiConfiguration().examples_builtin_enable)
-    {
-        QTreeWidgetItem *examples = newTreeItem(this->project_tree,
-                                                tr("▤  Built-in examples"), QStringLiteral("examples-root"));
-        examples->setExpanded(true);
-        for (const BuiltinExampleRevision &example : builtinExampleRevisions())
-            newTreeChild(examples, example.display_name,
-                         keyFor(QStringLiteral("e"), example.resource_path));
     }
 }
 
@@ -896,8 +914,6 @@ void ProjectsWidget::select(SelectionKind kind, const QString &id)
             populateRevisionTree();
         }
     }
-    else if (kind == SelectionKind::Example && !guiConfiguration().examples_builtin_enable)
-        return;
 
     this->selection_kind = kind;
     this->selected_id = id;
@@ -905,8 +921,7 @@ void ProjectsWidget::select(SelectionKind kind, const QString &id)
     selectTreeItem(this->server_tree, keyFor(QStringLiteral("s"), this->server_id));
     selectTreeItem(this->project_tree,
                    kind == SelectionKind::Project ? keyFor(QStringLiteral("p"), id)
-                   : kind == SelectionKind::Branch ? keyFor(QStringLiteral("b"), id)
-                   : kind == SelectionKind::Example ? keyFor(QStringLiteral("e"), id) : QString());
+                   : kind == SelectionKind::Branch ? keyFor(QStringLiteral("b"), id) : QString());
     selectTreeItem(this->revision_tree,
                    kind == SelectionKind::Revision ? keyFor(QStringLiteral("r"), id) : QString());
     this->updating_ui = false;
@@ -947,6 +962,12 @@ void ProjectsWidget::updateInspector()
         description = project->description;
         tags = project->tags;
         metadata = tr("Preview project ID: %1").arg(project->id);
+        if (!project->source_example_resource.isEmpty())
+        {
+            metadata += tr("\nSource: bundled example (%1)\n"
+                "Network data is NOT stored on this server; this is only a GUI preview.")
+                .arg(project->source_example_resource);
+        }
     }
     else if (this->selection_kind == SelectionKind::Branch)
     {
@@ -976,22 +997,10 @@ void ProjectsWidget::updateInspector()
                      revision->author, revision->created_at);
         }
     }
-    else if (this->selection_kind == SelectionKind::Example)
-    {
-        heading = tr("Built-in example");
-        editable = false;
-        for (const BuiltinExampleRevision &example : builtinExampleRevisions())
-            if (example.resource_path == this->selected_id)
-            {
-                name = example.display_name;
-                description = tr("Bundled example model. Double-click it or use Load example to import it into the editor.");
-                metadata = tr("Resource: %1").arg(example.resource_path);
-            }
-    }
     else
     {
         editable = false;
-        subtitle = tr("Select a server, project, branch, revision, or built-in example.");
+        subtitle = tr("Select a server, project, branch, or revision.");
     }
     const bool server_selected = this->selection_kind == SelectionKind::Server
         && currentServer() != nullptr;
@@ -1037,7 +1046,6 @@ void ProjectsWidget::updateButtons()
     // Keep the action label short and stable so the three-button row never
     // changes width when selecting a historical revision. createBranch()
     // already uses the selected revision as the branch base when applicable.
-    this->load_example_button->setEnabled(this->selection_kind == SelectionKind::Example);
 }
 
 void ProjectsWidget::broadcastContext()
@@ -1290,15 +1298,227 @@ void ProjectsWidget::deleteSelection()
     }
 }
 
-void ProjectsWidget::loadSelectedExample()
+void ProjectsWidget::browseExamples()
 {
-    if (this->selection_kind != SelectionKind::Example) return;
+    if (!guiConfiguration().examples_builtin_enable) return;
+
+    QDialog browser(this);
+    browser.setObjectName(QStringLiteral("projectsExampleLibraryDialog"));
+    browser.setWindowTitle(tr("Example Library"));
+    browser.resize(720, 435);
+    QVBoxLayout *layout = new QVBoxLayout(&browser);
+    QLabel *heading = new QLabel(tr("Built-in network templates"), &browser);
+    QFont heading_font = heading->font();
+    heading_font.setBold(true);
+    heading_font.setPointSizeF(heading_font.pointSizeF() + 2);
+    heading->setFont(heading_font);
+    layout->addWidget(heading);
+    QLabel *intro = new QLabel(tr("Open a network for experimentation, or prepare a new project "
+                                "on any configured server."), &browser);
+    intro->setWordWrap(true);
+    layout->addWidget(intro);
+
+    QHBoxLayout *content = new QHBoxLayout();
+    QVBoxLayout *browser_left = new QVBoxLayout();
+    QLineEdit *filter = new QLineEdit(&browser);
+    filter->setObjectName(QStringLiteral("exampleLibraryFilter"));
+    filter->setPlaceholderText(tr("Find a network…"));
+    browser_left->addWidget(filter);
+    QListWidget *list = new QListWidget(&browser);
+    list->setObjectName(QStringLiteral("exampleLibraryList"));
     for (const BuiltinExampleRevision &example : builtinExampleRevisions())
-        if (example.resource_path == this->selected_id)
+    {
+        QListWidgetItem *item = new QListWidgetItem(example.display_name, list);
+        item->setData(Qt::UserRole, example.resource_path);
+        item->setToolTip(example.description);
+    }
+    browser_left->addWidget(list, 1);
+    content->addLayout(browser_left, 2);
+    QVBoxLayout *browser_right = new QVBoxLayout();
+    QLabel *example_name = new QLabel(&browser);
+    example_name->setObjectName(QStringLiteral("exampleLibraryName"));
+    QFont example_font = example_name->font();
+    example_font.setBold(true);
+    example_name->setFont(example_font);
+    browser_right->addWidget(example_name);
+    QLabel *description = new QLabel(&browser);
+    description->setObjectName(QStringLiteral("exampleLibraryDescription"));
+    description->setWordWrap(true);
+    description->setAlignment(Qt::AlignTop | Qt::AlignLeft);
+    browser_right->addWidget(description);
+    QLabel *origin = new QLabel(tr("Source: Bundled EPANET model (read-only template)"), &browser);
+    origin->setWordWrap(true);
+    browser_right->addWidget(origin);
+    browser_right->addStretch();
+    content->addLayout(browser_right, 3);
+    layout->addLayout(content, 1);
+
+    QLabel *disclaimer = new QLabel(tr("Creating a project is a GUI preview only: "
+                                     "no database is contacted and no network is stored."), &browser);
+    disclaimer->setObjectName(QStringLiteral("exampleLibraryPreviewNotice"));
+    disclaimer->setWordWrap(true);
+    layout->addWidget(disclaimer);
+
+    QHBoxLayout *buttons = new QHBoxLayout();
+    buttons->addStretch();
+    QPushButton *close_button = compactButton(tr("Close"), QString(), &browser);
+    QPushButton *open_button = compactButton(tr("Open in editor"),
+        tr("Load this EPANET example into the current working model"), &browser);
+    open_button->setObjectName(QStringLiteral("exampleLibraryOpenButton"));
+    QPushButton *create_button = compactButton(tr("Create project from example…"),
+        tr("Choose a target server and prepare a project preview"), &browser);
+    create_button->setObjectName(QStringLiteral("exampleLibraryCreateButton"));
+    buttons->addWidget(close_button);
+    buttons->addWidget(open_button);
+    buttons->addWidget(create_button);
+    layout->addLayout(buttons);
+
+    const auto selectedExample = [list]() -> const BuiltinExampleRevision *
+    {
+        const QListWidgetItem *item = list->currentItem();
+        if (item == nullptr) return nullptr;
+        const QString path = item->data(Qt::UserRole).toString();
+        for (const BuiltinExampleRevision &example : builtinExampleRevisions())
+            if (example.resource_path == path) return &example;
+        return nullptr;
+    };
+    const auto updateDetail = [selectedExample, example_name, description, open_button, create_button]()
+    {
+        const BuiltinExampleRevision *example = selectedExample();
+        example_name->setText(example == nullptr ? QString() : example->display_name);
+        description->setText(example == nullptr ? QString() : example->description);
+        open_button->setEnabled(example != nullptr);
+        create_button->setEnabled(example != nullptr);
+    };
+    connect(list, &QListWidget::currentItemChanged, &browser,
+            [updateDetail](QListWidgetItem *, QListWidgetItem *) { updateDetail(); });
+    connect(filter, &QLineEdit::textChanged, &browser, [list](const QString &text)
+    {
+        for (int row = 0; row < list->count(); ++row)
+            list->item(row)->setHidden(!list->item(row)->text().contains(text, Qt::CaseInsensitive));
+        if (list->currentItem() == nullptr || list->currentItem()->isHidden())
         {
-            emit builtinExampleRequested(example.resource_path, example.file_name);
-            return;
+            for (int row = 0; row < list->count(); ++row)
+                if (!list->item(row)->isHidden()) { list->setCurrentRow(row); return; }
+            list->setCurrentRow(-1);
         }
+    });
+    connect(close_button, &QPushButton::clicked, &browser, &QDialog::reject);
+    connect(open_button, &QPushButton::clicked, &browser, [this, &browser, selectedExample]()
+    {
+        const BuiltinExampleRevision *example = selectedExample();
+        if (example == nullptr) return;
+        const QString path = example->resource_path;
+        const QString file_name = example->file_name;
+        browser.accept();
+        emit builtinExampleRequested(path, file_name);
+    });
+    connect(list, &QListWidget::itemDoubleClicked, open_button,
+            [open_button](QListWidgetItem *) { open_button->click(); });
+    connect(create_button, &QPushButton::clicked, &browser, [this, &browser, selectedExample]()
+    {
+        const BuiltinExampleRevision *example = selectedExample();
+        if (example == nullptr) return;
+        const QString path = example->resource_path;
+        browser.accept();
+        for (const BuiltinExampleRevision &entry : builtinExampleRevisions())
+            if (entry.resource_path == path) { createProjectFromExample(entry); break; }
+    });
+    list->setCurrentRow(0);
+    updateDetail();
+    browser.exec();
+}
+
+void ProjectsWidget::createProjectFromExample(const BuiltinExampleRevision &example)
+{
+    if (this->servers.isEmpty())
+    {
+        QMessageBox::information(this, tr("No servers configured"),
+            tr("Add a server profile before preparing a project from an example."));
+        return;
+    }
+
+    QDialog dialog(this);
+    dialog.setObjectName(QStringLiteral("exampleCreateProjectDialog"));
+    dialog.setWindowTitle(tr("Create project from %1 (preview)").arg(example.display_name));
+    QVBoxLayout *layout = new QVBoxLayout(&dialog);
+    QFormLayout *fields = new QFormLayout();
+    fields->setRowWrapPolicy(QFormLayout::WrapAllRows);
+    QComboBox *server = new QComboBox(&dialog);
+    server->setObjectName(QStringLiteral("exampleCreateServer"));
+    for (const ProjectPreviewServer &entry : this->servers)
+        server->addItem(entry.name, entry.id);
+    const int selected_server = server->findData(this->server_id);
+    if (selected_server >= 0) server->setCurrentIndex(selected_server);
+    QLineEdit *project_name = new QLineEdit(example.display_name, &dialog);
+    project_name->setObjectName(QStringLiteral("exampleCreateProjectName"));
+    QLineEdit *branch_name = new QLineEdit(QStringLiteral("main"), &dialog);
+    branch_name->setObjectName(QStringLiteral("exampleCreateBranchName"));
+    QLineEdit *tags = new QLineEdit(QStringLiteral("example"), &dialog);
+    tags->setObjectName(QStringLiteral("exampleCreateTags"));
+    QLineEdit *description = new QLineEdit(tr("Based on %1").arg(example.display_name), &dialog);
+    description->setObjectName(QStringLiteral("exampleCreateDescription"));
+    fields->addRow(tr("Destination server"), server);
+    fields->addRow(tr("Project name"), project_name);
+    fields->addRow(tr("Initial branch"), branch_name);
+    fields->addRow(tr("Tags"), tags);
+    fields->addRow(tr("Description"), description);
+    layout->addLayout(fields);
+    QLabel *notice = new QLabel(tr("GUI PREVIEW ONLY — the server is not contacted. "
+                                  "This creates a project/branch/revision placeholder; "
+                                  "the hydraulic network is not copied or saved."), &dialog);
+    notice->setObjectName(QStringLiteral("exampleCreatePreviewNotice"));
+    notice->setWordWrap(true);
+    layout->addWidget(notice);
+    QDialogButtonBox *actions = new QDialogButtonBox(QDialogButtonBox::Cancel, &dialog);
+    QPushButton *create = actions->addButton(tr("Create preview project"), QDialogButtonBox::AcceptRole);
+    create->setObjectName(QStringLiteral("exampleCreateConfirmButton"));
+    layout->addWidget(actions);
+    connect(actions, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    const auto validate = [this, project_name, branch_name, server, create]()
+    {
+        const QString name = project_name->text().trimmed();
+        const QString branch = branch_name->text().trimmed();
+        bool duplicate = false;
+        for (const ProjectPreviewData &entry : this->projects)
+            if (entry.server_id == server->currentData().toString()
+                && entry.name.compare(name, Qt::CaseInsensitive) == 0) duplicate = true;
+        create->setEnabled(!name.isEmpty() && !branch.isEmpty() && !duplicate);
+        create->setToolTip(duplicate ? tr("A project with this name already exists on the selected server") : QString());
+    };
+    connect(project_name, &QLineEdit::textChanged, &dialog, [validate](const QString &) { validate(); });
+    connect(branch_name, &QLineEdit::textChanged, &dialog, [validate](const QString &) { validate(); });
+    connect(server, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            &dialog, [validate](int) { validate(); });
+    connect(create, &QPushButton::clicked, &dialog, &QDialog::accept);
+    validate();
+    if (dialog.exec() != QDialog::Accepted || !create->isEnabled()) return;
+
+    ProjectPreviewData project;
+    project.id = makeId(QStringLiteral("p-"));
+    project.server_id = server->currentData().toString();
+    project.name = project_name->text().trimmed();
+    project.description = description->text().trimmed();
+    project.tags = parseTags(tags->text());
+    project.source_example_resource = example.resource_path;
+    ProjectPreviewBranch branch;
+    branch.id = makeId(QStringLiteral("b-"));
+    branch.name = branch_name->text().trimmed();
+    branch.description = tr("Preview branch for %1").arg(example.display_name);
+    ProjectPreviewRevision revision;
+    revision.id = makeId(QStringLiteral("r-"));
+    revision.title = tr("Initial import (preview)");
+    revision.description = tr("Planned import from %1. No network data is stored.")
+        .arg(example.display_name);
+    revision.branch = branch.name;
+    revision.tags = {QStringLiteral("preview"), QStringLiteral("example")};
+    branch.head = revision.id;
+    project.branches.append(branch);
+    project.revisions.append(revision);
+    const QString id = project.id;
+    this->projects.append(project);
+    populateProjectTree();
+    select(SelectionKind::Project, id);
 }
 
 void ProjectsWidget::applyInspectorEdits()

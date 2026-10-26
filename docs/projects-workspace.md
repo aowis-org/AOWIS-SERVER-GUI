@@ -10,11 +10,20 @@ rename, deletion, branch creation, tags, titles, and descriptions currently
 change only those preview objects. A conspicuous `LOCAL UI PREVIEW` banner and
 inspector explanation protect users from mistaking the preview for server data.
 
-Previously supported EPANET import and built-in examples were moved out of the
-toolbar into **Projects → Built-in examples** (under the Projects collapsible
-section). Double-click or **Load example** uses the **existing** importer.
-`examples_builtin_enable` still gates the examples list. Imported data is the
-current editor network; **it is not a DB project/branch checkout**.
+EPANET **Import** stays in Projects. Bundled EPANET examples are **read-only
+project templates**, not revisions or projects on any configured server. The
+separate **Browse built-in examples…** button opens the searchable **Example
+Library**. **Open in editor** emits the existing importer signal and loads the
+selected sample as the current working model, **not a DB checkout**.
+**Create project from example…** opens a destination wizard (server profile,
+project name, first branch, tags and description). It creates an in-memory
+project with an explicitly marked initial-revision **placeholder** and records
+the template resource as provenance. **No network data is copied; no DB call
+or connection is made; no persistent project is created**. The project and
+revision inspector disclose this. This preview exercises future creation and
+branching UX only. `examples_builtin_enable` gates the library entry point.
+The bundled sample is never mutated and can be reused to create arbitrarily
+many independent projects, including projects on different server profiles.
 
 ## Layout
 
@@ -32,10 +41,12 @@ current editor network; **it is not a DB project/branch checkout**.
   nothing is saved to application settings or a DB. The selected server is
   highlighted in its own tree even when inspecting a project or branch.
   Project/branch toolbar selectors list the currently selected server's
-  projects. Examples remain available independently of the server profile.
+  projects. The separate Example Library remains available independently of
+  the selected server profile.
 - Under Servers, reusable `GroupBoxCollapsible` **Projects & Branches** and
-  **Revisions** groups. Projects tree contains branches and built-in examples;
-  project and branch actions work on the preview. The Revisions section offers
+  **Revisions** groups. Projects tree contains only projects and branches;
+  project and branch actions work on the preview. The bundled examples instead
+  have a full-width library entry separate from the server hierarchy. The Revisions section offers
   a two-state **Editable heads / Full tree** switch (Full tree by default).
   Both modes display **revision titles only**, never IDs or hashes. **Full tree**
   nests each revision under its first known parent, including unreferenced
@@ -77,7 +88,7 @@ current editor network; **it is not a DB project/branch checkout**.
   in a real closable, movable, floatable `QDockWidget` on the right of the
   Projects workspace. Its title-bar close button hides only that inspector;
   there is **no toggle above the graph**. Closing it leaves it hidden until an
-  action selects a project, branch, revision, or example, or otherwise changes
+  action selects a project, branch, or revision, or otherwise changes
   the inspector content. Selection from the tree, graph, or toolbar, and the
   explicit History action, automatically restore it. The graph uses the
   newly available space without resetting the user's camera. This nested dock
@@ -177,3 +188,30 @@ For the later integration phase:
 
 These are implementation requirements for the subsequent integration phase,
 not features supplied by the current GUI prototype.
+
+## Example Library and eventual local/remote storage
+
+The Example Library is the entry point for bundled network templates. It has
+search, descriptions, keyboard/double-click open, and two explicit outcomes:
+
+- **Open in editor:** import a bundled resource via `builtinExampleRequested`
+  into the editor's working copy. The existing import implementation is reused.
+  The action does not imply a DB checkout or create a project.
+- **Create project from example:** choose **any configured server**, a name,
+  first branch (default `main`), tags, and description. At present the wizard
+  creates **only preview project/branch/revision records**, even for the local
+  preview server. The source resource path is kept as provenance; the network
+  content itself is not persisted, and the placeholder is not an actual DB
+  revision. The original bundled example remains unchanged.
+
+During DB integration, replace the preview creation with a validated operation
+that imports the example's hydraulic network into the target server's project
+and creates its initial immutable revision. Local embedded DB and external
+remote DB must use the same application-level creation flow. Users must be
+able to create multiple independent copies, change target servers, and then
+branch/revise as usual. For models already edited in the working copy, provide
+**Save current model as a new project** (separate follow-up; do not silently
+re-import the original template). Preserve example provenance as optional
+metadata rather than as a fake branch or pseudo-server. Use the working-copy
+and change-tracking/session architecture for later commits; these preview
+controls must not suggest that they saved anything remotely.

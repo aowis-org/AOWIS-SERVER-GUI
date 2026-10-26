@@ -8,6 +8,7 @@
 #include <QWidget>
 
 class GroupBoxCollapsible;
+struct BuiltinExampleRevision;
 class QDockWidget;
 class QComboBox;
 class QLabel;
@@ -54,6 +55,7 @@ struct ProjectPreviewData
     QString server_id;
     QString name;
     QString description;
+    QString source_example_resource; // template origin, preview only: network not persisted
     QStringList tags;
     QList<ProjectPreviewBranch> branches;
     QList<ProjectPreviewRevision> revisions;
@@ -81,7 +83,7 @@ signals:
     void importProjectRequested();
 
 private:
-    enum class SelectionKind { None, Server, Project, Branch, Revision, Example };
+    enum class SelectionKind { None, Server, Project, Branch, Revision };
     void seedPreview();
     void populateServerTree();
     void populateProjectTree();
@@ -100,7 +102,8 @@ private:
     void createBranch(const QString &source_revision = QString());
     void renameSelection();
     void deleteSelection();
-    void loadSelectedExample();
+    void browseExamples();
+    void createProjectFromExample(const BuiltinExampleRevision &example);
     void applyInspectorEdits();
     ProjectPreviewServer *currentServer();
     ProjectPreviewData *currentProject();
@@ -138,6 +141,5 @@ private:
     QPushButton *rename_button = nullptr;
     QPushButton *delete_button = nullptr;
     QPushButton *create_branch_button = nullptr;
-    QPushButton *load_example_button = nullptr;
     bool updating_ui = false;
 };

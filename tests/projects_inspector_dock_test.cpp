@@ -4,6 +4,8 @@
 #include <QApplication>
 #include <QDockWidget>
 #include <QComboBox>
+#include <QDialog>
+#include <QListWidget>
 #include <QLabel>
 #include <QFrame>
 #include <QEventLoop>
@@ -117,6 +119,9 @@ int main(int argc, char **argv)
         return 1;
     if (!require(servers->parentWidget() != nullptr && server_section->isVisible(),
                  "Servers section is not visible above the project tree"))
+        return 1;
+    if (!require(servers->minimumHeight() == 86 && servers->maximumHeight() == 112,
+                 "Servers tree must remain compact so Projects and Revisions can expand"))
         return 1;
     for (QLabel *label : projects.findChildren<QLabel *>())
         if (!require(label->text() != QStringLiteral("View:"),
@@ -348,37 +353,40 @@ int main(int argc, char **argv)
     if (!require(server_section->isVisible() && server_section->y() < project_section->y(),
                  "Servers section must appear above Projects & Branches"))
         return 1;
-    // Project/branch creation and both import actions must share exactly one row.
-    // They may shrink to the sidebar width, but must never trigger horizontal scrolling.
+    // Projects contain only project/branch records. The example library is a
+    // separate entry point, independent of the selected server profile.
+    // The two editing actions must fit on one row without horizontal overflow.
     QScrollArea *sidebar = projects.findChild<QScrollArea *>(
         QStringLiteral("projectsSidebarScrollArea"));
     QPushButton *branch_action = projects.findChild<QPushButton *>(
         QStringLiteral("projectsCreateBranchButton"));
     QPushButton *import_action = projects.findChild<QPushButton *>(
         QStringLiteral("projectsImportButton"));
-    QPushButton *load_action = projects.findChild<QPushButton *>(
-        QStringLiteral("projectsLoadExampleButton"));
+    QPushButton *browse_action = projects.findChild<QPushButton *>(
+        QStringLiteral("projectsBrowseExamplesButton"));
     if (!require(sidebar != nullptr && branch_action != nullptr
-                     && import_action != nullptr && load_action != nullptr,
-                 "sidebar action row or scroll area is missing"))
+                     && import_action != nullptr && browse_action != nullptr,
+                 "sidebar action row or Example Library entry is missing"))
         return 1;
     if (!require(branch_action->text() == QStringLiteral("+ Branch")
                      && import_action->text() == QStringLiteral("Import")
-                     && load_action->text() == QStringLiteral("Load"),
+                     && browse_action->text().contains(QStringLiteral("examples")),
                  "sidebar action labels are incorrect"))
         return 1;
     const auto actions_fit = [&]()
     {
         const QRect branch = branch_action->geometry();
         const QRect import = import_action->geometry();
-        const QRect load = load_action->geometry();
         const QPoint branch_left = branch_action->mapTo(sidebar->viewport(), QPoint(0, 0));
-        const QPoint load_right = load_action->mapTo(
-            sidebar->viewport(), QPoint(load_action->width() - 1, 0));
-        return branch.y() == import.y() && import.y() == load.y()
-            && branch.right() < import.left() && import.right() < load.left()
-            && branch.width() > 0 && import.width() > 0 && load.width() > 0
-            && branch_left.x() >= 0 && load_right.x() < sidebar->viewport()->width()
+        const QPoint import_right = import_action->mapTo(
+            sidebar->viewport(), QPoint(import_action->width() - 1, 0));
+        const QPoint browse_right = browse_action->mapTo(
+            sidebar->viewport(), QPoint(browse_action->width() - 1, 0));
+        return branch.y() == import.y() && branch.right() < import.left()
+            && branch.width() > 0 && import.width() > 0
+            && browse_action->geometry().y() >= 0
+            && branch_left.x() >= 0 && import_right.x() < sidebar->viewport()->width()
+            && browse_right.x() < sidebar->viewport()->width()
             && sidebar->horizontalScrollBarPolicy() == Qt::ScrollBarAsNeeded
             && sidebar->horizontalScrollBar()->maximum() == 0
             && !sidebar->horizontalScrollBar()->isVisible();
@@ -395,15 +403,53 @@ int main(int argc, char **argv)
 
     const int default_project_height = project_tree->height();
     const int default_revision_height = revisions->height();
+    const int default_project_section_height = project_section->height();
+    const int default_revision_section_height = revision_section->height();
+    const int default_servers_section_height = server_section->height();
+    const int default_content_height = sidebar->widget()->height();
+    const int default_viewport_height = sidebar->viewport()->height();
     if (!require(default_project_height >= 190 && default_revision_height >= 220,
                  "sidebar trees fell below their existing minimum heights"))
         return 1;
     projects.resize(1250, 1040);
     app.processEvents();
-    if (!require(project_tree->height() > default_project_height + 50
-                     && revisions->height() > default_revision_height + 50,
-                 "extra left-panel space was not distributed to both trees"))
-        return 1;
+    const int project_growth = project_tree->height() - default_project_height;
+    const int revision_growth = revisions->height() - default_revision_height;
+    const int project_section_growth = project_section->height() - default_project_section_height;
+    const int revision_section_growth = revision_section->height() - default_revision_section_height;
+    // The initial sidebar can scroll vertically because its three sections
+    // already exceed the short viewport. A fixed "+50 px per tree" threshold
+    // mistakes viewport growth for *available* growth; much of the resize
+    // first removes that initial overflow. Verify instead that both trees
+    // actually grow and that the height received by each section is passed
+    // through to its tree (rather than becoming empty space in its group).
+    // A caption may rewrap when the sidebar's vertical scrollbar disappears,
+    // changing the non-tree portion of a group by one line of text.
+    const int caption_reflow_tolerance = 24;
+    const bool trees_absorb_section_growth =
+        project_growth >= 20 && revision_growth >= 20
+        && std::abs(project_growth - project_section_growth) <= caption_reflow_tolerance
+        && std::abs(revision_growth - revision_section_growth) <= caption_reflow_tolerance;
+    const bool server_remains_compact =
+        std::abs(server_section->height() - default_servers_section_height) <= 2;
+    const bool content_fills_viewport =
+        std::abs(sidebar->widget()->height() - sidebar->viewport()->height()) <= 2;
+    if (!(trees_absorb_section_growth && server_remains_compact && content_fills_viewport))
+    {
+        std::fprintf(stderr,
+            "projects_inspector_dock: sidebar tree growth (initial -> tall): "
+            "projects %d -> %d (section %+d), revisions %d -> %d (section %+d), "
+            "servers tree %d, servers section %d -> %d (hint %d); "
+            "viewport height %d -> %d, content height %d -> %d\n",
+            default_project_height, project_tree->height(), project_section_growth,
+            default_revision_height, revisions->height(), revision_section_growth,
+            servers->height(), default_servers_section_height, server_section->height(),
+            server_section->sizeHint().height(),
+            default_viewport_height, sidebar->viewport()->height(),
+            default_content_height, sidebar->widget()->height());
+        if (!require(false, "sidebar extra height was not allocated to the two trees"))
+            return 1;
+    }
     const int expanded_revision_height = revisions->height();
     project_section->setCollapsed(true);
     app.processEvents();
@@ -525,18 +571,101 @@ int main(int argc, char **argv)
                  "History did not reopen the already selected revision"))
         return 1;
 
-    // Built-in examples also have their own inspector content.
-    if (project_tree->topLevelItemCount() > 2
-        && project_tree->topLevelItem(2)->childCount() > 0)
-    {
-        dock->close();
-        QTreeWidgetItem *example = project_tree->topLevelItem(2)->child(0);
-        project_tree->setCurrentItem(example);
-        app.processEvents();
-        if (!require(dock->isVisible() && name->text() == example->text(0),
-                     "selecting a built-in example did not reopen its inspector"))
+    // The bundled examples must NOT be injected into the selected server's
+    // project tree. Their library works independently of that server.
+    for (QTreeWidgetItemIterator it(project_tree); *it; ++it)
+        if (!require(!(*it)->data(0, Qt::UserRole).toString().startsWith(QStringLiteral("e:"))
+                         && (*it)->data(0, Qt::UserRole).toString() != QStringLiteral("examples-root"),
+                     "built-in examples leaked into the server project hierarchy"))
             return 1;
-    }
+
+    QString opened_resource;
+    QString opened_file;
+    QObject::connect(&projects, &ProjectsWidget::builtinExampleRequested, &projects,
+        [&](const QString &resource, const QString &file)
+    {
+        opened_resource = resource;
+        opened_file = file;
+    });
+    bool library_opened = false;
+    QTimer::singleShot(0, &projects, [&]()
+    {
+        QDialog *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+        if (dialog == nullptr) return;
+        QListWidget *list = dialog->findChild<QListWidget *>(QStringLiteral("exampleLibraryList"));
+        QPushButton *open = dialog->findChild<QPushButton *>(QStringLiteral("exampleLibraryOpenButton"));
+        QPushButton *create = dialog->findChild<QPushButton *>(QStringLiteral("exampleLibraryCreateButton"));
+        QLineEdit *filter = dialog->findChild<QLineEdit *>(QStringLiteral("exampleLibraryFilter"));
+        library_opened = list != nullptr && list->count() == 6 && open != nullptr
+                         && create != nullptr && filter != nullptr;
+        if (!library_opened) { dialog->reject(); return; }
+        filter->setText(QStringLiteral("leakage"));
+        library_opened = list->currentItem() != nullptr
+            && list->currentItem()->text().contains(QStringLiteral("Leakage"))
+            && open->isEnabled();
+        if (library_opened) open->click();
+        else dialog->reject();
+    });
+    browse_action->click();
+    if (!require(library_opened
+                     && opened_resource == QStringLiteral(":/examples/epanet/tutorial-leakage.inp")
+                     && opened_file == QStringLiteral("tutorial-leakage.inp"),
+                 "Example Library did not open the selected bundled resource through the existing importer"))
+        return 1;
+
+    // A template can be converted to an in-memory project on ANY configured
+    // server, with an initial branch/revision placeholder. No import or DB
+    // write occurs in this path.
+    bool wizard_ok = false;
+    opened_resource.clear();
+    QTimer::singleShot(0, &projects, [&]()
+    {
+        QDialog *browser = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+        if (browser == nullptr) return;
+        QListWidget *list = browser->findChild<QListWidget *>(QStringLiteral("exampleLibraryList"));
+        QPushButton *create = browser->findChild<QPushButton *>(QStringLiteral("exampleLibraryCreateButton"));
+        if (list == nullptr || create == nullptr) { browser->reject(); return; }
+        list->setCurrentRow(0); // NET3
+        QTimer::singleShot(0, &projects, [&]()
+        {
+            QDialog *wizard = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+            if (wizard == nullptr) return;
+            QComboBox *server = wizard->findChild<QComboBox *>(QStringLiteral("exampleCreateServer"));
+            QLineEdit *project_name = wizard->findChild<QLineEdit *>(QStringLiteral("exampleCreateProjectName"));
+            QLineEdit *branch_name = wizard->findChild<QLineEdit *>(QStringLiteral("exampleCreateBranchName"));
+            QPushButton *confirm = wizard->findChild<QPushButton *>(QStringLiteral("exampleCreateConfirmButton"));
+            QLabel *notice = wizard->findChild<QLabel *>(QStringLiteral("exampleCreatePreviewNotice"));
+            wizard_ok = server != nullptr && server->count() == 2 && project_name != nullptr
+                && branch_name != nullptr && confirm != nullptr && notice != nullptr
+                && notice->text().contains(QStringLiteral("not copied"));
+            if (!wizard_ok) { wizard->reject(); return; }
+            server->setCurrentIndex(1); // Remote preview
+            project_name->setText(QStringLiteral("NET3 Remote Experiment"));
+            branch_name->setText(QStringLiteral("main"));
+            wizard_ok = confirm->isEnabled();
+            if (wizard_ok) confirm->click();
+            else wizard->reject();
+        });
+        create->click();
+    });
+    browse_action->click();
+    app.processEvents();
+    if (!require(wizard_ok && opened_resource.isEmpty()
+                     && name->text() == QStringLiteral("NET3 Remote Experiment")
+                     && project_tree->topLevelItemCount() == 1
+                     && revisions->topLevelItemCount() == 1
+                     && revisions->topLevelItem(0)->text(0) == QStringLiteral("Initial import (preview)"),
+                 "creating a project from an example did not create a remote-scoped preview"))
+        return 1;
+    QLabel *metadata = projects.findChild<QLabel *>(QStringLiteral("projectInspectorMetadata"));
+    if (!require(metadata != nullptr
+                     && metadata->text().contains(QStringLiteral("NOT stored")),
+                 "example-origin projects must disclose that no network was saved"))
+        return 1;
+    // Restore the original preview context for the rest of the regression.
+    servers->setCurrentItem(servers->topLevelItem(0));
+    projects.selectBranchByName(QStringLiteral("main"));
+    app.processEvents();
 
     // Reproduce the real application hierarchy: Projects is a page in a
     // stacked navigator, not a top-level window. The previous regression
