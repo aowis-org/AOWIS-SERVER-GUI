@@ -114,20 +114,21 @@ int main(int argc, char **argv)
     if (!require(branch_clicked == node.branch, "branch badge click did not emit branch name"))
         return 1;
 
-    // Top-down is the default: a parent/root sits above its descendants.
-    // Bottom-up mirrors node positions without flipping their labels or hit
-    // targets. The canonical input list is intentionally newest-first.
+    // Top-down is the default: older revisions sit ABOVE their newer
+    // descendants (HEAD). Bottom-up mirrors the coordinates without
+    // modifying revision parents or card hit targets.
     ProjectGraphNode previous = node;
     previous.id = QStringLiteral("parent-revision");
-    previous.position = QPointF(0.0, 320.0);
+    previous.position = QPointF(0.0, 0.0);
     ProjectGraphNode latest = node;
+    latest.position = QPointF(0.0, -320.0);
     latest.parents = {previous.id};
     graph.setNodes(QVector<ProjectGraphNode>{latest, previous});
     if (!require(graph.isTopDown(), "graph did not default to top-down"))
         return 1;
     if (!require(graph.revisionViewportPosition(previous.id).y()
                      < graph.revisionViewportPosition(latest.id).y(),
-                 "top-down graph must put the root above its descendants"))
+                 "top-down graph must show older ancestry before HEAD"))
         return 1;
     revision_clicked.clear();
     click(graph, graph.revisionViewportPosition(previous.id));
@@ -139,7 +140,7 @@ int main(int argc, char **argv)
         return 1;
     if (!require(graph.revisionViewportPosition(latest.id).y()
                      < graph.revisionViewportPosition(previous.id).y(),
-                 "bottom-up graph did not put HEAD above its parent"))
+                 "bottom-up graph must reverse the oldest-to-HEAD presentation"))
         return 1;
     revision_clicked.clear();
     click(graph, graph.revisionViewportPosition(latest.id));
@@ -149,35 +150,35 @@ int main(int argc, char **argv)
     graph.setTopDown(true);
     if (!require(graph.revisionViewportPosition(previous.id).y()
                      < graph.revisionViewportPosition(latest.id).y(),
-                 "returning to top-down did not restore parent-first layout"))
+                 "returning to top-down did not restore oldest-first layout"))
         return 1;
     // Editable-heads canvas mode must retain a visible, clickable summary of
     // every hidden ancestry path. Unfolding one path must not expand the other.
     ProjectGraphNode main_head = node;
     main_head.id = QStringLiteral("head-main");
     main_head.parents = {QStringLiteral("main-intermediate")};
-    main_head.position = QPointF(0, 0);
+    main_head.position = QPointF(0, -310);
     ProjectGraphNode scenario_head = node;
     scenario_head.id = QStringLiteral("head-scenario");
     scenario_head.branch = QStringLiteral("scenario");
     scenario_head.head_branch = QStringLiteral("scenario");
     scenario_head.parents = {QStringLiteral("intermediate")};
-    scenario_head.position = QPointF(285, 155);
+    scenario_head.position = QPointF(285, -310);
     ProjectGraphNode intermediate = scenario_head;
     intermediate.id = QStringLiteral("intermediate");
     intermediate.head_branch.clear();
     intermediate.parents = {QStringLiteral("root")};
-    intermediate.position = QPointF(285, 310);
+    intermediate.position = QPointF(285, -155);
     ProjectGraphNode main_intermediate = main_head;
     main_intermediate.id = QStringLiteral("main-intermediate");
     main_intermediate.head_branch.clear();
     main_intermediate.parents = {QStringLiteral("root")};
-    main_intermediate.position = QPointF(0, 310);
+    main_intermediate.position = QPointF(0, -155);
     ProjectGraphNode root = main_head;
     root.id = QStringLiteral("root");
     root.head_branch.clear();
     root.parents.clear();
-    root.position = QPointF(0, 465);
+    root.position = QPointF(0, 0);
     graph.setNodes(QVector<ProjectGraphNode>{main_head, scenario_head, main_intermediate, intermediate, root});
     if (!require(graph.showsFullTree() && graph.omissionCount() == 0,
                  "revision graph must default to Full tree"))
@@ -189,16 +190,16 @@ int main(int argc, char **argv)
                      && graph.revisionViewportPosition(main_head.id) != QPointF(),
                  "Editable heads must preserve the shared ancestor and fold intervening paths"))
         return 1;
-    // Fold markers must lie *between* a visible branch ancestor and each
-    // head; an isolated "hidden history" bubble breaks the DAG visually.
+    // Fold markers must remain between the HEAD and older shared ancestry,
+    // not float elsewhere in the project corridor.
     const double root_y = graph.revisionViewportPosition(root.id).y();
-    const double furthest_head_y = qMax(graph.revisionViewportPosition(main_head.id).y(),
+    const double earliest_head_y = qMin(graph.revisionViewportPosition(main_head.id).y(),
                                          graph.revisionViewportPosition(scenario_head.id).y());
     for (int i = 0; i < graph.omissionCount(); ++i)
     {
         const double marker_y = graph.omissionViewportPosition(i).y();
-        if (!require(marker_y > root_y && marker_y < furthest_head_y,
-                     "fold marker must lie on the visible root-to-head branch connection"))
+        if (!require(marker_y > root_y && marker_y < earliest_head_y,
+                     "fold marker must lie between older ancestor and HEAD"))
             return 1;
     }
     // Pick the folded history belonging to main, not scenario.
@@ -541,7 +542,8 @@ int main(int argc, char **argv)
     branch_card.title = QStringLiteral("main");
     branch_card.container_id = project_card.id;
     branch_card.head_revision_id = revision_card.id;
-    branch_card.position = QPointF(0, -150);
+    branch_card.position = QPointF(0, 0);
+    revision_card.position = QPointF(0, -150);
     QString selected_branch;
     QObject::connect(&graph, &ProjectRevisionGraph::branchActivated,
         &graph, [&selected_branch](const QString &id) { selected_branch = id; });
@@ -564,13 +566,94 @@ int main(int argc, char **argv)
                  && !graph.nodeViewportPosition(project_card.id).isNull(),
                  "folded revision mode removed the server/project hierarchy")) return 1;
 
-    // An unbranched graph (database -> project -> revision -> branch) must
-    // occupy a single geometric centreline, with no curved misalignment.
+    // A single chronological chain is visually straight from database to
+    // project to HEAD. Its clickable branch label sits *beside* the HEAD and
+    // must never shift ancestry off the common vertical centerline.
     QVector<ProjectGraphNode> straight{server_card, project_card, revision_card, branch_card};
     ProjectGraphPlacement::place(straight, 1.8);
+    QHash<QString, QPointF> straight_positions;
     for (const ProjectGraphNode &placed : straight)
-        if (!require(std::abs(placed.position.x() - straight.first().position.x()) < 0.01,
-                     "single-chain graph is not horizontally centred")) return 1;
+        straight_positions.insert(placed.id, placed.position);
+    if (!require(std::abs(straight_positions.value(server_card.id).x()
+                     - straight_positions.value(project_card.id).x()) < 0.01
+                 && std::abs(straight_positions.value(project_card.id).x()
+                     - straight_positions.value(revision_card.id).x()) < 0.01,
+                 "server, project and sole revision must share a centerline")) return 1;
+    if (!require(straight_positions.value(server_card.id).y()
+                     > straight_positions.value(project_card.id).y()
+                 && straight_positions.value(project_card.id).y()
+                     > straight_positions.value(revision_card.id).y(),
+                 "single-chain order must be database -> project -> revision")) return 1;
+    if (!require(straight_positions.value(branch_card.id).y()
+                     == straight_positions.value(revision_card.id).y()
+                 && straight_positions.value(branch_card.id).x()
+                     > straight_positions.value(revision_card.id).x() + 224.0,
+                 "branch label must be beside HEAD, not above or below ancestry")) return 1;
+
+    // The explicitly requested Git-style shape: database -> project ->
+    // old -> less old -> recent -> HEAD. Branch pointers annotate a revision
+    // but never add a level or reverse immutable parent IDs.
+    QVector<ProjectGraphNode> chronological{server_card, project_card};
+    QString previous_revision;
+    for (int revision_number = 0; revision_number < 4; ++revision_number)
+    {
+        ProjectGraphNode revision = revision_card;
+        revision.id = QStringLiteral("chronological-%1").arg(revision_number);
+        revision.head_branch = revision_number == 3 ? QStringLiteral("main") : QString();
+        revision.parents.clear();
+        if (!previous_revision.isEmpty())
+            revision.parents.append(previous_revision);
+        chronological.append(revision);
+        previous_revision = revision.id;
+    }
+    ProjectGraphNode main_label = branch_card;
+    main_label.head_revision_id = QStringLiteral("chronological-3");
+    chronological.append(main_label);
+    ProjectGraphNode historic_label = branch_card;
+    historic_label.id = QStringLiteral("group:branch:old-feature");
+    historic_label.branch_id = QStringLiteral("old-feature");
+    historic_label.head_revision_id = QStringLiteral("chronological-1");
+    chronological.append(historic_label);
+    ProjectGraphPlacement::place(chronological);
+    QHash<QString, QPointF> chronological_positions;
+    for (const ProjectGraphNode &placed : chronological)
+        chronological_positions.insert(placed.id, placed.position);
+    for (int revision_number = 0; revision_number < 4; ++revision_number)
+    {
+        const QPointF current = chronological_positions.value(
+            QStringLiteral("chronological-%1").arg(revision_number));
+        if (!require(std::abs(current.x()
+                - chronological_positions.value(project_card.id).x()) < 0.01,
+                "linear revision history must remain on the project centerline")) return 1;
+        if (revision_number > 0)
+        {
+            const QPointF older = chronological_positions.value(
+                QStringLiteral("chronological-%1").arg(revision_number - 1));
+            if (!require(older.y() > current.y(),
+                         "loaded revisions must descend from oldest to HEAD")) return 1;
+        }
+    }
+    if (!require(chronological_positions.value(main_label.id).y()
+                     == chronological_positions.value(main_label.head_revision_id).y()
+                 && chronological_positions.value(historic_label.id).y()
+                     == chronological_positions.value(historic_label.head_revision_id).y(),
+                 "branch pointers must annotate the referenced revision, not impose a history layer"))
+        return 1;
+    graph.setShowFullTree(true);
+    graph.setTopDown(true);
+    graph.setNodes(chronological);
+    graph.fitGraph();
+    for (int revision_number = 1; revision_number < 4; ++revision_number)
+    {
+        if (!require(graph.revisionViewportPosition(
+                QStringLiteral("chronological-%1").arg(revision_number - 1)).y()
+                    < graph.revisionViewportPosition(
+                        QStringLiteral("chronological-%1").arg(revision_number)).y(),
+                "rendered top-down history did not preserve oldest-to-HEAD order")) return 1;
+    }
+    if (!require(std::abs(graph.nodeViewportPosition(main_label.id).y()
+                     - graph.revisionViewportPosition(main_label.head_revision_id).y()) < 0.01,
+                 "rendering placed branch reference on a different history layer")) return 1;
 
     // The bug report's shape: one server, TWO projects, one revision each,
     // with three and two branches sharing the respective HEADs. Projects
@@ -623,9 +706,11 @@ int main(int argc, char **argv)
         if (placed.project_group_id == second_project_id)
             second_left = std::min(second_left, placed.position.x() - 112.0);
         if (placed.kind == ProjectGraphNode::Kind::Branch)
-            if (!require(placed.position.y() <
-                    screenshot_positions.value(placed.head_revision_id).y(),
-                    "branch card not ranked below its HEAD")) return 1;
+            if (!require(placed.position.y() ==
+                    screenshot_positions.value(placed.head_revision_id).y()
+                    && placed.position.x() >
+                        screenshot_positions.value(placed.head_revision_id).x(),
+                    "branch cards must sit alongside the referenced HEAD")) return 1;
     }
     if (!require(first_right + 40.0 < second_left,
                  "adjacent project DAG corridors overlap")) return 1;
@@ -636,6 +721,38 @@ int main(int argc, char **argv)
     for (const ProjectGraphNode &placed : screenshot_case)
         if (!require(placed.position == screenshot_positions.value(placed.id),
                      "input ordering changed the compound placement")) return 1;
+
+    // Multiple labels may point to the same HEAD; no duplicate revision
+    // cards, and historical parents stay ABOVE that unique HEAD.
+    QVector<ProjectGraphNode> shared_head{server_card, project_card, revision_card};
+    ProjectGraphNode old_revision = revision_card;
+    old_revision.id = QStringLiteral("old-shared-parent");
+    old_revision.parents.clear();
+    shared_head[2].parents = {old_revision.id};
+    shared_head.append(old_revision);
+    for (int bi = 0; bi < 3; ++bi)
+    {
+        ProjectGraphNode label = branch_card;
+        label.id = QStringLiteral("shared-branch-%1").arg(bi);
+        label.head_revision_id = revision_card.id;
+        shared_head.append(label);
+    }
+    ProjectGraphPlacement::place(shared_head);
+    int head_count = 0;
+    QHash<QString, QPointF> shared_positions;
+    for (const ProjectGraphNode &placed : shared_head)
+    {
+        if (placed.id == revision_card.id) ++head_count;
+        shared_positions.insert(placed.id, placed.position);
+    }
+    if (!require(head_count == 1, "branch aliases duplicated the HEAD revision")) return 1;
+    for (int bi = 0; bi < 3; ++bi)
+        if (!require(shared_positions.value(QStringLiteral("shared-branch-%1").arg(bi)).y()
+                     == shared_positions.value(revision_card.id).y(),
+                     "branch aliases must share the HEAD's ancestry layer")) return 1;
+    if (!require(shared_positions.value(old_revision.id).y()
+                 > shared_positions.value(revision_card.id).y(),
+                 "loaded history must proceed from oldest parent to HEAD")) return 1;
 
     // Placement regression: database roots must share one horizontal layer
     // even with very uneven project widths and revision history depths.
@@ -692,7 +809,7 @@ int main(int argc, char **argv)
                 for (const ProjectGraphNode &parent : compound)
                     if (parent.id == parent_id
                         && !require(parent.position.y() > placed.position.y(),
-                            "layout must place all ancestors above descendants")) return 1;
+                            "older revisions must precede newer descendants")) return 1;
         }
     }
     if (!require(database_rows.size() == 1 && database_rows.contains(0),

@@ -12,7 +12,9 @@
 #include <algorithm>
 #include <cmath>
 
-// Deterministic, compound layout for Database -> Project -> revision DAG.
+// Deterministic compound layout for Database -> Project -> oldest revision
+// -> newest revision (HEAD). Branches are references attached at their HEAD
+// rank, never ancestors or descendants of a revision.
 //
 // Positions use the graph's canonical bottom-up coordinates. The renderer
 // mirrors them for the default top-down presentation. This algorithm does not
@@ -25,7 +27,8 @@ constexpr double revision_pitch_y = 155.0;
 constexpr double project_gap_x = 48.0;
 constexpr double database_gap_x = 84.0;
 constexpr double project_header_y = 142.0;
-constexpr double first_revision_y = 286.0;
+constexpr double first_graph_layer_y = 286.0;
+constexpr double branch_label_gap_x = 28.0;
 
 struct ProjectBlock
 {
@@ -35,6 +38,7 @@ struct ProjectBlock
     QVector<QPointF> branch_positions;
     QVector<QPointF> revision_positions;
     double width = card_width;
+    double ancestry_center_x = card_width / 2.0;
 };
 
 struct DatabaseBlock
@@ -47,60 +51,67 @@ struct DatabaseBlock
 
 inline void layoutRevisions(ProjectBlock &block, const QVector<ProjectGraphNode> &nodes)
 {
-    // Layout a project as one indivisible compound DAG. Revision ancestry and
-    // branch-to-HEAD annotations are separate edges, but both participate in
-    // rank assignment and crossing reduction. Branches whose HEAD has not
-    // been loaded remain visible on a final fallback rank.
+    // Layout revision history in chronological ancestry order. The persistent
+    // 'parents' array already expresses oldest -> newest DAG dependencies;
+    // it MUST NOT be reversed merely because a branch points at HEAD.
     std::vector<AowisGraphLayout::Vertex> vertices;
-    vertices.reserve(std::size_t(block.revision_indices.size() + block.branch_indices.size()));
+    vertices.reserve(std::size_t(block.revision_indices.size()));
+    QHash<QString, int> revision_by_id;
+    for (int i = 0; i < block.revision_indices.size(); ++i)
+        revision_by_id.insert(nodes.at(block.revision_indices.at(i)).id, i);
     for (int index : block.revision_indices)
     {
-        const ProjectGraphNode &node = nodes.at(index);
+        const ProjectGraphNode &revision = nodes.at(index);
         AowisGraphLayout::Vertex vertex;
-        vertex.id = node.id.toStdString();
-        for (const QString &parent : node.parents)
-            vertex.parents.push_back(parent.toStdString());
-        vertices.push_back(vertex);
-    }
-
-    const AowisGraphLayout::RankedDag revision_layout =
-        AowisGraphLayout::layoutRankedDag(vertices, card_width, revision_pitch_x,
-                                         revision_pitch_y);
-    int fallback_rank = 0;
-    for (int rank : revision_layout.ranks)
-        fallback_rank = std::max(fallback_rank, rank + 1);
-
-    QSet<QString> loaded_revisions;
-    for (int index : block.revision_indices)
-        loaded_revisions.insert(nodes.at(index).id);
-    for (int index : block.branch_indices)
-    {
-        const ProjectGraphNode &node = nodes.at(index);
-        AowisGraphLayout::Vertex vertex;
-        vertex.id = node.id.toStdString();
-        // A branch label occupies the layer immediately beneath the HEAD
-        // (not an unrelated bottom row), respecting the project DAG.
-        const bool head_loaded = loaded_revisions.contains(node.head_revision_id);
-        if (head_loaded)
-            vertex.parents.push_back(node.head_revision_id.toStdString());
-        vertex.minimum_rank = head_loaded ? 0 : fallback_rank;
+        vertex.id = revision.id.toStdString();
+        for (const QString &parent : revision.parents)
+            if (revision_by_id.contains(parent))
+                vertex.parents.push_back(parent.toStdString());
         vertices.push_back(vertex);
     }
 
     const AowisGraphLayout::RankedDag ranked =
         AowisGraphLayout::layoutRankedDag(vertices, card_width, revision_pitch_x,
                                          revision_pitch_y);
-    block.width = std::max(card_width, ranked.width);
+    const double ancestry_width = std::max(card_width, ranked.width);
+    block.ancestry_center_x = ancestry_width / 2.0;
     block.revision_positions.resize(block.revision_indices.size());
     for (int i = 0; i < block.revision_indices.size(); ++i)
         block.revision_positions[i] = QPointF(ranked.positions[std::size_t(i)].x,
-            first_revision_y + ranked.positions[std::size_t(i)].y);
+            first_graph_layer_y + ranked.positions[std::size_t(i)].y);
+
+    // A branch is a named pointer, not part of the revision DAG. Keep its
+    // clickable card next to its HEAD (at the *same* depth) in a reserved side
+    // lane. Multiple aliases on one HEAD/rank receive independent slots.
+    // Labels without a loaded HEAD remain accessible at the first history row.
+    QHash<int, int> labels_per_rank;
+    QHash<int, int> slot_per_rank;
+    QVector<int> branch_ranks;
+    branch_ranks.reserve(block.branch_indices.size());
+    int maximum_labels = 0;
+    for (int index : block.branch_indices)
+    {
+        const QString head_id = nodes.at(index).head_revision_id;
+        const int revision_index = revision_by_id.value(head_id, -1);
+        const int rank = revision_index >= 0
+            ? ranked.ranks[std::size_t(revision_index)] : 0;
+        branch_ranks.append(rank);
+        const int count = ++labels_per_rank[rank];
+        maximum_labels = std::max(maximum_labels, count);
+    }
+    block.width = ancestry_width;
+    if (maximum_labels > 0)
+        block.width += branch_label_gap_x + card_width
+            + (maximum_labels - 1) * revision_pitch_x;
     block.branch_positions.resize(block.branch_indices.size());
     for (int i = 0; i < block.branch_indices.size(); ++i)
     {
-        const std::size_t index = std::size_t(block.revision_indices.size() + i);
-        block.branch_positions[i] = QPointF(ranked.positions[index].x,
-            first_revision_y + ranked.positions[index].y);
+        const int rank = branch_ranks.at(i);
+        const int slot = slot_per_rank[rank]++;
+        block.branch_positions[i] = QPointF(
+            ancestry_width + branch_label_gap_x + card_width / 2.0
+                + slot * revision_pitch_x,
+            first_graph_layer_y + rank * revision_pitch_y);
     }
 }
 
@@ -204,8 +215,20 @@ inline void place(QVector<ProjectGraphNode> &nodes, double /*viewport_aspect*/ =
     double group_x = -total_width / 2.0;
     for (const DatabaseBlock &database : databases)
     {
-        nodes[database.node_index].position = QPointF(
-            group_x + database.width / 2.0, 0.0);
+        // Centre the database over its *project roots*, not over the branch
+        // label side lanes, so straight ancestry chains remain straight.
+        double left_project_x = 0.0;
+        double right_project_x = 0.0;
+        for (int pi = 0; pi < database.projects.size(); ++pi)
+        {
+            const double x = database.project_offsets.at(pi).x()
+                + database.projects.at(pi).ancestry_center_x;
+            if (pi == 0) left_project_x = x;
+            right_project_x = x;
+        }
+        const double server_x = database.projects.isEmpty()
+            ? database.width / 2.0 : (left_project_x + right_project_x) / 2.0;
+        nodes[database.node_index].position = QPointF(group_x + server_x, 0.0);
         for (int pi = 0; pi < database.projects.size(); ++pi)
         {
             const ProjectBlock &project = database.projects.at(pi);
@@ -215,7 +238,7 @@ inline void place(QVector<ProjectGraphNode> &nodes, double /*viewport_aspect*/ =
                 + (database.projects.size() == 1
                     ? (database.width - project.width) / 2.0 : 0.0);
             nodes[project.node_index].position = QPointF(
-                project_x + project.width / 2.0, -project_header_y);
+                project_x + project.ancestry_center_x, -project_header_y);
             for (int bi = 0; bi < project.branch_indices.size(); ++bi)
             {
                 const QPointF position = project.branch_positions.at(bi);

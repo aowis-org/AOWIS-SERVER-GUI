@@ -230,7 +230,13 @@ void ProjectRevisionGraph::rebuildDisplayNodes()
                     Omission omission;
                     omission.hidden_parent_id = parent_id;
                     omission.visible_child_id = node.id;
-                    omission.position = node.position + QPointF(0.0, 80.0);
+                    // Place the fold toward its hidden older parent. This
+                    // uses actual source coordinates, regardless of the view
+                    // orientation selected by the user.
+                    const ProjectGraphNode *hidden_parent = by_id.value(parent_id, nullptr);
+                    const double direction = hidden_parent != nullptr
+                        && hidden_parent->position.y() > node.position.y() ? 1.0 : -1.0;
+                    omission.position = node.position + QPointF(0.0, 80.0 * direction);
                     omission.revision_count = hidden.size();
                     this->omissions.append(omission);
                 }
@@ -270,25 +276,35 @@ void ProjectRevisionGraph::rebuildDisplayNodes()
                 omission.position.y()) - levels.begin()) * 155.0);
     }
 
-    // In heads-only mode the oldest loaded revision may be folded away.
-    // Attach the project card to the oldest *visible* revision(s), accounting
-    // for omission links, so the hierarchy remains connected in either mode.
-    QSet<QString> has_visible_revision_parent;
+    // The project connects to the oldest visible revision roots, not HEAD.
+    // A visible revision is already connected when it has a visible parent or
+    // a folded-parent marker. Branch labels are independent HEAD annotations.
+    QSet<QString> anchored_revisions;
     for (const ProjectGraphNode &node : this->nodes)
-        if (node.kind == ProjectGraphNode::Kind::Revision)
-            for (const QString &parent_id : node.parents)
-                if (visible.contains(parent_id))
-                    has_visible_revision_parent.insert(node.id);
+    {
+        if (node.kind != ProjectGraphNode::Kind::Revision)
+            continue;
+        for (const QString &parent_id : node.parents)
+            if (visible.contains(parent_id))
+                anchored_revisions.insert(node.id);
+    }
     for (const Omission &omission : this->omissions)
-        if (!omission.visible_parent_id.isEmpty())
-            has_visible_revision_parent.insert(omission.visible_child_id);
+        anchored_revisions.insert(omission.visible_child_id);
     for (ProjectGraphNode &node : this->nodes)
+    {
         if (node.kind == ProjectGraphNode::Kind::Revision)
-            node.container_id = has_visible_revision_parent.contains(node.id)
+            node.container_id = anchored_revisions.contains(node.id)
                 ? QString() : node.project_group_id;
+        // Loaded branches belong visually to their HEAD, not to the project
+        // ancestry chain. An unresolved branch remains attached to the
+        // project, so its card is still discoverable and clickable.
+        if (node.kind == ProjectGraphNode::Kind::Branch
+            && visible.contains(node.head_revision_id))
+            node.container_id.clear();
+    }
 
     // Reflect positions, not the painter transform: labels and click targets
-    // stay upright. Source positions run from newest to oldest.
+    // stay upright. Source positions run from the oldest to newest revision.
     if (!this->top_down || (this->nodes.isEmpty() && this->omissions.isEmpty()))
         return;
     double min_y = std::numeric_limits<double>::max();
@@ -740,8 +756,8 @@ void ProjectRevisionGraph::paintEvent(QPaintEvent *event)
     painter.translate(this->offset);
     painter.scale(this->zoom, this->zoom);
 
-    // Database -> project -> oldest loaded revision edges are layout edges,
-    // never revision parents. Do not let them affect DAG folding or checkout.
+    // Database -> project -> oldest loaded revision are ownership edges.
+    // Branch labels are annotations on HEAD, not ancestry intermediates.
     QHash<QString, const ProjectGraphNode *> visible_by_id;
     for (const ProjectGraphNode &node : this->nodes)
         visible_by_id.insert(node.id, &node);
@@ -751,27 +767,13 @@ void ProjectRevisionGraph::paintEvent(QPaintEvent *event)
         const ProjectGraphNode *container = visible_by_id.value(node.container_id, nullptr);
         if (container == nullptr)
             continue;
-        // When a branch has an actual loaded HEAD, its dashed HEAD link is
-        // the structural attachment. A branch without a loaded HEAD still
-        // needs a visible link to its owning project.
-        if (node.kind == ProjectGraphNode::Kind::Branch
-            && visible_by_id.contains(node.head_revision_id))
-            continue;
+        // Only branches with unresolved HEADs retain a project attachment.
         const QRectF start_box = nodeRect(*container);
         const QRectF end_box = nodeRect(node);
         const QPointF begin(container->position.x(), container->position.y()
             + structural_sign * start_box.height() / 2.0);
         QPointF end(node.position.x(), node.position.y()
             - structural_sign * end_box.height() / 2.0);
-        // When the loaded root was folded into a summary marker, terminate
-        // the project edge at that marker rather than crossing it to HEAD.
-        if (node.kind == ProjectGraphNode::Kind::Revision)
-            for (const Omission &omission : this->omissions)
-                if (omission.visible_child_id == node.id && omission.visible_parent_id.isEmpty())
-                {
-                    end = omission.position - QPointF(0, structural_sign * 29.0);
-                    break;
-                }
         QPainterPath path(begin);
         // A server's project children occupy one sibling rank. Their entire
         // descendant DAGs are in disjoint corridors, so there is no need for
@@ -789,8 +791,36 @@ void ProjectRevisionGraph::paintEvent(QPaintEvent *event)
         painter.drawPath(path);
     }
 
-    // Branch labels attach to their actual HEAD revision. This is an
-    // annotation link, not a revision ancestry edge. It never feeds folding.
+    // When heads-only mode hides every loaded ancestor of a HEAD, connect
+    // the project to the omission marker, then the marker to the HEAD. A
+    // project -> HEAD shortcut would bypass the folded chronological chain.
+    for (const Omission &omission : this->omissions)
+    {
+        if (!omission.visible_parent_id.isEmpty())
+            continue;
+        const ProjectGraphNode *child = visible_by_id.value(omission.visible_child_id, nullptr);
+        if (child == nullptr)
+            continue;
+        const ProjectGraphNode *project = visible_by_id.value(child->project_group_id, nullptr);
+        if (project == nullptr)
+            continue;
+        const QPointF begin(project->position.x(), project->position.y()
+            + structural_sign * project_node_height / 2.0);
+        const QPointF end(omission.position.x(), omission.position.y()
+            - structural_sign * 29.0);
+        QPainterPath path(begin);
+        if (std::abs(begin.x() - end.x()) < 0.01)
+            path.lineTo(end);
+        else
+            path.cubicTo(begin + QPointF(0, structural_sign * 40.0),
+                         end - QPointF(0, structural_sign * 40.0), end);
+        painter.setPen(QPen(tint(accent, 145), 2.5, Qt::SolidLine, Qt::RoundCap));
+        painter.setBrush(Qt::NoBrush);
+        painter.drawPath(path);
+    }
+
+    // Draw short lateral pointers from HEAD revisions to branch labels on
+    // the same history row. They are not history edges or extra DAG layers.
     for (const ProjectGraphNode &node : this->nodes)
     {
         if (node.kind != ProjectGraphNode::Kind::Branch || node.head_revision_id.isEmpty())
@@ -798,36 +828,32 @@ void ProjectRevisionGraph::paintEvent(QPaintEvent *event)
         const ProjectGraphNode *head = visible_by_id.value(node.head_revision_id, nullptr);
         if (head == nullptr)
             continue;
-        const double sign = this->top_down ? 1.0 : -1.0;
-        const QPointF begin(head->position.x(), head->position.y() + sign * node_height / 2.0);
-        const QPointF end(node.position.x(), node.position.y() - sign * branch_node_height / 2.0);
+        const bool label_to_right = node.position.x() >= head->position.x();
+        const QPointF begin(head->position.x()
+            + (label_to_right ? node_width / 2.0 : -node_width / 2.0),
+            head->position.y());
+        const QPointF end(node.position.x()
+            + (label_to_right ? -node_width / 2.0 : node_width / 2.0),
+            node.position.y());
         QPainterPath path(begin);
-        if (std::abs(begin.x() - end.x()) < 0.01)
+        if (std::abs(begin.y() - end.y()) < 0.01)
             path.lineTo(end);
         else
-        {
-            const double bend = std::abs(end.y() - begin.y()) * 0.4;
-            path.cubicTo(begin + QPointF(0, sign * bend),
-                         end - QPointF(0, sign * bend), end);
-        }
+            path.cubicTo(begin + QPointF((end.x() - begin.x()) * 0.35, 0),
+                         end - QPointF((end.x() - begin.x()) * 0.35, 0), end);
         painter.setPen(QPen(tint(QColor(57, 184, 145), 190), 2, Qt::DashLine, Qt::RoundCap));
         painter.setBrush(Qt::NoBrush);
         painter.drawPath(path);
     }
 
-    // A collapsed path is a real edge between its visible ancestor and
-    // descendant, passing through a clickable omission marker. Both halves
-    // remain drawn so branch connectivity does not disappear in heads mode.
+    // Fold markers preserve the oldest -> newest visual order. A collapse
+    // never changes the underlying revision parent edges or HEAD pointers.
     for (const Omission &omission : this->omissions)
     {
-        const ProjectGraphNode *child = nullptr;
-        const ProjectGraphNode *parent = nullptr;
-        for (const ProjectGraphNode &node : this->nodes)
-        {
-            if (node.id == omission.visible_child_id) child = &node;
-            if (node.id == omission.visible_parent_id) parent = &node;
-        }
-        if (child == nullptr) continue;
+        const ProjectGraphNode *child = visible_by_id.value(omission.visible_child_id, nullptr);
+        const ProjectGraphNode *parent = visible_by_id.value(omission.visible_parent_id, nullptr);
+        if (child == nullptr)
+            continue;
         const double sign = this->top_down ? 1.0 : -1.0;
         painter.setPen(QPen(tint(accent, 145), 2.5, Qt::DashLine, Qt::RoundCap));
         painter.setBrush(Qt::NoBrush);
@@ -845,31 +871,27 @@ void ProjectRevisionGraph::paintEvent(QPaintEvent *event)
                      child->position - QPointF(0, sign * node_height / 2.0));
     }
 
-    // Parents can belong to any branch: derive edges from immutable IDs, not
-    // from a first-parent-only visible history list.
+    // Revision ancestry remains based on immutable parent IDs. Render the
+    // chronological visual direction: older parent -> newer child (HEAD).
     for (const ProjectGraphNode &node : this->nodes)
     {
         for (const QString &parent_id : node.parents)
         {
-            for (const ProjectGraphNode &parent : this->nodes)
-            {
-                if (parent.id != parent_id)
-                    continue;
-                // Links attach to the facing edges in both orientations.
-                const double sign = this->top_down ? 1.0 : -1.0;
-                const QPointF begin = parent.position + QPointF(0, sign * node_height / 2.0);
-                const QPointF end = node.position - QPointF(0, sign * node_height / 2.0);
-                QPainterPath path(begin);
-                if (std::abs(begin.x() - end.x()) < 0.01)
-                    path.lineTo(end);
-                else
-                    path.cubicTo(begin + QPointF(0, sign * 42.0),
-                                 end - QPointF(0, sign * 42.0), end);
-                painter.setPen(QPen(tint(accent, 115), 3.0, Qt::SolidLine, Qt::RoundCap));
-                painter.setBrush(Qt::NoBrush);
-                painter.drawPath(path);
-                break;
-            }
+            const ProjectGraphNode *parent = visible_by_id.value(parent_id, nullptr);
+            if (parent == nullptr)
+                continue;
+            const double sign = this->top_down ? 1.0 : -1.0;
+            const QPointF begin = parent->position + QPointF(0, sign * node_height / 2.0);
+            const QPointF end = node.position - QPointF(0, sign * node_height / 2.0);
+            QPainterPath path(begin);
+            if (std::abs(begin.x() - end.x()) < 0.01)
+                path.lineTo(end);
+            else
+                path.cubicTo(begin + QPointF(0, sign * 42.0),
+                             end - QPointF(0, sign * 42.0), end);
+            painter.setPen(QPen(tint(accent, 115), 3.0, Qt::SolidLine, Qt::RoundCap));
+            painter.setBrush(Qt::NoBrush);
+            painter.drawPath(path);
         }
     }
 

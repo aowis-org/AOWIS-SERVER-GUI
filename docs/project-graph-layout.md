@@ -1,8 +1,8 @@
 # Project graph layout and navigation
 
-The graph displays **database → project → revision DAG → branch labels**.
-Structural ownership and branch-to-HEAD links are not revision parents. Only
-persisted revision parent IDs define the immutable ancestry topology.
+The default top-down graph displays **database → project → oldest loaded revision → … → current revision (HEAD)**, like a Git history viewer. The top-down direction follows real revision parent edges from ancestor to descendant; when history is paged, "oldest" means the oldest *loaded* revision, not necessarily the first revision ever committed.
+
+**Branch names are pointers attached alongside their target revisions.** They are not ancestry nodes, and they must never move HEAD above its ancestors. Branch cards remain selectable and open the same inspectors as sidebar branch selection. Several branches can reference one HEAD without cloning that revision. The actual stored revision parent IDs are unchanged.
 
 ## Layout architecture
 
@@ -19,20 +19,11 @@ persisted revision parent IDs define the immutable ancestry topology.
 
 ### Ranked DAG ordering
 
-1. Stable IDs determine the initial order, never response order or displayed
-   branch names.
-2. Revision ranks are computed from loaded parent relationships. Merges appear
-   strictly below all of their loaded parents. Malformed cyclic ancestry
-   cannot recurse indefinitely.
-3. Branch cards are ordinary *layout leaves* attached to their loaded HEAD.
-   This gives a branch its own click target without adding a bogus revision
-   ancestry edge. A branch with no loaded HEAD occupies a fallback last rank.
-4. Twelve alternating parent/child barycentric sweeps reduce crossings.
-   Different nodes at one rank always receive separate non-overlapping slots.
-   Straight single-node chains remain on one vertical centerline.
-5. Node coordinates are centered in a measured rectangle that encloses the
-   entire ranked project DAG. One project is laid out without knowing about
-   its neighbours.
+1. Stable IDs determine the initial order, never response order or displayed branch names.
+2. Revision cards alone enter the ranked-DAG kernel. Every revision depends on its actual loaded parents, so roots occupy the first rank and children descend toward HEAD. Merges join predecessor edges without cloning their revision cards.
+3. Twelve alternating dependency/successor barycentric sweeps reduce crossings. Different revisions at one rank receive separate slots; a linear ancestry chain remains on one vertical centerline.
+4. Branch cards live in a separate side lane at the *same vertical rank* as the revision they reference. Multiple aliases at that rank occupy independent horizontal slots. A branch whose HEAD is not loaded is still displayed and attached to its project, but no fake revision is introduced.
+5. The project header is aligned over the center of its revision DAG rather than over the wider branch-label side lanes. Database headers align over their projects. Revision parent IDs and branch pointers are never rewritten for layout.
 
 This is a deterministic, bounded-space layered layout, **not** a guarantee of
 an absolute global minimum crossing count (that problem is computationally
@@ -66,12 +57,13 @@ virtualization are preferable to breaking the parent/child spatial hierarchy.
 
 ### Connectors
 
-- Database → Project: solid structural link, now drawn within the one project
-  sibling layer instead of through another project's descendants.
-- Project → root revision: solid structural link.
-- Revision → revision: ancestry edge from actual immutable parent IDs.
-- Revision HEAD → Branch: dashed label link, **not** revision ancestry.
-- Aligned pairs use a straight line; other pairs use smooth curves.
+- Database → Project: solid structural link.
+- Project → oldest loaded revision root: solid structural link.
+- Older revision → newer revision (HEAD): solid history edge, using immutable parent IDs.
+- Revision (HEAD) → Branch: dashed lateral reference link. A branch is not another level in history.
+- Project → unresolved Branch: structural fallback when the branch HEAD is not loaded.
+- Folded history uses a marker between an older ancestor and its newer descendant; when no ancestor is visible, the project connects to the marker and the marker connects to the first visible revision.
+- Straight vertical chains are centered; merges/forks use smooth connecting paths.
 
 ## Selection and navigation
 
@@ -91,8 +83,11 @@ ownership and branch labels.
 
 ## Regression coverage
 
+- `tests/project_revision_graph_test.cpp` validates oldest-to-HEAD
+  chronological ordering, branch labels alongside the referenced revision,
+  shared-HEAD aliases and unchanged revision ancestry semantics.
 - `tests/compound_dag_layout_test.cpp` runs the standalone layout kernel
-  with **no Qt dependency**: chains, branch fan-out, merge ranks,
+  with **no Qt dependency**: chronological chains, fan-out, merge ranks,
   deterministic input order and corrupt cycles.
 - `tests/project_revision_graph_test.cpp` checks full GUI placement: the
   exact reported **two projects under one database, one shared HEAD per

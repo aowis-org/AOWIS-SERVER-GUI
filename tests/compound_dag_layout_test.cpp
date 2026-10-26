@@ -61,6 +61,31 @@ int main()
                 && std::abs(spaced.positions[i].y-spaced.positions[j].y) < 84;
             CHECK(!collision);
         }
+    // A Git-style history is always ranked from oldest ancestor to HEAD.
+    // Multiple branch names are annotations, not graph ancestry vertices.
+    const RankedDag chronological = layoutRankedDag({
+        {"oldest", {}}, {"older", {"oldest"}},
+        {"recent", {"older"}}, {"HEAD", {"recent"}}
+    }, 224, 250, 155);
+    CHECK(chronological.width == 224);
+    for (int i = 0; i < 4; ++i)
+    {
+        CHECK(chronological.ranks[i] == i);
+        CHECK(chronological.positions[i].y == i * 155);
+        CHECK(chronological.positions[i].x == chronological.positions[0].x);
+    }
+    // Merges combine two histories into one current revision; parent
+    // dependencies always point upward toward older revision layers.
+    const RankedDag merged_history = layoutRankedDag({
+        {"old", {}}, {"main-recent", {"old"}},
+        {"feature-recent", {"old"}},
+        {"merged-HEAD", {"main-recent", "feature-recent"}}
+    }, 224, 250, 155);
+    CHECK(merged_history.ranks[0] == 0);
+    CHECK(merged_history.ranks[1] == 1 && merged_history.ranks[2] == 1);
+    CHECK(merged_history.ranks[3] == 2);
+    CHECK(merged_history.positions[1].x != merged_history.positions[2].x);
+
     const RankedDag cyclic = layoutRankedDag({{"a",{"b"}},{"b",{"a"}}},224,250,155);
     CHECK(cyclic.positions.size()==2);
 }
