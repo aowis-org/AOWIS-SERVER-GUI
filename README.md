@@ -2,23 +2,40 @@
 
 [EPANET](https://github.com/OpenWaterAnalytics/EPANET) based Controller for Water Networks.
 
-This is the GUI for the AOWIS-SERVER infrastucture.
+This is the GUI for the AOWIS-SERVER infrastructure.
 
 This software is written in C++ with Qt and can be compiled for all major platforms, including WebAssembly.
 
-## Projects tab (GUI prototype)
+## Projects workspace and DVMDB
 
-The first navigation tab is **Projects**. It provides a project/branch tree, the existing
-built-in EPANET examples and importer, a separate revisions list, an interactive
-revision graph and an editable metadata inspector. The toolbar now shows project
-and branch context and links to history rather than selecting revisions. **All new
-project/branch/revision management and metadata changes are a local in-memory
-UI preview only; no database integration or persistence exists yet.** The Save
-action is deliberately disabled. The middle graph uses a renderer-neutral Qt
-fallback until a safe shared-bgfx implementation is available.
+**The Projects workspace now connects to real DVMDB catalogues.** It supports
+native embedded DVMDB in supported Standalone builds and remote HTTP DVMDB
+servers. Database profiles are persisted; remote sources are monitored and
+refreshed automatically. The compact **Databases** sidebar has visibility
+checkboxes: checked sources contribute projects, branches and revision
+history to the navigator and graph. Each project/revision is identified with
+its source, so the same ID on two servers is not conflated.
 
-See [Projects workspace and integration contract](docs/projects-workspace.md)
-for precise current behavior and planned working-copy safety rules.
+The GUI currently **reads projects, branches and up to 100 first-parent
+revisions per branch**, and **creates projects and branches** (including a
+branch from a selected historical revision). It does **not** yet check out
+hydraulic networks, save edited model revisions, rename/delete persisted
+projects or branches, authenticate to the DVMDB REST service, or display a
+fully paged revision DAG. The toolbar Save action remains disabled for DVMDB.
+Built-in examples and the explicitly named demo profiles are a separate
+**in-memory preview**, not stored in DVMDB.
+
+Start here:
+
+- [DVMDB setup and troubleshooting](docs/dvmdb-quickstart.md) — run the server,
+  add databases, filter them, verify connectivity and avoid data-root mistakes.
+- [Projects workspace](docs/projects-workspace.md) — what each UI control does
+  and what is deliberately read-only.
+- [DVMDB integration status and roadmap](docs/dvmdb-integration-roadmap.md) —
+  implemented capabilities versus remaining work.
+
+The revision graph currently uses a renderer-neutral **QWidget/QPainter**
+implementation. It does not initialize another bgfx device alongside the map.
 
 ## Git submodules
 
@@ -156,7 +173,33 @@ delete_api_key=
 
 Restart the application after editing the file. Missing native `[shortcuts]` entries are added automatically using the advertised UI shortcuts.
 
-Set `examples_builtin_enable=false` to hide the bundled `Examples` project and its revisions from the toolbar. If the option is missing, built-in examples are enabled.
+Set `examples_builtin_enable=false` to hide bundled example entries. If
+the option is missing, built-in examples are enabled. Example Library
+actions do not create persisted DVMDB revisions.
+
+### DVMDB database profiles
+
+The Projects **Databases** section stores named profiles in the same native
+INI at `projects/servers` (serialized JSON). Older endpoint-only profiles
+are treated as remote REST sources. In the WebAssembly build, profiles are
+stored in browser `localStorage` under `aowis.projects.servers`, not in the
+deployed read-only INI file.
+
+Use the GUI inspector to create or edit profiles rather than hand-editing
+their JSON. The stored fields include stable profile ID, name,
+`connection_type` (`remote` or `local`), remote endpoint or local data
+directory, a descriptive authentication mode and the visibility flag.
+**Authentication choices do not implement authentication.** The current
+DVMDB HTTP service has no authentication or TLS, and the GUI rejects
+non-`None` modes when connecting. Do not embed passwords in URLs.
+
+In supported native Standalone builds, the default **Local database** profile
+is provisioned automatically with its own per-user DVMDB directory
+(`aowis-standalone-dvmdb`). It is separate from the HTTP daemon's
+`aowis-dvmdb` root; do not configure two live processes to use the same
+root. GUI-only and WebAssembly builds do not provide embedded native DVMDB.
+For practical connection instructions and limits, see
+[the DVMDB quickstart](docs/dvmdb-quickstart.md).
 
 bgfx is the only map renderer (2D and 3D globe, desktop and WebAssembly), so there is no renderer setting any more. The application removes an old `map_desktop_renderer` line from the native configuration file; an old `map_wasm_renderer` line in a WebAssembly deployment is ignored. If bgfx cannot start, Map Monitor shows a status message.
 

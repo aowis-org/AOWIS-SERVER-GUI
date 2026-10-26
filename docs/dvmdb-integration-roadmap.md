@@ -1,126 +1,109 @@
-# DVMDB integration in the Projects workspace
+# DVMDB integration — implementation status and next steps
 
-## Stage 1 — data-source UX (previous patch)
+**Updated 2026-10-26.** This document describes code in this GUI checkout.
+Do not confuse an implemented backend API, a wired GUI feature, and a
+proposed feature: they are separate milestones. See the
+[practical quickstart](dvmdb-quickstart.md) and
+[Projects workspace guide](projects-workspace.md).
 
-- The left section is **Databases**, with a small header `+` action.
-- A fresh GUI installation with no configured sources has no open inspector. The
-  main panel offers **Add database**; a source with nothing loaded instead
-  displays **No projects loaded**, without claiming its remote/local store is empty.
-- Both entry points start the same unsaved inspector draft. **Create** commits
-  the profile in one operation, and **Cancel** or closing the dock discards it.
-- Profiles identify a connection type: `remote` (REST URL) or `local` (embedded
-  DVMDB data directory). Older profiles without a `connection_type` remain
-  `remote`; the existing `projects/servers` settings key is preserved.
-- With native DVMDB enabled, Standalone provisions a non-deletable **Local
-  database** profile on first use at
-  `$XDG_DATA_HOME/aowis-standalone-dvmdb` (normally
-  `~/.local/share/aowis-standalone-dvmdb`). It does **not** create or open the
-  repository yet. The directory is deliberately different from the DVMDB HTTP
-  daemon's default `aowis-dvmdb` root. Windows/macOS builds without the DVMDB
-  library do not offer embedded creation or auto-provisioning.
-- All project/branch/revision UI data is still explicitly marked **preview**;
-  saved source profiles do not imply a successful database connection.
+## Current capabilities
 
-## Stage 2 — real data read paths (implemented as the read-only slice below)
+| Capability | GUI state | Important boundary |
+|---|---|---|
+| Database profile CRUD | **Implemented** | Stored locally in GUI configuration; profile deletion does **not** delete database data. The default embedded profile is protected. |
+| Embedded source in Standalone | **Implemented on supported native builds** | Uses DVMDB `ProjectService`, not a second database implementation or an HTTP server. |
+| REST catalogue reader | **Implemented** | HTTP `/dvmdb/v1` project/branch/history reads with response validation, deadlines and cancellation. |
+| Automatic remote health and refresh | **Implemented** | ~5 s health probes, degraded/offline after failures, ~60 s catalogue refresh while healthy; offline caches read-only. |
+| Multi-source explorer | **Implemented** | Persistent visibility checkboxes; source-qualified project/revision IDs; same-named projects on different databases remain distinguishable. |
+| Revision history graph | **Partial** | Newest 100 first-parent revisions per branch, not exhaustive two-parent ancestry or server-side DAG paging. QWidget/QPainter, not a second bgfx device. |
+| Project creation | **Implemented, native + REST** | Real server-side create, followed by catalogue refresh. |
+| Branch creation / fork from revision | **Implemented, native + REST** | Creates a new branch from the chosen supported base. No rename/delete. |
+| Network enumeration and checkout | **Not implemented in GUI** | Underlying DVMDB read API for known network IDs exists, but no server network-discovery endpoint. |
+| Edited-model Save as a new revision | **Not implemented in GUI** | Need pinned working-copy session and exact expected-HEAD conflict handling. |
+| Project/branch rename and delete | **Not implemented by DVMDB service** | Preview-only edits are not remote data writes. |
+| REST auth, ACL enforcement, TLS | **Not implemented by DVMDB HTTP server** | Descriptive GUI auth modes cannot authenticate. |
+| Pull/push/compare/review/annotations | **Not implemented in GUI** | Requires explicit designs/contracts, not graph gestures with implicit writes. |
 
-Implement a shared project data-source interface, with two implementations:
+## Completed foundations
 
-1. Native `ProjectService` via the embedded DVMDB libraries (Standalone).
-2. DVMDB REST API client with deadlines, cancellation, error handling and
-   connection state.
+### Stage 1 — Data-source UX
 
-Both must report one normalized set of project/branch/revision models to the
-existing navigator and graph. Add explicit **Connect / Retry / Disconnect**
-states and ensure the empty state distinguishes *no projects*, *loading*,
-*offline*, and *error*. Keep the preview fixture separate from real data.
+- `Databases` section with compact add action and useful empty states;
+  inspector closed when nothing is selected.
+- An unsaved inspector draft for **Create/Cancel**, without a throwaway
+  name-only dialog or orphan profiles.
+- Local/remote profile types, compatibility for legacy endpoint-only
+  profiles, and a protected default local profile in supported Standalone
+  builds (separate from the daemon's default root).
 
-## Stage 3 — writes and checkout
+### Stage 2 — Shared read-only catalogue
 
-Wire project creation, branch creation, checkout and revision writes through
-the same source interface. Never silently treat GUI-only preview edits as
-database changes. Protect optimistic expected-head writes and preserve dirty
-working copies on conflicts. Coordinate with DVMDB's
-`docs/gui-integration-requirements.md` for missing rename/delete lifecycle,
-network enumeration, mutable annotations and full DAG pagination contracts.
-The current REST API does not implement authentication, so the GUI must not
-misrepresent the descriptive auth-mode setting as an authenticated session.
+- Native worker and asynchronous REST readers normalize projects, branches,
+  heads and limited revision history into the same GUI model.
+- Preview content remains distinct from real DVMDB content; real revision
+  inspector data is not editable through the old preview controls.
+- HTTP responses have size/time/decode checks. First-parent history and
+  uncaptured ancestors must not masquerade as a complete DAG.
 
-## Stage 4 — sync and metadata
+### Stage 3a — Real project and branch creation
 
-Design offline/online bundles, annotations, ACLs, provenance and revision graph
-pagination around stable API contracts. If SQL metadata is introduced, provide
-**equivalent SQLite and PostgreSQL** schemas, migrations and queries; the
-present data-source profile storage uses Qt settings/JSON and introduces no SQL.
-## Stage 2 — read-only project catalogue (current patch)
+- Native and REST writers create projects and fork branches, including from
+  a selected historical revision.
+- Catalogue refresh after completion, no speculative local insertion.
+- An uncertain HTTP POST outcome triggers a read instead of a blind retry.
+  Conflicts and source-switch races are handled without overriding data.
 
-- One normalized `ProjectSourceReader` reads `projects`, `branches`, and the
-  latest 100 first-parent revisions per branch. Real IDs and parent hashes are
-  preserved. Earlier ancestors, side-parent history and graph paging are not
-  fetched; results must not be mistaken for a complete DAG.
-- Embedded DVMDB uses `ProjectService` on a worker thread. The standalone build
-  with DVMDB support automatically loads its default local database when the
-  Projects workspace opens. The library is not accessed by GUI-only builds.
-- REST uses GET requests under `/dvmdb/v1` with absolute and inactivity
-  deadlines, JSON/size validation, explicit unsupported-auth rejection and
-  cancellation on source switches. No authentication is attempted or claimed.
-- The UI separates disconnected, loading, failed, and successfully loaded
-  *snapshots*. Connect, Retry, Cancel, Disconnect and Refresh are available as
-  appropriate; a successfully read catalogue can still become stale later.
-- DVMDB-backed project, branch and revision inspector fields are read-only.
-  Preview-only creation, deletion and annotation edits cannot touch real
-  database data. Bundled examples may still be opened in the editor; the
-  fake project-creation workflow remains confined to demonstration profiles.
-- No native or REST write APIs, checkout, network enumeration, live sync, full
-  DAG pagination, background polling, or SQL persistence are introduced yet.
+### Stage 3b — Always-active sources and multi-source explorer
 
-## Stage 3a — supported project/branch creation (current patch)
+- Connect/Disconnect controls removed: configured sources load automatically.
+  Remote health uses the bounded shared Map Server HTTP monitor with response
+  validation and degraded/recovered states.
+- Independent per-source catalogue readers, stale offline cache handling and
+  persistent source visibility checkboxes.
+- Aggregated navigator and graph with source-qualified IDs. Embedded local
+  DVMDB has no HTTP polling. Explicit Refresh remains in the inspector.
 
-- Native and REST backends now support project creation and branch creation,
-  including a new branch based on the selected historical revision. The native
-  write runs on a worker thread; REST uses a bounded asynchronous POST.
-- A successful write is **always** followed by a catalogue reload and selection
-  of the resulting project/branch. The GUI does not add an unverified item to
-  the navigator. Source switching, disconnect and repeated creates are blocked
-  while a write is in progress.
-- A failed/lost response also triggers a catalogue refresh: REST POST is not
-  automatically retried, since a timeout does not prove the write was rolled
-  back. Duplicate/conflict errors are displayed from DVMDB's structured 409.
-- Preview actions remain isolated from persisted DVMDB. Real project and branch
-  names are not locally editable, and Delete stays unavailable because neither
-  the DVMDB library nor its REST API currently implements rename/delete.
-- Native/REST checkout and model revision writes still require network
-  enumeration and pinned-session/expected-head integration; both are deferred.
-  Do not treat the absence of these backend operations as completed CRUD.
+## Next implementation milestones
 
-## Stage 3b — automatic source monitoring and aggregated explorer (this patch)
+1. **Network discovery contract.** Define and implement list-networks for an
+   immutable project revision (IDs, descriptive metadata, pagination and
+   empty-project rules) in both the native service and REST. Extend OpenAPI
+   only after the route exists. Avoid choosing an arbitrary network.
+2. **Pinned editor session / checkout.** Load one network snapshot at a
+   specific revision, retain immutable base and mutable working copy
+   separately, track dirty state and prompt on context changes. Tests must
+   cover source switching and temporary network loss.
+3. **Save with optimistic HEAD.** Use the existing DVMDB network-write
+   contract once a safe session exists. Preserve local changes on stale
+   expected-HEAD / HTTP 409; never overwrite another client's branch
+   update or retry an ambiguous POST automatically.
+4. **Lifecycle contracts.** Project/branch rename, deletion/archival, metadata
+   changes, validation and concurrency must be implemented by DVMDB first,
+   then surfaced through the same inspector.
+5. **History/sync workflows.** Complete DAG traversal with bounded paging,
+   compare and merge preview, explicit bundle fetch/push/pull decisions,
+   optional revision annotations, audit and permission-aware capabilities.
 
-- Database profiles are **always active**: embedded sources open on startup,
-  and remote sources start asynchronous liveness checks and catalogue loading.
-  The old Connect/Disconnect sidebar controls are removed, and manual **Refresh
-  catalogue** now belongs to the selected database's inspector.
-- A shared `HttpHealthMonitor` replaces the Map Server footer's unbounded
-  polling and is also used for remote DVMDB connections. Each request has
-  HTTP-code and service-response validation, no redirect following, an
-  inactivity timeout and an absolute deadline. The first failure is degraded;
-  two consecutive failures mark a service offline; recovery is automatic.
-  Map Server monitoring remains disabled in standalone as before. Embedded
-  DVMDB uses no network polling.
-- Health probes use `/dvmdb/v1/projects`; they **do not** fetch revision
-  history. Independent catalogue readers load each database on recovery and
-  refresh every 60 seconds. Offline catalogue snapshots remain visibly marked
-  as caches and are **not writable**. Unchecking a source only filters the
-  navigator and graph; it does not stop the health monitor.
-- Visibility checkboxes persist per database profile, defaulting to enabled
-  for existing saved profiles. The navigator groups projects by source, and
-  the revision graph shows data from every checked real database. GUI project
-  IDs and graph revision IDs are source-qualified to prevent collisions;
-  backend REST/native write calls continue to use raw DVMDB IDs.
-- The revision-sidebar remains scoped to the selected project, and the
-  top-bar project chooser uses qualified "Database / Project" labels for
-  real sources to disambiguate duplicate project names. The in-memory preview
-  fixture keeps its isolated one-project graph and flat navigator semantics.
-- Loopback tests cover two services with colliding IDs, checkbox persistence,
-  graph filtering, invalid HTTP 200 responses, offline/degraded state, and
-  recovery. The graph renderer remains the existing QWidget fallback and does
-  **not** create a second bgfx device. Full DAG paging, network checkout,
-  revision saving, lifecycle rename/delete and authentication are not added.
+Keep the native and REST backends behaviorally equivalent at the GUI
+boundary. The DVMDB backlog is in its `docs/gui-integration-requirements.md`
+and the implemented wire contract is `docs/dvmdb-http-api.yaml`. Introducing
+SQL metadata, if eventually required, must include equivalent supported
+SQLite **and** PostgreSQL queries/migrations; these GUI profiles currently
+use Qt settings/JSON, not SQL.
+
+## Tests / acceptance
+
+Run the GUI test suite from the GUI checkout:
+
+```bash
+./compile_linux_tests.sh
+```
+
+For actual integration, also run the DVMDB server in its own checkout
+(`./compile_linux.sh`) and verify its `/dvmdb/v1/ready` and
+`/dvmdb/v1/projects` endpoints before assessing GUI failures.
+
+The repository contains GUI regression tests for project/branch REST
+creation, HTTP contract/error behavior, multi-source ID collisions and
+visibility persistence. Executing them in a build environment is still
+required; documentation itself is not proof of successful integration.
