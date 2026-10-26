@@ -17,7 +17,7 @@
 // GUI-only graph data. No database IDs are inferred from these preview labels.
 struct ProjectGraphNode
 {
-    enum class Kind { Revision, Project, Server };
+    enum class Kind { Revision, Project, Branch, Server };
     QString id;
     QString title;
     QString branch;
@@ -31,6 +31,8 @@ struct ProjectGraphNode
     // Structural hierarchy, separate from immutable revision ancestry.
     QString container_id;
     QString project_group_id;
+    QString branch_id; // Stable branch identity for revision badges.
+    QString head_revision_id; // Structural branch-to-HEAD link; not DAG ancestry.
 };
 
 class QFocusEvent;
@@ -66,6 +68,8 @@ public:
     QPointF revisionViewportPosition(const QString &revision_id) const;
     QPointF nodeViewportPosition(const QString &id) const;
     double zoomFactor() const;
+    QString selectionId() const;
+    QRectF graphBounds() const;
 
 signals:
     void revisionActivated(const QString &revision_id);
@@ -103,6 +107,8 @@ private:
     void scheduleInitialFit();
     QPointF mapToGraph(const QPointF &point) const;
     QRectF nodeRect(const ProjectGraphNode &node) const;
+    void clampCamera();
+    void revealSelection();
     const ProjectGraphNode *hitNode(const QPointF &point) const;
     void startNavigation();
     void updateNavigation();
@@ -123,7 +129,7 @@ private:
     QVector<ProjectGraphNode> nodes;
     QVector<Omission> omissions;
     QSet<QString> expanded_revisions;
-    QString selected_revision;
+    QString selected_revision; // Any structural or revision node ID.
     QPointF offset;
     QPointF last_pointer;
     QPointF pan_velocity;

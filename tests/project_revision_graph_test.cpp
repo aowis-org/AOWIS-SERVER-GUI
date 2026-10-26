@@ -305,6 +305,29 @@ int main(int argc, char **argv)
         return 1;
     graph_page.close();
 
+    // A small fitted graph is pinned in the viewport: panning cannot move
+    // every card offscreen, even with a huge mouse drag.
+    graph.setNodes({node});
+    graph.fitGraph();
+    sendMouse(graph, QEvent::MouseButtonPress, QPointF(300.0, 200.0), Qt::LeftButton);
+    sendMouse(graph, QEvent::MouseMove, QPointF(760.0, 400.0), Qt::LeftButton);
+    sendMouse(graph, QEvent::MouseButtonRelease, QPointF(760.0, 400.0), Qt::NoButton);
+    if (!require(std::abs(graph.revisionViewportPosition(node.id).x() - graph.width() / 2.0) < 0.01
+                     && std::abs(graph.revisionViewportPosition(node.id).y() - graph.height() / 2.0) < 0.01,
+                 "small fitted graph can be dragged away from the viewport")) return 1;
+
+    // Navigation tests need an actual scrollable canvas. The bounds here
+    // exceed the available viewport in X; Y stays centred when undersized.
+    ProjectGraphNode far_left = node;
+    far_left.id = QStringLiteral("far-left");
+    far_left.position = QPointF(-1000, 0);
+    far_left.head_branch.clear();
+    ProjectGraphNode far_right = far_left;
+    far_right.id = QStringLiteral("far-right");
+    far_right.position = QPointF(1000, 0);
+    graph.setNodes({node, far_left, far_right});
+    graph.fitGraph();
+
     // Key movement accelerates while held, then glides to a stop when released.
     graph.fitGraph();
     const double initial_x = graph.graphToViewport(QPointF(0.0, 0.0)).x();
@@ -337,7 +360,7 @@ int main(int argc, char **argv)
     // The map's critically damped zoom motion keeps the point under the
     // wheel pointer fixed, including during the animation.
     graph.fitGraph();
-    const QPointF wheel_anchor(185.0, 145.0);
+    const QPointF wheel_anchor(400.0, 250.0);
     const double before_zoom = graph.zoomFactor();
     const QPointF before_center = graph.graphToViewport(QPointF());
     const QPointF fixed_graph_point = (wheel_anchor - before_center) / before_zoom;
@@ -347,7 +370,7 @@ int main(int argc, char **argv)
         return 1;
     if (!require(std::hypot((graph.graphToViewport(fixed_graph_point) - wheel_anchor).x(),
                             (graph.graphToViewport(fixed_graph_point) - wheel_anchor).y()) < 0.01,
-                 "wheel zoom did not preserve the pointer anchor"))
+                 "centered wheel zoom lost its anchor without reaching the scene boundary"))
         return 1;
 
     graph.fitGraph();
@@ -365,8 +388,11 @@ int main(int argc, char **argv)
     if (!require(graph.zoomFactor() < before_e + 0.15, "Q key did not zoom out"))
         return 1;
 
-    // A recent, sufficiently fast drag keeps moving after release.
+    // A sufficiently zoomed-in scene has room for inertia; it must stop at
+    // content bounds rather than allowing the entire graph to disappear.
     graph.fitGraph();
+    sendWheel(graph, QPointF(400, 250), QPoint(0, 480));
+    waitFor(260);
     sendMouse(graph, QEvent::MouseButtonPress, QPointF(180.0, 130.0), Qt::LeftButton);
     waitFor(20);
     sendMouse(graph, QEvent::MouseMove, QPointF(225.0, 130.0), Qt::LeftButton);
@@ -376,8 +402,23 @@ int main(int argc, char **argv)
     const double at_release = graph.graphToViewport(QPointF()).x();
     waitFor(60);
     if (!require(graph.graphToViewport(QPointF()).x() > at_release + 1.0,
-                 "mouse drag did not carry momentum past release"))
+                 "mouse drag did not carry momentum while inside scene bounds"))
         return 1;
+    // Extreme pan in either direction cannot push the scene entirely away.
+    for (int direction : {-1, 1})
+    {
+        const QPointF origin(370.0, 210.0);
+        sendMouse(graph, QEvent::MouseButtonPress, origin, Qt::LeftButton);
+        sendMouse(graph, QEvent::MouseMove, origin + QPointF(direction * 20000.0, 0), Qt::LeftButton);
+        sendMouse(graph, QEvent::MouseButtonRelease,
+                  origin + QPointF(direction * 20000.0, 0), Qt::NoButton);
+        waitFor(40);
+        const QRectF bounds = graph.graphBounds();
+        const double left = graph.graphToViewport(bounds.topLeft()).x();
+        const double right = graph.graphToViewport(bounds.bottomRight()).x();
+        if (!require(left <= 111.0 && right >= graph.width() - 111.0,
+                     "drag or inertia escaped the content bounding box")) return 1;
+    }
 
     // The graph and map must consume the very same editable shortcuts. These
     // changes go through the real settings registry (and its change signals).
@@ -493,10 +534,43 @@ int main(int argc, char **argv)
     if (!require(selected_source == QStringLiteral("test-source")
                  && selected_project == QStringLiteral("test-project"),
                  "server/project cards did not emit their own selection signals")) return 1;
+    ProjectGraphNode branch_card;
+    branch_card.kind = ProjectGraphNode::Kind::Branch;
+    branch_card.id = QStringLiteral("group:branch:test-branch");
+    branch_card.branch_id = QStringLiteral("test-branch");
+    branch_card.title = QStringLiteral("main");
+    branch_card.container_id = project_card.id;
+    branch_card.head_revision_id = revision_card.id;
+    branch_card.position = QPointF(0, -150);
+    QString selected_branch;
+    QObject::connect(&graph, &ProjectRevisionGraph::branchActivated,
+        &graph, [&selected_branch](const QString &id) { selected_branch = id; });
+    graph.setNodes({server_card, project_card, revision_card, branch_card});
+    graph.fitGraph();
+    click(graph, graph.nodeViewportPosition(branch_card.id));
+    if (!require(selected_branch == QStringLiteral("test-branch"),
+                 "branch cards did not activate their stable branch ID")) return 1;
+    graph.setSelection(server_card.id);
+    if (!require(graph.selectionId() == server_card.id,
+                 "server selection is not represented in the graph")) return 1;
+    graph.setSelection(project_card.id);
+    if (!require(graph.selectionId() == project_card.id,
+                 "project selection is not represented in the graph")) return 1;
+    graph.setSelection(branch_card.id);
+    if (!require(graph.selectionId() == branch_card.id,
+                 "branch selection is not represented in the graph")) return 1;
     graph.setShowFullTree(false);
     if (!require(!graph.nodeViewportPosition(server_card.id).isNull()
                  && !graph.nodeViewportPosition(project_card.id).isNull(),
                  "folded revision mode removed the server/project hierarchy")) return 1;
+
+    // An unbranched graph (database -> project -> revision -> branch) must
+    // occupy a single geometric centreline, with no curved misalignment.
+    QVector<ProjectGraphNode> straight{server_card, project_card, revision_card, branch_card};
+    ProjectGraphPlacement::place(straight, 1.8);
+    for (const ProjectGraphNode &placed : straight)
+        if (!require(std::abs(placed.position.x() - straight.first().position.x()) < 0.01,
+                     "single-chain graph is not horizontally centred")) return 1;
 
     // Placement regression: three independent databases and uneven project
     // revision histories should not become an infinite horizontal strip.

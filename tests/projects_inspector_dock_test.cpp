@@ -680,14 +680,18 @@ int main(int argc, char **argv)
     if (!require(dock->isVisible() && name->text() == QStringLiteral("Sample Pump Station"),
                  "selecting a project in the tree did not reopen its inspector"))
         return 1;
+    const QString selected_project_key = project_tree->currentItem()->data(0, Qt::UserRole).toString();
+    if (!require(graph->selectionId() == QStringLiteral("group:project:")
+                     + selected_project_key.mid(2),
+                 "sidebar project selection did not highlight its graph card")) return 1;
     if (!require(delete_in_inspector->isVisible()
                      && delete_in_inspector->text() == QStringLiteral("Delete project…"),
                  "selecting a project did not offer deletion in the inspector"))
         return 1;
-    const QPointF south_node_center = graph->graphToViewport(QPointF(0.0, 0.0));
-    if (!require(std::abs(south_node_center.x() - graph->width() / 2.0) < 1.0
-                     && std::abs(south_node_center.y() - graph->height() / 2.0) < 1.0,
-                 "switching projects did not automatically fit the newly loaded DAG"))
+    const QPointF selected_card = graph->nodeViewportPosition(graph->selectionId());
+    if (!require(selected_card.x() > 0.0 && selected_card.x() < graph->width()
+                     && selected_card.y() > 0.0 && selected_card.y() < graph->height(),
+                 "switching projects did not reveal the selected graph card"))
         return 1;
 
     // Toolbar-driven project and branch changes use the same selection path.
@@ -704,6 +708,8 @@ int main(int argc, char **argv)
     if (!require(dock->isVisible() && name->text() == QStringLiteral("pressure-study"),
                  "toolbar branch change did not reopen its inspector"))
         return 1;
+    if (!require(graph->selectionId().startsWith(QStringLiteral("group:branch:")),
+                 "sidebar branch selection did not highlight its graph card")) return 1;
     if (!require(delete_in_inspector->isVisible()
                      && delete_in_inspector->text() == QStringLiteral("Delete branch…"),
                  "selecting a branch did not offer deletion in the inspector"))
@@ -726,6 +732,9 @@ int main(int argc, char **argv)
     if (!require(dock->isVisible() && name->text() == QStringLiteral("main"),
                  "selecting a branch on the graph did not reopen its inspector"))
         return 1;
+
+    if (!require(graph->selectionId().startsWith(QStringLiteral("group:branch:")),
+                 "graph branch activation did not synchronize graph selection")) return 1;
 
     // Return to a revision; then close it and ask for History again.
     graph->revisionActivated(QStringLiteral("ec9045df"));

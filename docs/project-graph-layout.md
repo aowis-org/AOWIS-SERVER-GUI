@@ -1,61 +1,80 @@
-# Projects graph placement
+# Projects graph: placement and navigation
 
-The Projects canvas displays a **compound DAG**, not a simple list of branch
-names. Databases own projects; projects own immutable revisions; revisions link
-to their actual parents. Only revision-to-revision edges represent ancestry.
+The Projects canvas displays a **compound revision DAG**, with distinct cards
+for databases, projects, branches and revisions. Revision ancestry comes only
+from immutable revision parent IDs. Database/project containment and
+branch-to-HEAD annotations are **structural links**, never extra revision
+parents; they do not affect ancestry traversal, folding or checkout.
 
-## Current layout (deterministic, no new runtime dependency)
+## Deterministic compound layout
 
-Implementation: `src/tabs/project_graph_placement.h`, called from
+Implementation: `src/tabs/project_graph_placement.h`, invoked by
 `ProjectsWidget::rebuildGraph()`.
 
-1. **Layer the revisions by ancestry.** The rank of a revision is one greater
-   than the maximum rank of its loaded parents. Disconnected roots may share
-   rank zero; merges retain all their parent links. Broken/cyclic remote data
-   cannot trap the layout in unbounded recursion.
-2. **Order within ranks.** Start with a stable, identifier-based ordering;
-   perform alternating forward and backward barycentre sweeps using parent and
-   child locations. Each revision at a rank occupies a distinct horizontal
-   slot, even if several report the same branch name. Historic branch labels
-   never reserve permanent empty lanes.
-3. **Measure and pack projects.** A project's width is determined by its
-   busiest revision rank, not the number of branch names. Each project DAG is
-   positioned within its own rectangular block. Blocks are packed into rows
-   below their database header, using a bounded shelf width. Longer histories
-   consume only that project's vertical extent.
-4. **Pack databases.** A small dynamic program chooses breaks into horizontal
-   rows that balance unused width, respecting source order. Rows are centred.
-   The viewport aspect ratio informs the target width without making the
-   layout depend on transient per-frame resizing.
-5. **Route structural links.** Direct database/project links use curved
-   connectors. If a project wraps to a lower shelf, the connector instead
-   follows a gutter outside the database's project/revision cards. Real
-   revision edges remain separate.
+1. **Revision depth:** Assign each revision the maximum loaded-parent depth
+   plus one. Disconnected roots may share depth zero; merges keep all parents.
+   Guard cyclic/malformed histories to avoid recursive loops.
+2. **Order:** Sort initial positions by immutable ID, then perform alternating
+   parent/child barycentre sweeps. Each card at a given depth has a distinct
+   slot; branch names do not reserve invisible lanes.
+3. **Branch cards:** Position live branch labels beneath the revision layers,
+   linked to their actual HEAD revision by a separate dashed connector.
+   Branch-card identities use stable branch IDs, not project/branch display
+   names; duplicate branch names on different databases remain distinct.
+4. **Projects:** Measure each revision subgraph and pack project blocks into
+   shelves of bounded width beneath their database card. Center each shelf
+   within the database group, **including a single project narrower than the
+   database card**. With a single database, project, revision and branch,
+   all four card centers lie on one vertical line.
+5. **Databases:** Pack the database groups into balanced rows, preserving
+   source order. Long histories grow vertically, rather than stretching
+   unrelated sources horizontally.
+6. **Connectors:** Aligned cards use straight vertical strokes. Nonaligned
+   cards use smooth curves; wrapped shelf links route around the outer gutter.
+   Structural edges are visually distinct from ancestry and branch-to-HEAD
+   annotations.
 
-The graph widget maintains its existing top-down/bottom-up toggle and
-independently folds ancestry in editable-head mode. The placement contract
-keeps a single canonical coordinate system and leaves presentation flips to
-the widget.
+The top-down/bottom-up orientation is a presentation transformation, so
+labels and click regions stay upright. Heads-only view keeps structural
+cards and branch labels visible while folding hidden ancestry.
 
-## Invariants covered by tests
+## Selection synchronization
 
-- No two cards intersect, including unequal-length histories and wrapped rows.
-- A loaded parent always precedes its descendant vertically.
-- Same-rank revisions cannot overlap even with identical branch labels.
-- Layout is deterministic when the API returns revisions in another order.
-- Multiple database groups wrap into balanced rows.
-- Server/project selection and folded-history navigation still work.
+Selecting a database, project, branch or revision in the sidebar selects its
+corresponding graph card. Branch selections also highlight associated branch
+badges on revision cards. Clicking a graph card (or a revision's branch badge)
+selects the corresponding inspector and sidebar tree item. IDs are scoped per
+DVMDB source to avoid collisions across independently hosted catalogues.
+Selecting an offscreen graph item pans it back into view without resetting
+zoom unless the underlying graph topology changes.
 
-Run `./compile_linux_tests.sh` and inspect
+## Camera bounds
+
+The interactive camera is restricted to the rendered node/card bounds, with
+up to 110 viewport pixels of breathing room on each axis (or 22% of a small
+viewport). When a graph is smaller than the viewport along an axis, it stays
+centered there and **cannot be panned into empty space**. Larger graphs can
+move only until their outermost cards reach the margin. The same constraint
+applies to mouse drag, momentum, keyboard pan, animated wheel zoom, window
+resize and Fit graph. Keyboard and mouse inertia stop at boundaries.
+
+A deliberately zoomed-out view may center differently from the wheel pointer
+when preserving that pointer would violate the camera bounds.
+
+## Regression coverage
+
+`tests/project_revision_graph_test.cpp` exercises deterministic layout,
+nonoverlap, root/HEAD order, centered single-chain placement, branch-card
+activation, inspector selection IDs, pan inertia and content bounds. Inspector
+and multi-source tests cover sidebar synchronization and duplicate remote IDs.
+
+Run `./compile_linux_tests.sh` and check the targets
 `aowis-project-revision-graph`, `aowis-projects-inspector-dock`, and
-`aowis-projects-multi-source` for regressions.
+`aowis-projects-multi-source`.
 
-## Future scaling work
+## Future scaling
 
-The initial patch improves placement but **does not** solve navigation of
-hundreds or thousands of visible revision cards. Further iterations should
-add viewport-aware collapse/expansion, spatial indexing and edge bundling,
-then consider an established layout engine such as ELK for crossing reduction
-on very dense merge graphs. Do not add an ELK/Graphviz dependency solely to
-lay out server/project grouping: the compound hierarchy and UI interaction
-still require application-specific handling.
+Hundreds or thousands of cards will benefit from viewport-aware expansion,
+spatial indexing, edge bundling and perhaps a dedicated crossing minimizer
+such as ELK. A large graph-layout library is not necessary to fix a
+one-project centerline, camera constraints or basic selection semantics.

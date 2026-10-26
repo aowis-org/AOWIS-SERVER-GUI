@@ -27,6 +27,7 @@ namespace
 constexpr double node_width = 224.0;
 constexpr double node_height = 84.0;
 constexpr double project_node_height = 68.0;
+constexpr double branch_node_height = 62.0;
 constexpr double server_node_width = 252.0;
 constexpr double server_node_height = 76.0;
 constexpr int frame_interval_ms = 16;
@@ -46,6 +47,7 @@ constexpr double velocity_stop_threshold = 0.5;
 constexpr double keyboard_zoom_octaves_per_second = 1.5;
 constexpr double min_zoom = 0.25;
 constexpr double max_zoom = 3.0;
+constexpr double camera_margin_px = 110.0;
 
 qreal vectorLength(const QPointF &point)
 {
@@ -403,7 +405,9 @@ void ProjectRevisionGraph::setNodes(const QVector<ProjectGraphNode> &nodes)
                 || old_node.head_branch != new_node.head_branch
                 || old_node.kind != new_node.kind
                 || old_node.container_id != new_node.container_id
-                || old_node.project_group_id != new_node.project_group_id)
+                || old_node.project_group_id != new_node.project_group_id
+                || old_node.branch_id != new_node.branch_id
+                || old_node.head_revision_id != new_node.head_revision_id)
             {
                 same_layout = false;
                 break;
@@ -444,7 +448,14 @@ void ProjectRevisionGraph::setSelection(const QString &revision_id)
     if (this->selected_revision == revision_id)
         return;
     this->selected_revision = revision_id;
-    if (!this->show_full_tree && !revision_id.isEmpty())
+    bool revision_selection = false;
+    for (const ProjectGraphNode &node : this->source_nodes)
+        if (node.id == revision_id && node.kind == ProjectGraphNode::Kind::Revision)
+        {
+            revision_selection = true;
+            break;
+        }
+    if (!this->show_full_tree && revision_selection)
     {
         bool visible = false;
         for (const ProjectGraphNode &node : this->nodes)
@@ -485,6 +496,7 @@ void ProjectRevisionGraph::setSelection(const QString &revision_id)
                 expandHiddenAncestors(revision_id);
         }
     }
+    revealSelection();
     update();
 }
 
@@ -494,7 +506,8 @@ QRectF ProjectRevisionGraph::nodeRect(const ProjectGraphNode &node) const
         ? server_node_width : node_width;
     const double height = node.kind == ProjectGraphNode::Kind::Server
         ? server_node_height : node.kind == ProjectGraphNode::Kind::Project
-            ? project_node_height : node_height;
+            ? project_node_height : node.kind == ProjectGraphNode::Kind::Branch
+                ? branch_node_height : node_height;
     return QRectF(node.position.x() - width / 2.0,
                   node.position.y() - height / 2.0, width, height);
 }
@@ -528,6 +541,83 @@ QPointF ProjectRevisionGraph::nodeViewportPosition(const QString &id) const
 double ProjectRevisionGraph::zoomFactor() const
 {
     return this->zoom;
+}
+
+QString ProjectRevisionGraph::selectionId() const
+{
+    return this->selected_revision;
+}
+
+QRectF ProjectRevisionGraph::graphBounds() const
+{
+    QRectF bounds;
+    bool first = true;
+    for (const ProjectGraphNode &node : this->nodes)
+    {
+        bounds = first ? nodeRect(node) : bounds.united(nodeRect(node));
+        first = false;
+    }
+    for (const Omission &omission : this->omissions)
+    {
+        bounds = first ? omissionRect(omission) : bounds.united(omissionRect(omission));
+        first = false;
+    }
+    return bounds;
+}
+
+void ProjectRevisionGraph::clampCamera()
+{
+    if (width() <= 0 || height() <= 0 || this->nodes.isEmpty())
+        return;
+    const QRectF bounds = graphBounds();
+    const QPointF previous = this->offset;
+    const double margin_x = qMin(camera_margin_px, width() * 0.22);
+    const double margin_y = qMin(camera_margin_px, height() * 0.22);
+    const double scene_width = bounds.width() * this->zoom;
+    const double scene_height = bounds.height() * this->zoom;
+    if (scene_width + 2.0 * margin_x <= width())
+        this->offset.setX(width() / 2.0 - bounds.center().x() * this->zoom);
+    else
+        this->offset.setX(qBound(width() - margin_x - bounds.right() * this->zoom,
+                                 this->offset.x(), margin_x - bounds.left() * this->zoom));
+    if (scene_height + 2.0 * margin_y <= height())
+        this->offset.setY(height() / 2.0 - bounds.center().y() * this->zoom);
+    else
+        this->offset.setY(qBound(height() - margin_y - bounds.bottom() * this->zoom,
+                                 this->offset.y(), margin_y - bounds.top() * this->zoom));
+    const QPointF correction = this->offset - previous;
+    if (!qFuzzyIsNull(correction.x()))
+        this->pan_velocity.setX(0.0);
+    if (!qFuzzyIsNull(correction.y()))
+        this->pan_velocity.setY(0.0);
+    // Keep a zoom animation's anchor in sync with actual bounded movement.
+    this->zoom_anchor += correction;
+}
+
+void ProjectRevisionGraph::revealSelection()
+{
+    if (this->pending_fit || this->selected_revision.isEmpty() || width() <= 0 || height() <= 0)
+        return;
+    for (const ProjectGraphNode &node : this->nodes)
+    {
+        if (node.id != this->selected_revision)
+            continue;
+        const QRectF visible_box = QRectF(QPointF(0, 0), size()).adjusted(35, 35, -35, -35);
+        const QRectF bounds = QRectF(graphToViewport(nodeRect(node).topLeft()),
+                                     graphToViewport(nodeRect(node).bottomRight()));
+        QPointF delta;
+        if (bounds.left() < visible_box.left())
+            delta.setX(visible_box.left() - bounds.left());
+        else if (bounds.right() > visible_box.right())
+            delta.setX(visible_box.right() - bounds.right());
+        if (bounds.top() < visible_box.top())
+            delta.setY(visible_box.top() - bounds.top());
+        else if (bounds.bottom() > visible_box.bottom())
+            delta.setY(visible_box.bottom() - bounds.bottom());
+        this->offset += delta;
+        clampCamera();
+        return;
+    }
 }
 
 const ProjectGraphNode *ProjectRevisionGraph::hitNode(const QPointF &point) const
@@ -569,15 +659,12 @@ void ProjectRevisionGraph::fitGraph()
         return;
     }
 
-    QRectF bounds;
-    for (const ProjectGraphNode &node : this->nodes)
-        bounds = bounds.isNull() ? nodeRect(node) : bounds.united(nodeRect(node));
-    for (const Omission &omission : this->omissions)
-        bounds = bounds.isNull() ? omissionRect(omission) : bounds.united(omissionRect(omission));
+    QRectF bounds = graphBounds();
     bounds.adjust(-76, -85, 76, 85);
     this->zoom = qBound(min_zoom, qMin((width() - 32.0) / bounds.width(),
                                   (height() - 32.0) / bounds.height()), 1.5);
     this->offset = QPointF(width() / 2.0, height() / 2.0) - bounds.center() * this->zoom;
+    clampCamera();
     update();
 }
 
@@ -608,6 +695,7 @@ void ProjectRevisionGraph::resizeEvent(QResizeEvent *event)
     // viewport center rather than repeatedly discarding manual navigation.
     this->offset += QPointF((event->size().width() - event->oldSize().width()) / 2.0,
                             (event->size().height() - event->oldSize().height()) / 2.0);
+    clampCamera();
     update();
 }
 
@@ -658,6 +746,12 @@ void ProjectRevisionGraph::paintEvent(QPaintEvent *event)
         const ProjectGraphNode *container = visible_by_id.value(node.container_id, nullptr);
         if (container == nullptr)
             continue;
+        // When a branch has an actual loaded HEAD, its dashed HEAD link is
+        // the structural attachment. A branch without a loaded HEAD still
+        // needs a visible link to its owning project.
+        if (node.kind == ProjectGraphNode::Kind::Branch
+            && visible_by_id.contains(node.head_revision_id))
+            continue;
         const QRectF start_box = nodeRect(*container);
         const QRectF end_box = nodeRect(node);
         const QPointF begin(container->position.x(), container->position.y()
@@ -704,6 +798,8 @@ void ProjectRevisionGraph::paintEvent(QPaintEvent *event)
             path.lineTo(QPointF(end.x(), entry_y));
             path.lineTo(end);
         }
+        else if (std::abs(begin.x() - end.x()) < 0.01)
+            path.lineTo(end);
         else
         {
             const double bend = qMax(24.0, std::abs(end.y() - begin.y()) * 0.45);
@@ -711,6 +807,32 @@ void ProjectRevisionGraph::paintEvent(QPaintEvent *event)
                          end - QPointF(0, structural_sign * bend), end);
         }
         painter.setPen(QPen(tint(accent, 145), 2.5, Qt::SolidLine, Qt::RoundCap));
+        painter.setBrush(Qt::NoBrush);
+        painter.drawPath(path);
+    }
+
+    // Branch labels attach to their actual HEAD revision. This is an
+    // annotation link, not a revision ancestry edge. It never feeds folding.
+    for (const ProjectGraphNode &node : this->nodes)
+    {
+        if (node.kind != ProjectGraphNode::Kind::Branch || node.head_revision_id.isEmpty())
+            continue;
+        const ProjectGraphNode *head = visible_by_id.value(node.head_revision_id, nullptr);
+        if (head == nullptr)
+            continue;
+        const double sign = this->top_down ? 1.0 : -1.0;
+        const QPointF begin(head->position.x(), head->position.y() + sign * node_height / 2.0);
+        const QPointF end(node.position.x(), node.position.y() - sign * branch_node_height / 2.0);
+        QPainterPath path(begin);
+        if (std::abs(begin.x() - end.x()) < 0.01)
+            path.lineTo(end);
+        else
+        {
+            const double bend = std::abs(end.y() - begin.y()) * 0.4;
+            path.cubicTo(begin + QPointF(0, sign * bend),
+                         end - QPointF(0, sign * bend), end);
+        }
+        painter.setPen(QPen(tint(QColor(57, 184, 145), 190), 2, Qt::DashLine, Qt::RoundCap));
         painter.setBrush(Qt::NoBrush);
         painter.drawPath(path);
     }
@@ -760,8 +882,11 @@ void ProjectRevisionGraph::paintEvent(QPaintEvent *event)
                 const QPointF begin = parent.position + QPointF(0, sign * node_height / 2.0);
                 const QPointF end = node.position - QPointF(0, sign * node_height / 2.0);
                 QPainterPath path(begin);
-                path.cubicTo(begin + QPointF(0, sign * 42.0),
-                             end - QPointF(0, sign * 42.0), end);
+                if (std::abs(begin.x() - end.x()) < 0.01)
+                    path.lineTo(end);
+                else
+                    path.cubicTo(begin + QPointF(0, sign * 42.0),
+                                 end - QPointF(0, sign * 42.0), end);
                 painter.setPen(QPen(tint(accent, 115), 3.0, Qt::SolidLine, Qt::RoundCap));
                 painter.setBrush(Qt::NoBrush);
                 painter.drawPath(path);
@@ -782,9 +907,12 @@ void ProjectRevisionGraph::paintEvent(QPaintEvent *event)
         if (node.kind != ProjectGraphNode::Kind::Revision)
         {
             const bool server = node.kind == ProjectGraphNode::Kind::Server;
-            const QColor group_color = server ? QColor(50, 174, 173) : accent;
-            painter.setPen(QPen(tint(group_color, server ? 230 : 140), server ? 2.2 : 1.6));
-            painter.setBrush(tint(group_color, server ? 64 : 24));
+            const bool branch = node.kind == ProjectGraphNode::Kind::Branch;
+            const QColor group_color = server ? QColor(50, 174, 173)
+                : branch ? QColor(57, 184, 145) : accent;
+            painter.setPen(QPen(tint(group_color, selected ? 255 : (server ? 230 : 140)),
+                                selected ? 3.4 : server ? 2.2 : 1.6));
+            painter.setBrush(tint(group_color, selected ? 100 : server ? 64 : 24));
             painter.drawRoundedRect(box, server ? 15 : 11, server ? 15 : 11);
             if (server)
             {
@@ -845,9 +973,16 @@ void ProjectRevisionGraph::paintEvent(QPaintEvent *event)
                          (node.display_id.isEmpty() ? node.id : node.display_id).left(12));
 
         const QRectF pill(box.left() + 14, box.bottom() - 26, 118, 19);
-        painter.setBrush(tint(accent, selected ? 80 : 38));
+        const bool branch_selected = !node.branch_id.isEmpty()
+            && this->selected_revision == QStringLiteral("group:branch:") + node.branch_id;
+        painter.setBrush(tint(accent, selected || branch_selected ? 110 : 38));
         painter.setPen(Qt::NoPen);
         painter.drawRoundedRect(pill, 8, 8);
+        if (branch_selected)
+        {
+            painter.setPen(QPen(accent, 1.8));
+            painter.drawRoundedRect(pill, 8, 8);
+        }
         painter.setPen(ink);
         painter.drawText(pill.adjusted(7, 1, -7, -1), Qt::AlignVCenter | Qt::AlignLeft,
                          painter.fontMetrics().elidedText(
@@ -942,6 +1077,7 @@ void ProjectRevisionGraph::updateNavigation()
         {
             this->zoom = next_zoom;
             this->offset = this->zoom_anchor - this->zoom_graph_anchor * this->zoom;
+            clampCamera();
             update();
         }
     }
@@ -966,6 +1102,7 @@ void ProjectRevisionGraph::updateNavigation()
             const QPointF pan_delta = this->pan_velocity * dt;
             this->offset += pan_delta;
             this->zoom_anchor += pan_delta;
+            clampCamera();
             update();
         }
     }
@@ -1027,12 +1164,15 @@ void ProjectRevisionGraph::mouseMoveEvent(QMouseEvent *event)
         const qint64 elapsed_ms = this->drag_elapsed.restart();
         if (this->dragging && !delta.isNull())
         {
+            const QPointF before_pan = this->offset;
             this->offset += delta;
             this->zoom_anchor += delta;
+            clampCamera();
+            const QPointF applied_delta = this->offset - before_pan;
             if (elapsed_ms > 0)
             {
                 const double elapsed_seconds = qBound(0.001, elapsed_ms / 1000.0, 0.1);
-                QPointF measured_velocity = delta / elapsed_seconds;
+                QPointF measured_velocity = applied_delta / elapsed_seconds;
                 const double speed = vectorLength(measured_velocity);
                 if (speed > mouse_maximum_speed)
                     measured_velocity *= mouse_maximum_speed / speed;
@@ -1070,13 +1210,15 @@ void ProjectRevisionGraph::mouseReleaseEvent(QMouseEvent *event)
                     emit serverActivated(node->id.mid(QStringLiteral("group:server:").size()));
                 else if (node->kind == ProjectGraphNode::Kind::Project)
                     emit projectActivated(node->id.mid(QStringLiteral("group:project:").size()));
+                else if (node->kind == ProjectGraphNode::Kind::Branch)
+                    emit branchActivated(node->branch_id);
                 else
                 {
                 // The branch badge has a separate hit target from the revision.
                 const QRectF pill(nodeRect(*node).left() + 14,
                                   nodeRect(*node).bottom() - 26, 118, 19);
                 if (pill.contains(point))
-                    emit branchActivated(node->branch);
+                    emit branchActivated(node->branch_id.isEmpty() ? node->branch : node->branch_id);
                 else
                     emit revisionActivated(node->id);
                 }

@@ -733,6 +733,15 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     });
     connect(this->graph, &ProjectRevisionGraph::branchActivated, this, [this](const QString &name)
     {
+        // Graph cards and badges use stable branch IDs; legacy preview
+        // fixtures still emit plain names when there is no branch ID.
+        for (const ProjectPreviewData &project : this->projects)
+            for (const ProjectPreviewBranch &branch : project.branches)
+                if (branch.id == name)
+                {
+                    select(SelectionKind::Branch, branch.id);
+                    return;
+                }
         // The graph has qualified lane names across all databases.
         for (const ProjectServerProfile &source : this->servers)
             if (source.visible)
@@ -1412,6 +1421,21 @@ void ProjectsWidget::rebuildGraph()
             project_node.branch = tr("PROJECT · %n branch(es)", nullptr, project.branches.size());
             project_node.container_id = server_node_id;
             nodes.append(project_node);
+            for (const ProjectPreviewBranch &branch : project.branches)
+            {
+                ProjectGraphNode branch_node;
+                branch_node.kind = ProjectGraphNode::Kind::Branch;
+                branch_node.id = QStringLiteral("group:branch:") + branch.id;
+                branch_node.title = branch.name;
+                branch_node.branch = tr("BRANCH");
+                branch_node.branch_id = branch.id;
+                branch_node.container_id = project_node_id;
+                branch_node.project_group_id = project_node_id;
+                if (!branch.head.isEmpty())
+                    branch_node.head_revision_id = preview ? branch.head
+                        : project.id + QStringLiteral("|") + branch.head;
+                nodes.append(branch_node);
+            }
             for (const ProjectPreviewRevision &revision : project.revisions)
             {
                 ProjectGraphNode node;
@@ -1426,7 +1450,15 @@ void ProjectsWidget::rebuildGraph()
                 node.tags = revision.tags;
                 node.project_group_id = project_node_id;
                 for (const ProjectPreviewBranch &branch : project.branches)
-                    if (branch.head == revision.id) node.head_branch = branch.name;
+                {
+                    if (branch.name == revision.branch)
+                        node.branch_id = branch.id;
+                    if (branch.head == revision.id)
+                    {
+                        node.head_branch = branch.name;
+                        node.branch_id = branch.id;
+                    }
+                }
                 this->graph_revision_lookup.insert(node.id, qMakePair(project.id, revision.id));
                 nodes.append(node);
             }
@@ -1446,10 +1478,16 @@ void ProjectsWidget::rebuildGraph()
         / double(qMax(1, this->graph->height()));
     ProjectGraphPlacement::place(nodes, aspect);
     this->graph->setNodes(nodes);
-    const QString graph_selection = currentProject() != nullptr
-        && this->selection_kind == SelectionKind::Revision
-        ? (isPreviewSource() ? this->selected_id
-           : this->project_id + QStringLiteral("|") + this->selected_id) : QString();
+    QString graph_selection;
+    if (this->selection_kind == SelectionKind::Server)
+        graph_selection = QStringLiteral("group:server:") + this->selected_id;
+    else if (this->selection_kind == SelectionKind::Project)
+        graph_selection = QStringLiteral("group:project:") + this->selected_id;
+    else if (this->selection_kind == SelectionKind::Branch)
+        graph_selection = QStringLiteral("group:branch:") + this->selected_id;
+    else if (this->selection_kind == SelectionKind::Revision && currentProject() != nullptr)
+        graph_selection = isPreviewSource() ? this->selected_id
+            : this->project_id + QStringLiteral("|") + this->selected_id;
     this->graph->setSelection(graph_selection);
 }
 
@@ -1593,9 +1631,16 @@ void ProjectsWidget::select(SelectionKind kind, const QString &id)
     selectTreeItem(this->revision_tree,
                    kind == SelectionKind::Revision ? keyFor(QStringLiteral("r"), id) : QString());
     this->updating_ui = false;
-    this->graph->setSelection(kind == SelectionKind::Revision
-        ? (isPreviewSource() ? id : this->project_id + QStringLiteral("|") + id)
-        : QString());
+    QString graph_selection;
+    if (kind == SelectionKind::Server)
+        graph_selection = QStringLiteral("group:server:") + id;
+    else if (kind == SelectionKind::Project)
+        graph_selection = QStringLiteral("group:project:") + id;
+    else if (kind == SelectionKind::Branch)
+        graph_selection = QStringLiteral("group:branch:") + id;
+    else if (kind == SelectionKind::Revision)
+        graph_selection = isPreviewSource() ? id : this->project_id + QStringLiteral("|") + id;
+    this->graph->setSelection(graph_selection);
     updateInspector();
     updateEmptyState();
     if (this->inspector_dock->isHidden())
