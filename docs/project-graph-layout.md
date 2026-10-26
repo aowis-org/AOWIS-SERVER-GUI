@@ -13,7 +13,7 @@ persisted revision parent IDs define the immutable ancestry topology.
   Graphviz, subprocess, network, or platform dependency.
 - `src/tabs/project_graph_placement.h` converts GUI nodes into independent
   project subgraphs, measures and packs the resulting project rectangles, and
-  then packs complete database groups into rows.
+  then places complete database groups alongside one another in a single row.
 - `src/tabs/project_revision_graph.cpp` renders nodes and edges from those
   coordinates. The painter does **not** decide where nodes belong.
 
@@ -50,9 +50,15 @@ This replaces the previous *per-project shelf wrapping*, which routed a
 server-to-project connector around an unrelated project and its branches.
 The old reserved-gutter routing code has been removed.
 
-For many databases, **complete database groups** can wrap into different
-rows. Database groups never share their descendants' rectangles. A lone
-project is centered under its slightly wider database card.
+Every database/server card shares **one top-level Y coordinate**. Complete
+server groups grow downward side by side, regardless of the depth of each
+project's revision history. Server groups never wrap onto lower rows and
+never share their descendants' horizontal corridors. A lone project is
+centered under its slightly wider database card.
+
+A very large number of visible servers can therefore produce a wide graph.
+That is intentional for this layout contract: panning and zooming are used
+to explore it instead of moving later servers below earlier histories.
 
 The resulting trade-off is intentional: a database with very many distinct
 projects is wider than a single project. Future collapsing, filtering, and
@@ -91,8 +97,9 @@ ownership and branch labels.
 - `tests/project_revision_graph_test.cpp` checks full GUI placement: the
   exact reported **two projects under one database, one shared HEAD per
   project, three and two branches** shape, corridor separation, sibling
-  ranks, selection, and navigation. It also covers multiple database rows,
-  overlapping-card detection, and stable placement after shuffled input.
+  ranks, selection, and navigation. It also covers a common server-card layer across uneven histories,
+  viewport-independent placement, overlapping-card detection, and stable
+  placement after shuffled input.
 
 Run `./compile_linux_tests.sh`. The isolated kernel can additionally be
 compiled with a plain C++17 compiler, independent of the GUI:

@@ -11,7 +11,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <limits>
 
 // Deterministic, compound layout for Database -> Project -> revision DAG.
 //
@@ -25,7 +24,6 @@ constexpr double revision_pitch_x = 250.0;
 constexpr double revision_pitch_y = 155.0;
 constexpr double project_gap_x = 48.0;
 constexpr double database_gap_x = 84.0;
-constexpr double database_gap_y = 92.0;
 constexpr double project_header_y = 142.0;
 constexpr double first_revision_y = 286.0;
 
@@ -37,7 +35,6 @@ struct ProjectBlock
     QVector<QPointF> branch_positions;
     QVector<QPointF> revision_positions;
     double width = card_width;
-    double height = first_revision_y + 55.0;
 };
 
 struct DatabaseBlock
@@ -46,7 +43,6 @@ struct DatabaseBlock
     QVector<ProjectBlock> projects;
     QVector<QPointF> project_offsets;
     double width = 252.0;
-    double height = project_header_y + 70.0;
 };
 
 inline void layoutRevisions(ProjectBlock &block, const QVector<ProjectGraphNode> &nodes)
@@ -106,11 +102,9 @@ inline void layoutRevisions(ProjectBlock &block, const QVector<ProjectGraphNode>
         block.branch_positions[i] = QPointF(ranked.positions[index].x,
             first_revision_y + ranked.positions[index].y);
     }
-    block.height = vertices.empty() ? project_header_y + 70.0
-        : first_revision_y + ranked.height + 70.0;
 }
 
-inline void place(QVector<ProjectGraphNode> &nodes, double viewport_aspect = 1.7)
+inline void place(QVector<ProjectGraphNode> &nodes, double /*viewport_aspect*/ = 1.7)
 {
     QVector<DatabaseBlock> databases;
     QHash<QString, int> database_index;
@@ -184,7 +178,6 @@ inline void place(QVector<ProjectGraphNode> &nodes, double viewport_aspect = 1.7
     for (DatabaseBlock &database : databases)
     {
         double cursor_x = 0.0;
-        double tallest_project = 0.0;
         for (ProjectBlock &project : database.projects)
         {
             layoutRevisions(project, nodes);
@@ -192,103 +185,51 @@ inline void place(QVector<ProjectGraphNode> &nodes, double viewport_aspect = 1.7
                 cursor_x += project_gap_x;
             database.project_offsets.append(QPointF(cursor_x, 0.0));
             cursor_x += project.width;
-            tallest_project = std::max(tallest_project, project.height);
         }
         database.width = std::max(252.0, cursor_x);
-        database.height = project_header_y + tallest_project;
-        if (database.projects.isEmpty())
-            database.height = project_header_y;
     }
 
     if (databases.isEmpty())
         return;
 
-    // Choose balanced outer shelves rather than a single endlessly widening
-    // strip. The DP discourages both excessive whitespace and orphaned last
-    // rows while preserving the sidebar's stable database order.
-    viewport_aspect = std::max(0.7, std::min(2.7, viewport_aspect));
-    const double target_width = std::max(830.0,
-        std::min(1520.0, 990.0 * std::sqrt(viewport_aspect / 1.4)));
-    const int count = databases.size();
-    QVector<double> best(count + 1, std::numeric_limits<double>::infinity());
-    QVector<int> previous(count + 1, -1);
-    best[0] = 0.0;
-    for (int first = 0; first < count; ++first)
-    {
-        if (!std::isfinite(best.at(first)))
-            continue;
-        double width = 0.0;
-        for (int last = first; last < count; ++last)
-        {
-            width += (last == first ? 0.0 : database_gap_x) + databases.at(last).width;
-            if (width > target_width && last > first)
-                break;
-            const double spare = std::max(0.0, target_width - width) / target_width;
-            const double cost = best.at(first) + 0.22 + spare * spare;
-            if (cost < best.at(last + 1))
-            {
-                best[last + 1] = cost;
-                previous[last + 1] = first;
-            }
-        }
-    }
-    QVector<QPair<int, int>> rows;
-    for (int end = count; end > 0; end = previous.at(end))
-    {
-        const int begin = previous.at(end);
-        if (begin < 0)
-            return;
-        rows.prepend(qMakePair(begin, end));
-    }
+    // All database roots share one layer. Give each complete database group
+    // its own horizontal corridor, then grow every project/revision subtree
+    // downward from that common baseline. Never wrap database groups into
+    // additional rows: a deep history must not push another server card down.
+    double total_width = 0.0;
+    for (const DatabaseBlock &database : databases)
+        total_width += database.width;
+    total_width += database_gap_x * (databases.size() - 1);
 
-    double row_y = 0.0;
-    for (const QPair<int, int> &row : rows)
+    double group_x = -total_width / 2.0;
+    for (const DatabaseBlock &database : databases)
     {
-        double row_width = 0.0;
-        double row_height = 0.0;
-        for (int index = row.first; index < row.second; ++index)
+        nodes[database.node_index].position = QPointF(
+            group_x + database.width / 2.0, 0.0);
+        for (int pi = 0; pi < database.projects.size(); ++pi)
         {
-            row_width += (index == row.first ? 0.0 : database_gap_x)
-                         + databases.at(index).width;
-            row_height = std::max(row_height, databases.at(index).height);
-        }
-        double row_x = -row_width / 2.0;
-        for (int index = row.first; index < row.second; ++index)
-        {
-            const DatabaseBlock &database = databases.at(index);
-            if (index != row.first)
-                row_x += database_gap_x;
-            const double center_x = row_x + database.width / 2.0;
-            nodes[database.node_index].position = QPointF(center_x, -row_y);
-            for (int pi = 0; pi < database.projects.size(); ++pi)
+            const ProjectBlock &project = database.projects.at(pi);
+            const QPointF offset = database.project_offsets.at(pi);
+            // Centre a single narrow project beneath its wider server card.
+            const double project_x = group_x + offset.x()
+                + (database.projects.size() == 1
+                    ? (database.width - project.width) / 2.0 : 0.0);
+            nodes[project.node_index].position = QPointF(
+                project_x + project.width / 2.0, -project_header_y);
+            for (int bi = 0; bi < project.branch_indices.size(); ++bi)
             {
-                const ProjectBlock &project = database.projects.at(pi);
-                const QPointF offset = database.project_offsets.at(pi);
-                // A narrow one-project corridor is centered beneath the
-                // wider server card; wider groups retain their own origin.
-                const double used_width = database.projects.size() == 1
-                    ? project.width : database.width;
-                const double project_x = row_x + offset.x()
-                    + (database.width - used_width) / 2.0;
-                const double project_y = row_y + project_header_y + offset.y();
-                nodes[project.node_index].position = QPointF(
-                    project_x + project.width / 2.0, -project_y);
-                for (int bi = 0; bi < project.branch_indices.size(); ++bi)
-                {
-                    const QPointF position = project.branch_positions.at(bi);
-                    nodes[project.branch_indices.at(bi)].position = QPointF(
-                        project_x + position.x(), -(row_y + offset.y() + position.y()));
-                }
-                for (int ri = 0; ri < project.revision_indices.size(); ++ri)
-                {
-                    const QPointF position = project.revision_positions.at(ri);
-                    nodes[project.revision_indices.at(ri)].position = QPointF(
-                        project_x + position.x(), -(row_y + offset.y() + position.y()));
-                }
+                const QPointF position = project.branch_positions.at(bi);
+                nodes[project.branch_indices.at(bi)].position = QPointF(
+                    project_x + position.x(), -position.y());
             }
-            row_x += database.width;
+            for (int ri = 0; ri < project.revision_indices.size(); ++ri)
+            {
+                const QPointF position = project.revision_positions.at(ri);
+                nodes[project.revision_indices.at(ri)].position = QPointF(
+                    project_x + position.x(), -position.y());
+            }
         }
-        row_y += row_height + database_gap_y;
+        group_x += database.width + database_gap_x;
     }
 }
 }

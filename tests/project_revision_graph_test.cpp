@@ -637,8 +637,8 @@ int main(int argc, char **argv)
         if (!require(placed.position == screenshot_positions.value(placed.id),
                      "input ordering changed the compound placement")) return 1;
 
-    // Placement regression: three independent databases and uneven project
-    // revision histories should not become an infinite horizontal strip.
+    // Placement regression: database roots must share one horizontal layer
+    // even with very uneven project widths and revision history depths.
     QVector<ProjectGraphNode> compound;
     for (int database_index = 0; database_index < 8; ++database_index)
     {
@@ -647,7 +647,7 @@ int main(int argc, char **argv)
         database.id = database_id;
         database.kind = ProjectGraphNode::Kind::Server;
         compound.append(database);
-        const int project_count = database_index == 0 ? 5 : 1;
+        const int project_count = database_index == 0 ? 5 : (database_index == 7 ? 0 : 1);
         for (int project_index = 0; project_index < project_count; ++project_index)
         {
             const QString project_id = QStringLiteral("group:project:db-%1:p-%2")
@@ -672,12 +672,20 @@ int main(int argc, char **argv)
         }
     }
     ProjectGraphPlacement::place(compound, 1.8);
-    int distinct_database_rows = 0;
     QSet<int> database_rows;
+    QSet<int> project_rows;
+    QVector<double> server_x_positions;
+    QHash<QString, QPointF> baseline_positions;
     for (const ProjectGraphNode &placed : compound)
     {
+        baseline_positions.insert(placed.id, placed.position);
         if (placed.kind == ProjectGraphNode::Kind::Server)
+        {
             database_rows.insert(qRound(placed.position.y()));
+            server_x_positions.append(placed.position.x());
+        }
+        if (placed.kind == ProjectGraphNode::Kind::Project)
+            project_rows.insert(qRound(placed.position.y()));
         if (placed.kind == ProjectGraphNode::Kind::Revision)
         {
             for (const QString &parent_id : placed.parents)
@@ -687,9 +695,23 @@ int main(int argc, char **argv)
                             "layout must place all ancestors above descendants")) return 1;
         }
     }
-    distinct_database_rows = database_rows.size();
-    if (!require(distinct_database_rows >= 2 && distinct_database_rows <= 5,
-                 "database layout must wrap into balanced rows")) return 1;
+    if (!require(database_rows.size() == 1 && database_rows.contains(0),
+                 "database cards must share the topmost horizontal layer")) return 1;
+    if (!require(project_rows.size() == 1 && project_rows.contains(-142),
+                 "projects from different servers must share the next layer")) return 1;
+    for (int index = 1; index < server_x_positions.size(); ++index)
+        if (!require(server_x_positions.at(index) - server_x_positions.at(index - 1) >= 252.0,
+                     "database cards are not horizontally ordered and separated")) return 1;
+    // The viewport aspect is no longer allowed to wrap servers onto another
+    // row or otherwise move their cards when the window is resized.
+    ProjectGraphPlacement::place(compound, 0.7);
+    for (const ProjectGraphNode &placed : compound)
+        if (!require(placed.position == baseline_positions.value(placed.id),
+                     "resizing the viewport changed database row placement")) return 1;
+    ProjectGraphPlacement::place(compound, 2.7);
+    for (const ProjectGraphNode &placed : compound)
+        if (!require(placed.position == baseline_positions.value(placed.id),
+                     "wide viewport changed database row placement")) return 1;
     for (int index = 0; index < compound.size(); ++index)
     {
         const ProjectGraphNode &lhs = compound.at(index);
