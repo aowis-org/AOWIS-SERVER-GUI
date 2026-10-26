@@ -623,6 +623,16 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
         LABELS "aowis"
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+    # Independent ranked-DAG layout kernel: no Qt or renderer dependencies.
+    add_executable(aowis-compound-dag-layout-tests
+        tests/compound_dag_layout_test.cpp
+        src/graph/compound_dag_layout.h)
+    target_include_directories(aowis-compound-dag-layout-tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_features(aowis-compound-dag-layout-tests PRIVATE cxx_std_17)
+    add_test(NAME aowis-compound-dag-layout COMMAND aowis-compound-dag-layout-tests)
+    set_tests_properties(aowis-compound-dag-layout PROPERTIES LABELS "aowis")
+
     # Projects DAG navigation uses a QWidget fallback (no bgfx instance needed).
     add_executable(aowis-project-revision-graph-tests
         tests/project_revision_graph_test.cpp
@@ -1371,6 +1381,7 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
     # shows up as "Not Run" in CTest.
     add_custom_target(aowis-tests
         DEPENDS
+            aowis-compound-dag-layout-tests
             aowis-project-revision-graph-tests
             aowis-projects-inspector-dock-tests
             aowis-project-source-reader-tests

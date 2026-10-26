@@ -768,37 +768,10 @@ void ProjectRevisionGraph::paintEvent(QPaintEvent *event)
                     break;
                 }
         QPainterPath path(begin);
-        if (container->kind == ProjectGraphNode::Kind::Server
-            && node.kind == ProjectGraphNode::Kind::Project
-            && std::abs(end.y() - begin.y()) > 350.0)
-        {
-            // A project wrapped to a lower shelf must not have a huge
-            // diagonal connection cutting through the preceding project's
-            // revision cards. Route that edge around the database's left
-            // boundary, sharing a quiet vertical gutter with other shelves.
-            double group_left = node.position.x() - node_width / 2.0;
-            QSet<QString> project_ids;
-            for (const ProjectGraphNode &candidate : this->nodes)
-                if (candidate.kind == ProjectGraphNode::Kind::Project
-                    && candidate.container_id == container->id)
-                {
-                    project_ids.insert(candidate.id);
-                    group_left = qMin(group_left, candidate.position.x() - node_width / 2.0);
-                }
-            for (const ProjectGraphNode &candidate : this->nodes)
-                if (candidate.kind == ProjectGraphNode::Kind::Revision
-                    && project_ids.contains(candidate.project_group_id))
-                    group_left = qMin(group_left, candidate.position.x() - node_width / 2.0);
-            const double gutter_x = group_left - 35.0;
-            const double exit_y = begin.y() + structural_sign * 42.0;
-            const double entry_y = end.y() - structural_sign * 42.0;
-            path.lineTo(QPointF(begin.x(), exit_y));
-            path.lineTo(QPointF(gutter_x, exit_y));
-            path.lineTo(QPointF(gutter_x, entry_y));
-            path.lineTo(QPointF(end.x(), entry_y));
-            path.lineTo(end);
-        }
-        else if (std::abs(begin.x() - end.x()) < 0.01)
+        // A server's project children occupy one sibling rank. Their entire
+        // descendant DAGs are in disjoint corridors, so there is no need for
+        // detours through (or around) an unrelated project's revision cards.
+        if (std::abs(begin.x() - end.x()) < 0.01)
             path.lineTo(end);
         else
         {

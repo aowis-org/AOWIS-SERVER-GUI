@@ -1,15 +1,16 @@
 #pragma once
 
 #include "tabs/project_revision_graph.h"
+#include "graph/compound_dag_layout.h"
 
 #include <QHash>
 #include <QPointF>
+#include <QSet>
 #include <QString>
 #include <QVector>
 
 #include <algorithm>
 #include <cmath>
-#include <functional>
 #include <limits>
 
 // Deterministic, compound layout for Database -> Project -> revision DAG.
@@ -23,13 +24,10 @@ constexpr double card_width = 224.0;
 constexpr double revision_pitch_x = 250.0;
 constexpr double revision_pitch_y = 155.0;
 constexpr double project_gap_x = 48.0;
-constexpr double project_gap_y = 80.0;
 constexpr double database_gap_x = 84.0;
 constexpr double database_gap_y = 92.0;
 constexpr double project_header_y = 142.0;
 constexpr double first_revision_y = 286.0;
-constexpr double branch_row_spacing = 148.0;
-constexpr double branch_pitch_x = 250.0;
 
 struct ProjectBlock
 {
@@ -47,157 +45,69 @@ struct DatabaseBlock
     int node_index = -1;
     QVector<ProjectBlock> projects;
     QVector<QPointF> project_offsets;
-    QHash<int, double> shelf_widths;
     double width = 252.0;
     double height = project_header_y + 70.0;
 };
 
 inline void layoutRevisions(ProjectBlock &block, const QVector<ProjectGraphNode> &nodes)
 {
-    const int count = block.revision_indices.size();
-    // Branch cards label live branch HEADs after the revision DAG; they
-    // never affect ancestry depth or the revision ordering.
-    if (count == 0)
+    // Layout a project as one indivisible compound DAG. Revision ancestry and
+    // branch-to-HEAD annotations are separate edges, but both participate in
+    // rank assignment and crossing reduction. Branches whose HEAD has not
+    // been loaded remain visible on a final fallback rank.
+    std::vector<AowisGraphLayout::Vertex> vertices;
+    vertices.reserve(std::size_t(block.revision_indices.size() + block.branch_indices.size()));
+    for (int index : block.revision_indices)
     {
-        block.width = std::max(card_width, card_width
-            + (block.branch_indices.size() - 1) * branch_pitch_x);
-        const double branch_y = first_revision_y;
-        block.height = block.branch_indices.isEmpty() ? project_header_y + 70.0
-            : branch_y + 60.0;
-        block.branch_positions.resize(block.branch_indices.size());
-        for (int i = 0; i < block.branch_indices.size(); ++i)
-            block.branch_positions[i] = QPointF(block.width / 2.0
-                + (i - (block.branch_indices.size() - 1) / 2.0) * branch_pitch_x, branch_y);
-        return;
+        const ProjectGraphNode &node = nodes.at(index);
+        AowisGraphLayout::Vertex vertex;
+        vertex.id = node.id.toStdString();
+        for (const QString &parent : node.parents)
+            vertex.parents.push_back(parent.toStdString());
+        vertices.push_back(vertex);
     }
 
-    QHash<QString, int> revision_index;
-    for (int index = 0; index < count; ++index)
-        revision_index.insert(nodes.at(block.revision_indices.at(index)).id, index);
+    const AowisGraphLayout::RankedDag revision_layout =
+        AowisGraphLayout::layoutRankedDag(vertices, card_width, revision_pitch_x,
+                                         revision_pitch_y);
+    int fallback_rank = 0;
+    for (int rank : revision_layout.ranks)
+        fallback_rank = std::max(fallback_rank, rank + 1);
 
-    QVector<int> depths(count, -1);
-    QVector<bool> visiting(count, false);
-    std::function<int(int)> depthOf = [&](int index) -> int
+    QSet<QString> loaded_revisions;
+    for (int index : block.revision_indices)
+        loaded_revisions.insert(nodes.at(index).id);
+    for (int index : block.branch_indices)
     {
-        if (depths.at(index) >= 0)
-            return depths.at(index);
-        if (visiting.at(index))
-            return 0; // tolerate malformed remote ancestry without recursion loops
-        visiting[index] = true;
-        int depth = 0;
-        const ProjectGraphNode &node = nodes.at(block.revision_indices.at(index));
-        for (const QString &parent_id : node.parents)
-        {
-            const int parent_index = revision_index.value(parent_id, -1);
-            if (parent_index >= 0 && parent_index != index)
-                depth = std::max(depth, depthOf(parent_index) + 1);
-        }
-        visiting[index] = false;
-        depths[index] = depth;
-        return depth;
-    };
-
-    int max_depth = 0;
-    for (int index = 0; index < count; ++index)
-        max_depth = std::max(max_depth, depthOf(index));
-
-    QVector<QVector<int>> layers(max_depth + 1);
-    for (int index = 0; index < count; ++index)
-        layers[depths.at(index)].append(index);
-
-    // Deterministic starting order: a fetch's arrival order must not cause
-    // unrelated nodes to jump after catalogue refresh.
-    for (QVector<int> &layer : layers)
-        std::sort(layer.begin(), layer.end(), [&](int lhs, int rhs)
-        {
-            return nodes.at(block.revision_indices.at(lhs)).id
-                < nodes.at(block.revision_indices.at(rhs)).id;
-        });
-
-    QVector<QVector<int>> parents(count);
-    QVector<QVector<int>> children(count);
-    for (int index = 0; index < count; ++index)
-    {
-        const ProjectGraphNode &node = nodes.at(block.revision_indices.at(index));
-        for (const QString &parent_id : node.parents)
-        {
-            const int parent_index = revision_index.value(parent_id, -1);
-            if (parent_index < 0 || parent_index == index
-                || depths.at(parent_index) >= depths.at(index))
-                continue;
-            parents[index].append(parent_index);
-            children[parent_index].append(index);
-        }
+        const ProjectGraphNode &node = nodes.at(index);
+        AowisGraphLayout::Vertex vertex;
+        vertex.id = node.id.toStdString();
+        // A branch label occupies the layer immediately beneath the HEAD
+        // (not an unrelated bottom row), respecting the project DAG.
+        const bool head_loaded = loaded_revisions.contains(node.head_revision_id);
+        if (head_loaded)
+            vertex.parents.push_back(node.head_revision_id.toStdString());
+        vertex.minimum_rank = head_loaded ? 0 : fallback_rank;
+        vertices.push_back(vertex);
     }
 
-    QVector<double> order(count, 0.0);
-    const auto updateOrders = [&]()
-    {
-        for (const QVector<int> &layer : layers)
-            for (int rank = 0; rank < layer.size(); ++rank)
-                order[layer.at(rank)] = rank - (layer.size() - 1) / 2.0;
-    };
-    updateOrders();
-
-    // Sugiyama-style alternating median/barycentre sweeps. Each depth has a
-    // unique slot, so revisions at one depth can never overlap. Parents and
-    // children pull nearby nodes toward each other, reducing crossings.
-    for (int sweep = 0; sweep < 6; ++sweep)
-    {
-        const bool forward = (sweep % 2 == 0);
-        for (int offset = 0; offset < layers.size(); ++offset)
-        {
-            const int depth = forward ? offset : layers.size() - offset - 1;
-            QVector<int> &layer = layers[depth];
-            const auto scoreOf = [&](int index)
-            {
-                const QVector<int> &neighbours = forward ? parents.at(index) : children.at(index);
-                if (neighbours.isEmpty())
-                    return order.at(index);
-                double sum = 0.0;
-                for (int neighbour : neighbours)
-                    sum += order.at(neighbour);
-                return sum / neighbours.size();
-            };
-            // Preserve previous order as a tie-breaker to prevent layout jitter.
-            std::stable_sort(layer.begin(), layer.end(), [&](int lhs, int rhs)
-            {
-                const double lhs_score = scoreOf(lhs);
-                const double rhs_score = scoreOf(rhs);
-                if (std::abs(lhs_score - rhs_score) > 0.000001)
-                    return lhs_score < rhs_score;
-                return order.at(lhs) < order.at(rhs);
-            });
-            updateOrders();
-        }
-    }
-
-    int maximum_layer_width = 1;
-    for (const QVector<int> &layer : layers)
-        maximum_layer_width = std::max(maximum_layer_width, int(layer.size()));
-    maximum_layer_width = std::max(maximum_layer_width, int(block.branch_indices.size()));
-    block.width = card_width + (maximum_layer_width - 1) * revision_pitch_x;
-    const double last_revision_y = first_revision_y + max_depth * revision_pitch_y;
-    const double branch_y = last_revision_y + branch_row_spacing;
-    block.height = last_revision_y + 54.0;
-    if (!block.branch_indices.isEmpty())
-        block.height = branch_y + 54.0;
+    const AowisGraphLayout::RankedDag ranked =
+        AowisGraphLayout::layoutRankedDag(vertices, card_width, revision_pitch_x,
+                                         revision_pitch_y);
+    block.width = std::max(card_width, ranked.width);
+    block.revision_positions.resize(block.revision_indices.size());
+    for (int i = 0; i < block.revision_indices.size(); ++i)
+        block.revision_positions[i] = QPointF(ranked.positions[std::size_t(i)].x,
+            first_revision_y + ranked.positions[std::size_t(i)].y);
     block.branch_positions.resize(block.branch_indices.size());
     for (int i = 0; i < block.branch_indices.size(); ++i)
-        block.branch_positions[i] = QPointF(block.width / 2.0
-            + (i - (block.branch_indices.size() - 1) / 2.0) * branch_pitch_x, branch_y);
-    block.revision_positions.resize(count);
-    for (int depth = 0; depth < layers.size(); ++depth)
     {
-        const QVector<int> &layer = layers.at(depth);
-        for (int slot = 0; slot < layer.size(); ++slot)
-        {
-            const double centered_slot = slot - (layer.size() - 1) / 2.0;
-            block.revision_positions[layer.at(slot)] = QPointF(
-                block.width / 2.0 + centered_slot * revision_pitch_x,
-                first_revision_y + depth * revision_pitch_y);
-        }
+        const std::size_t index = std::size_t(block.revision_indices.size() + i);
+        block.branch_positions[i] = QPointF(ranked.positions[index].x,
+            first_revision_y + ranked.positions[index].y);
     }
+    block.height = vertices.empty() ? project_header_y + 70.0
+        : first_revision_y + ranked.height + 70.0;
 }
 
 inline void place(QVector<ProjectGraphNode> &nodes, double viewport_aspect = 1.7)
@@ -256,35 +166,36 @@ inline void place(QVector<ProjectGraphNode> &nodes, double viewport_aspect = 1.7
             databases[match.first].projects[match.second].revision_indices.append(index);
     }
 
-    // Pack complete project DAGs into shelves within their owning database.
-    // A long history consumes height, not unused horizontal branch lanes.
-    constexpr double max_project_shelf_width = 1170.0;
+    // Stable project order across catalogue refreshes irrespective of backend
+    // response ordering. All branch/revision indices have already been bound
+    // to their owning ProjectBlock, so the blocks can now be reordered safely.
+    for (DatabaseBlock &database : databases)
+        std::sort(database.projects.begin(), database.projects.end(),
+            [&](const ProjectBlock &lhs, const ProjectBlock &rhs)
+            {
+                return nodes.at(lhs.node_index).id < nodes.at(rhs.node_index).id;
+            });
+
+    // A database is a strict compound parent. Its projects are SIBLINGS in
+    // one rank, with mutually disjoint x corridors for every descendant.
+    // Never wrap projects of the same server into vertical shelves: a server
+    // -> project edge would necessarily cross another project's subtree.
+    // Wrapping happens only at the outer database-group boundary.
     for (DatabaseBlock &database : databases)
     {
         double cursor_x = 0.0;
-        double cursor_y = 0.0;
-        double shelf_height = 0.0;
-        double used_width = 0.0;
+        double tallest_project = 0.0;
         for (ProjectBlock &project : database.projects)
         {
             layoutRevisions(project, nodes);
-            if (cursor_x > 0.0
-                && cursor_x + project_gap_x + project.width > max_project_shelf_width)
-            {
-                cursor_y += shelf_height + project_gap_y;
-                cursor_x = 0.0;
-                shelf_height = 0.0;
-            }
             if (cursor_x > 0.0)
                 cursor_x += project_gap_x;
-            database.project_offsets.append(QPointF(cursor_x, cursor_y));
+            database.project_offsets.append(QPointF(cursor_x, 0.0));
             cursor_x += project.width;
-            database.shelf_widths[int(cursor_y)] = cursor_x;
-            used_width = std::max(used_width, cursor_x);
-            shelf_height = std::max(shelf_height, project.height);
+            tallest_project = std::max(tallest_project, project.height);
         }
-        database.width = std::max(252.0, used_width);
-        database.height = project_header_y + cursor_y + shelf_height;
+        database.width = std::max(252.0, cursor_x);
+        database.height = project_header_y + tallest_project;
         if (database.projects.isEmpty())
             database.height = project_header_y;
     }
@@ -353,11 +264,12 @@ inline void place(QVector<ProjectGraphNode> &nodes, double viewport_aspect = 1.7
             {
                 const ProjectBlock &project = database.projects.at(pi);
                 const QPointF offset = database.project_offsets.at(pi);
-                // Center each shelf inside its database block, including a
-                // one-project (224px) shelf under a wider server card (252px).
-                const double shelf_width = database.shelf_widths.value(int(offset.y()), database.width);
+                // A narrow one-project corridor is centered beneath the
+                // wider server card; wider groups retain their own origin.
+                const double used_width = database.projects.size() == 1
+                    ? project.width : database.width;
                 const double project_x = row_x + offset.x()
-                    + (database.width - shelf_width) / 2.0;
+                    + (database.width - used_width) / 2.0;
                 const double project_y = row_y + project_header_y + offset.y();
                 nodes[project.node_index].position = QPointF(
                     project_x + project.width / 2.0, -project_y);

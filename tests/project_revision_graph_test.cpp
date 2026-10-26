@@ -572,6 +572,71 @@ int main(int argc, char **argv)
         if (!require(std::abs(placed.position.x() - straight.first().position.x()) < 0.01,
                      "single-chain graph is not horizontally centred")) return 1;
 
+    // The bug report's shape: one server, TWO projects, one revision each,
+    // with three and two branches sharing the respective HEADs. Projects
+    // must be siblings on the same y rank, and *all* descendants must stay
+    // inside non-overlapping horizontal corridors. No edge can require a
+    // round-the-other-project gutter route when these invariants hold.
+    QVector<ProjectGraphNode> screenshot_case;
+    ProjectGraphNode screenshot_db = server_card;
+    screenshot_db.id = QStringLiteral("group:server:screenshot");
+    screenshot_case.append(screenshot_db);
+    for (int pi = 0; pi < 2; ++pi)
+    {
+        const QString project_id = QStringLiteral("group:project:screenshot-%1").arg(pi);
+        ProjectGraphNode project = project_card;
+        project.id = project_id;
+        project.container_id = screenshot_db.id;
+        screenshot_case.append(project);
+        ProjectGraphNode revision = revision_card;
+        revision.id = QStringLiteral("revision-screenshot-%1").arg(pi);
+        revision.project_group_id = project_id;
+        revision.container_id = project_id;
+        screenshot_case.append(revision);
+        for (int bi = 0; bi < (pi == 0 ? 3 : 2); ++bi)
+        {
+            ProjectGraphNode branch = branch_card;
+            branch.id = QStringLiteral("group:branch:screenshot-%1-%2").arg(pi).arg(bi);
+            branch.container_id = project_id;
+            branch.project_group_id = project_id;
+            branch.head_revision_id = revision.id;
+            screenshot_case.append(branch);
+        }
+    }
+    ProjectGraphPlacement::place(screenshot_case, 1.8);
+    QHash<QString, QPointF> screenshot_positions;
+    for (const ProjectGraphNode &placed : screenshot_case)
+        screenshot_positions.insert(placed.id, placed.position);
+    const QString first_project_id = QStringLiteral("group:project:screenshot-0");
+    const QString second_project_id = QStringLiteral("group:project:screenshot-1");
+    const QPointF first_project = screenshot_positions.value(first_project_id);
+    const QPointF second_project = screenshot_positions.value(second_project_id);
+    if (!require(std::abs(first_project.y() - second_project.y()) < 0.01
+                 && first_project.x() < second_project.x(),
+                 "projects under one server must share a sibling layer")) return 1;
+    double first_right = first_project.x() + 112.0;
+    double second_left = second_project.x() - 112.0;
+    for (const ProjectGraphNode &placed : screenshot_case)
+    {
+        if (placed.project_group_id == first_project_id)
+            first_right = std::max(first_right, placed.position.x() + 112.0);
+        if (placed.project_group_id == second_project_id)
+            second_left = std::min(second_left, placed.position.x() - 112.0);
+        if (placed.kind == ProjectGraphNode::Kind::Branch)
+            if (!require(placed.position.y() <
+                    screenshot_positions.value(placed.head_revision_id).y(),
+                    "branch card not ranked below its HEAD")) return 1;
+    }
+    if (!require(first_right + 40.0 < second_left,
+                 "adjacent project DAG corridors overlap")) return 1;
+    // Response order is not geometric order: moving the second project's
+    // records to the front must not change any positioned ID.
+    std::reverse(screenshot_case.begin(), screenshot_case.end());
+    ProjectGraphPlacement::place(screenshot_case, 1.8);
+    for (const ProjectGraphNode &placed : screenshot_case)
+        if (!require(placed.position == screenshot_positions.value(placed.id),
+                     "input ordering changed the compound placement")) return 1;
+
     // Placement regression: three independent databases and uneven project
     // revision histories should not become an infinite horizontal strip.
     QVector<ProjectGraphNode> compound;
