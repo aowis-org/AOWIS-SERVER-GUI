@@ -142,6 +142,16 @@ int main(int argc, char **argv)
     if (!require(!graph->revisionViewportPosition(first_graph_id).isNull()
                  && !graph->revisionViewportPosition(second_graph_id).isNull(),
                  "aggregate graph omitted a source or merged same-hash revisions")) return 1;
+    // Both servers contain the same immutable revision hash, but their
+    // branch references are different source/project-scoped HEADs. The
+    // reference decoration belongs to its revision, not another graph node.
+    const QString first_branch = QStringLiteral("group:branch:source-a|p1:main");
+    const QString second_branch = QStringLiteral("group:branch:source-b|p1:main");
+    if (!require(graph->nodeViewportPosition(first_branch)
+                     == graph->revisionViewportPosition(first_graph_id)
+                 && graph->nodeViewportPosition(second_branch)
+                     == graph->revisionViewportPosition(second_graph_id),
+                 "branch HEAD decorations did not follow their own revision/source")) return 1;
     const QPointF first_server = graph->nodeViewportPosition(QStringLiteral("group:server:source-a"));
     const QPointF second_server = graph->nodeViewportPosition(QStringLiteral("group:server:source-b"));
     const QPointF first_project = graph->nodeViewportPosition(

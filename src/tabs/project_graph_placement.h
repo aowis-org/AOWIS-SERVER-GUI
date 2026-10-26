@@ -28,14 +28,11 @@ constexpr double project_gap_x = 48.0;
 constexpr double database_gap_x = 84.0;
 constexpr double project_header_y = 142.0;
 constexpr double first_graph_layer_y = 286.0;
-constexpr double branch_label_gap_x = 28.0;
 
 struct ProjectBlock
 {
     int node_index = -1;
     QVector<int> revision_indices;
-    QVector<int> branch_indices;
-    QVector<QPointF> branch_positions;
     QVector<QPointF> revision_positions;
     double width = card_width;
     double ancestry_center_x = card_width / 2.0;
@@ -80,39 +77,29 @@ inline void layoutRevisions(ProjectBlock &block, const QVector<ProjectGraphNode>
         block.revision_positions[i] = QPointF(ranked.positions[std::size_t(i)].x,
             first_graph_layer_y + ranked.positions[std::size_t(i)].y);
 
-    // A branch is a named pointer, not part of the revision DAG. Keep its
-    // clickable card next to its HEAD (at the *same* depth) in a reserved side
-    // lane. Multiple aliases on one HEAD/rank receive independent slots.
-    // Labels without a loaded HEAD remain accessible at the first history row.
-    QHash<int, int> labels_per_rank;
-    QHash<int, int> slot_per_rank;
-    QVector<int> branch_ranks;
-    branch_ranks.reserve(block.branch_indices.size());
-    int maximum_labels = 0;
-    for (int index : block.branch_indices)
+    // The extra height belongs to the immutable revision card itself: HEAD
+    // badges are not independent layout vertices or side-lane cards. Grow the
+    // rank separation if a revision carries several branch references.
+    QHash<int, double> layer_height;
+    int maximum_rank = 0;
+    for (int i = 0; i < block.revision_indices.size(); ++i)
     {
-        const QString head_id = nodes.at(index).head_revision_id;
-        const int revision_index = revision_by_id.value(head_id, -1);
-        const int rank = revision_index >= 0
-            ? ranked.ranks[std::size_t(revision_index)] : 0;
-        branch_ranks.append(rank);
-        const int count = ++labels_per_rank[rank];
-        maximum_labels = std::max(maximum_labels, count);
+        const int rank = ranked.ranks[std::size_t(i)];
+        const ProjectGraphNode &node = nodes.at(block.revision_indices.at(i));
+        const double height = 84.0 + node.heads.size() * 24.0;
+        layer_height[rank] = std::max(layer_height.value(rank, 84.0), height);
+        maximum_rank = std::max(maximum_rank, rank);
     }
-    block.width = ancestry_width;
-    if (maximum_labels > 0)
-        block.width += branch_label_gap_x + card_width
-            + (maximum_labels - 1) * revision_pitch_x;
-    block.branch_positions.resize(block.branch_indices.size());
-    for (int i = 0; i < block.branch_indices.size(); ++i)
-    {
-        const int rank = branch_ranks.at(i);
-        const int slot = slot_per_rank[rank]++;
-        block.branch_positions[i] = QPointF(
-            ancestry_width + branch_label_gap_x + card_width / 2.0
-                + slot * revision_pitch_x,
-            first_graph_layer_y + rank * revision_pitch_y);
-    }
+    QVector<double> layer_center(maximum_rank + 1, 0.0);
+    for (int rank = 1; rank <= maximum_rank; ++rank)
+        layer_center[rank] = layer_center[rank - 1]
+            + std::max(revision_pitch_y, (layer_height.value(rank - 1, 84.0)
+              + layer_height.value(rank, 84.0)) / 2.0 + 44.0);
+    const double first_rank_y = std::max(first_graph_layer_y,
+        project_header_y + (68.0 + layer_height.value(0, 84.0)) / 2.0 + 44.0);
+    for (int i = 0; i < block.revision_indices.size(); ++i)
+        block.revision_positions[i].setY(first_rank_y
+            + layer_center.at(ranked.ranks[std::size_t(i)]));
 }
 
 inline void place(QVector<ProjectGraphNode> &nodes, double /*viewport_aspect*/ = 1.7)
@@ -145,21 +132,6 @@ inline void place(QVector<ProjectGraphNode> &nodes, double /*viewport_aspect*/ =
         project_index.insert(node.id, qMakePair(db, databases.at(db).projects.size()));
         databases[db].projects.append(project);
     }
-    for (int index = 0; index < nodes.size(); ++index)
-    {
-        const ProjectGraphNode &node = nodes.at(index);
-        if (node.kind != ProjectGraphNode::Kind::Branch)
-            continue;
-        const QPair<int, int> match = project_index.value(node.container_id, qMakePair(-1, -1));
-        if (match.first >= 0)
-            databases[match.first].projects[match.second].branch_indices.append(index);
-    }
-    // Stable branch-card order even when the backend returns branches in a
-    // different order on the next catalogue refresh.
-    for (DatabaseBlock &database : databases)
-        for (ProjectBlock &project : database.projects)
-            std::sort(project.branch_indices.begin(), project.branch_indices.end(),
-                [&](int lhs, int rhs) { return nodes.at(lhs).id < nodes.at(rhs).id; });
     for (int index = 0; index < nodes.size(); ++index)
     {
         const ProjectGraphNode &node = nodes.at(index);
@@ -215,8 +187,7 @@ inline void place(QVector<ProjectGraphNode> &nodes, double /*viewport_aspect*/ =
     double group_x = -total_width / 2.0;
     for (const DatabaseBlock &database : databases)
     {
-        // Centre the database over its *project roots*, not over the branch
-        // label side lanes, so straight ancestry chains remain straight.
+        // Center the database over its project revision corridors.
         double left_project_x = 0.0;
         double right_project_x = 0.0;
         for (int pi = 0; pi < database.projects.size(); ++pi)
@@ -239,12 +210,6 @@ inline void place(QVector<ProjectGraphNode> &nodes, double /*viewport_aspect*/ =
                     ? (database.width - project.width) / 2.0 : 0.0);
             nodes[project.node_index].position = QPointF(
                 project_x + project.ancestry_center_x, -project_header_y);
-            for (int bi = 0; bi < project.branch_indices.size(); ++bi)
-            {
-                const QPointF position = project.branch_positions.at(bi);
-                nodes[project.branch_indices.at(bi)].position = QPointF(
-                    project_x + position.x(), -position.y());
-            }
             for (int ri = 0; ri < project.revision_indices.size(); ++ri)
             {
                 const QPointF position = project.revision_positions.at(ri);

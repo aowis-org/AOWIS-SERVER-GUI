@@ -15,24 +15,31 @@
 #include "map/core/map_zoom_animation.h"
 
 // GUI-only graph data. No database IDs are inferred from these preview labels.
+struct ProjectGraphBranchHead
+{
+    QString id;   // Stable source-scoped branch ID.
+    QString name; // User-chosen branch name.
+    bool operator==(const ProjectGraphBranchHead &other) const
+    {
+        return id == other.id && name == other.name;
+    }
+};
+
 struct ProjectGraphNode
 {
-    enum class Kind { Revision, Project, Branch, Server };
+    enum class Kind { Revision, Project, Server };
     QString id;
     QString title;
     QString branch;
     QString display_id;
-    QString display_branch;
     QStringList parents;
     QStringList tags;
-    QString head_branch;
     QPointF position;
     Kind kind = Kind::Revision;
     // Structural hierarchy, separate from immutable revision ancestry.
     QString container_id;
     QString project_group_id;
-    QString branch_id; // Stable branch identity for revision badges.
-    QString head_revision_id; // Structural branch-to-HEAD link; not DAG ancestry.
+    QVector<ProjectGraphBranchHead> heads; // Branch refs attached to this revision, NOT DAG nodes.
 };
 
 class QFocusEvent;
@@ -73,7 +80,7 @@ public:
 
 signals:
     void revisionActivated(const QString &revision_id);
-    void branchActivated(const QString &branch_name);
+    void branchActivated(const QString &branch_id);
     void serverActivated(const QString &server_id);
     void projectActivated(const QString &project_id);
 
@@ -106,6 +113,7 @@ private:
     void scheduleInitialFit();
     QPointF mapToGraph(const QPointF &point) const;
     QRectF nodeRect(const ProjectGraphNode &node) const;
+    QRectF branchLabelRect(const ProjectGraphNode &node, int index) const;
     void clampCamera();
     const ProjectGraphNode *hitNode(const QPointF &point) const;
     void startNavigation();

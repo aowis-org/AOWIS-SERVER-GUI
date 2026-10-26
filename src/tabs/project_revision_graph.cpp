@@ -21,13 +21,13 @@
 #include <functional>
 #include <limits>
 #include <QHash>
+#include <QMap>
 
 namespace
 {
 constexpr double node_width = 224.0;
 constexpr double node_height = 84.0;
 constexpr double project_node_height = 68.0;
-constexpr double branch_node_height = 62.0;
 constexpr double server_node_width = 252.0;
 constexpr double server_node_height = 76.0;
 constexpr int frame_interval_ms = 16;
@@ -144,7 +144,7 @@ void ProjectRevisionGraph::rebuildDisplayNodes()
 
         for (const ProjectGraphNode &head : this->source_nodes)
         {
-            if (head.head_branch.isEmpty())
+            if (head.kind != ProjectGraphNode::Kind::Revision || head.heads.isEmpty())
                 continue;
             QSet<QString> visited;
             std::function<void(const QString &)> visit;
@@ -153,7 +153,7 @@ void ProjectRevisionGraph::rebuildDisplayNodes()
                 if (visited.contains(id) || !by_id.contains(id))
                     return;
                 visited.insert(id);
-                ++descendant_head_counts[id];
+                descendant_head_counts[id] += head.heads.size();
                 for (const QString &parent : by_id.value(id)->parents)
                     visit(parent);
             };
@@ -167,7 +167,7 @@ void ProjectRevisionGraph::rebuildDisplayNodes()
                 visible.insert(node.id);
                 continue;
             }
-            if (!node.head_branch.isEmpty() || this->expanded_revisions.contains(node.id))
+            if (!node.heads.isEmpty() || this->expanded_revisions.contains(node.id))
                 visible.insert(node.id);
             const int count = descendant_head_counts.value(node.id);
             if (count < 2)
@@ -259,21 +259,35 @@ void ProjectRevisionGraph::rebuildDisplayNodes()
             }
         }
 
-        // Repack remaining nodes and folded-history markers so hiding ancestry
-        // does not leave the full graph's large empty vertical gaps behind.
+        // Compress hidden levels while respecting variable card heights:
+        // several branch HEAD labels may make a revision taller than 155px.
         QVector<double> levels;
+        QMap<double, double> level_heights;
         for (const ProjectGraphNode &node : this->nodes)
+        {
             levels.append(node.position.y());
+            level_heights[node.position.y()] = qMax(level_heights.value(node.position.y(), 0.0),
+                                                    nodeRect(node).height());
+        }
         for (const Omission &omission : this->omissions)
+        {
             levels.append(omission.position.y());
+            level_heights[omission.position.y()] = qMax(level_heights.value(omission.position.y(), 0.0),
+                                                        58.0);
+        }
         std::sort(levels.begin(), levels.end());
         levels.erase(std::unique(levels.begin(), levels.end()), levels.end());
+        QVector<double> centres(levels.size(), 0.0);
+        for (int i = 1; i < levels.size(); ++i)
+            centres[i] = centres[i - 1] + qMax(155.0,
+                (level_heights.value(levels.at(i - 1), 84.0)
+                 + level_heights.value(levels.at(i), 84.0)) / 2.0 + 44.0);
         for (ProjectGraphNode &node : this->nodes)
-            node.position.setY(double(std::lower_bound(levels.begin(), levels.end(),
-                node.position.y()) - levels.begin()) * 155.0);
+            node.position.setY(centres.at(int(std::lower_bound(levels.begin(), levels.end(),
+                node.position.y()) - levels.begin())));
         for (Omission &omission : this->omissions)
-            omission.position.setY(double(std::lower_bound(levels.begin(), levels.end(),
-                omission.position.y()) - levels.begin()) * 155.0);
+            omission.position.setY(centres.at(int(std::lower_bound(levels.begin(), levels.end(),
+                omission.position.y()) - levels.begin())));
     }
 
     // The project connects to the oldest visible revision roots, not HEAD.
@@ -295,12 +309,6 @@ void ProjectRevisionGraph::rebuildDisplayNodes()
         if (node.kind == ProjectGraphNode::Kind::Revision)
             node.container_id = anchored_revisions.contains(node.id)
                 ? QString() : node.project_group_id;
-        // Loaded branches belong visually to their HEAD, not to the project
-        // ancestry chain. An unresolved branch remains attached to the
-        // project, so its card is still discoverable and clickable.
-        if (node.kind == ProjectGraphNode::Kind::Branch
-            && visible.contains(node.head_revision_id))
-            node.container_id.clear();
     }
 
     // Reflect positions, not the painter transform: labels and click targets
@@ -425,12 +433,10 @@ void ProjectRevisionGraph::setNodes(const QVector<ProjectGraphNode> &nodes)
             const ProjectGraphNode &new_node = nodes.at(i);
             if (old_node.id != new_node.id || old_node.position != new_node.position
                 || old_node.parents != new_node.parents
-                || old_node.head_branch != new_node.head_branch
+                || old_node.heads != new_node.heads
                 || old_node.kind != new_node.kind
                 || old_node.container_id != new_node.container_id
-                || old_node.project_group_id != new_node.project_group_id
-                || old_node.branch_id != new_node.branch_id
-                || old_node.head_revision_id != new_node.head_revision_id)
+                || old_node.project_group_id != new_node.project_group_id)
             {
                 same_layout = false;
                 break;
@@ -520,7 +526,7 @@ void ProjectRevisionGraph::setSelection(const QString &revision_id)
             bool revealed = false;
             for (const ProjectGraphNode &head : this->source_nodes)
             {
-                if (head.head_branch.isEmpty()) continue;
+                if (head.kind != ProjectGraphNode::Kind::Revision || head.heads.isEmpty()) continue;
                 for (const QString &parent_id : head.parents)
                 {
                     QSet<QString> visited;
@@ -543,10 +549,16 @@ QRectF ProjectRevisionGraph::nodeRect(const ProjectGraphNode &node) const
         ? server_node_width : node_width;
     const double height = node.kind == ProjectGraphNode::Kind::Server
         ? server_node_height : node.kind == ProjectGraphNode::Kind::Project
-            ? project_node_height : node.kind == ProjectGraphNode::Kind::Branch
-                ? branch_node_height : node_height;
+            ? project_node_height : node_height + node.heads.size() * 24.0;
     return QRectF(node.position.x() - width / 2.0,
                   node.position.y() - height / 2.0, width, height);
+}
+
+QRectF ProjectRevisionGraph::branchLabelRect(const ProjectGraphNode &node, int index) const
+{
+    const QRectF card = nodeRect(node);
+    return QRectF(card.left() + 14.0, card.top() + 68.0 + 24.0 * index,
+                  card.width() - 28.0, 20.0);
 }
 
 QPointF ProjectRevisionGraph::mapToGraph(const QPointF &point) const
@@ -572,6 +584,14 @@ QPointF ProjectRevisionGraph::nodeViewportPosition(const QString &id) const
     for (const ProjectGraphNode &node : this->nodes)
         if (node.id == id)
             return graphToViewport(node.position);
+    if (id.startsWith(QStringLiteral("group:branch:")))
+    {
+        const QString branch_id = id.mid(QStringLiteral("group:branch:").size());
+        for (const ProjectGraphNode &node : this->nodes)
+            for (const ProjectGraphBranchHead &head : node.heads)
+                if (head.id == branch_id)
+                    return graphToViewport(node.position);
+    }
     return QPointF();
 }
 
@@ -767,7 +787,7 @@ void ProjectRevisionGraph::paintEvent(QPaintEvent *event)
         const ProjectGraphNode *container = visible_by_id.value(node.container_id, nullptr);
         if (container == nullptr)
             continue;
-        // Only branches with unresolved HEADs retain a project attachment.
+        // Branch names are decorations within the revision cards.
         const QRectF start_box = nodeRect(*container);
         const QRectF end_box = nodeRect(node);
         const QPointF begin(container->position.x(), container->position.y()
@@ -819,33 +839,6 @@ void ProjectRevisionGraph::paintEvent(QPaintEvent *event)
         painter.drawPath(path);
     }
 
-    // Draw short lateral pointers from HEAD revisions to branch labels on
-    // the same history row. They are not history edges or extra DAG layers.
-    for (const ProjectGraphNode &node : this->nodes)
-    {
-        if (node.kind != ProjectGraphNode::Kind::Branch || node.head_revision_id.isEmpty())
-            continue;
-        const ProjectGraphNode *head = visible_by_id.value(node.head_revision_id, nullptr);
-        if (head == nullptr)
-            continue;
-        const bool label_to_right = node.position.x() >= head->position.x();
-        const QPointF begin(head->position.x()
-            + (label_to_right ? node_width / 2.0 : -node_width / 2.0),
-            head->position.y());
-        const QPointF end(node.position.x()
-            + (label_to_right ? -node_width / 2.0 : node_width / 2.0),
-            node.position.y());
-        QPainterPath path(begin);
-        if (std::abs(begin.y() - end.y()) < 0.01)
-            path.lineTo(end);
-        else
-            path.cubicTo(begin + QPointF((end.x() - begin.x()) * 0.35, 0),
-                         end - QPointF((end.x() - begin.x()) * 0.35, 0), end);
-        painter.setPen(QPen(tint(QColor(57, 184, 145), 190), 2, Qt::DashLine, Qt::RoundCap));
-        painter.setBrush(Qt::NoBrush);
-        painter.drawPath(path);
-    }
-
     // Fold markers preserve the oldest -> newest visual order. A collapse
     // never changes the underlying revision parent edges or HEAD pointers.
     for (const Omission &omission : this->omissions)
@@ -865,10 +858,10 @@ void ProjectRevisionGraph::paintEvent(QPaintEvent *event)
             painter.drawPath(path);
         };
         if (parent != nullptr)
-            draw_segment(parent->position + QPointF(0, sign * node_height / 2.0),
+            draw_segment(parent->position + QPointF(0, sign * nodeRect(*parent).height() / 2.0),
                          omission.position - QPointF(0, sign * 29.0));
         draw_segment(omission.position + QPointF(0, sign * 29.0),
-                     child->position - QPointF(0, sign * node_height / 2.0));
+                     child->position - QPointF(0, sign * nodeRect(*child).height() / 2.0));
     }
 
     // Revision ancestry remains based on immutable parent IDs. Render the
@@ -881,8 +874,8 @@ void ProjectRevisionGraph::paintEvent(QPaintEvent *event)
             if (parent == nullptr)
                 continue;
             const double sign = this->top_down ? 1.0 : -1.0;
-            const QPointF begin = parent->position + QPointF(0, sign * node_height / 2.0);
-            const QPointF end = node.position - QPointF(0, sign * node_height / 2.0);
+            const QPointF begin = parent->position + QPointF(0, sign * nodeRect(*parent).height() / 2.0);
+            const QPointF end = node.position - QPointF(0, sign * nodeRect(node).height() / 2.0);
             QPainterPath path(begin);
             if (std::abs(begin.x() - end.x()) < 0.01)
                 path.lineTo(end);
@@ -907,9 +900,7 @@ void ProjectRevisionGraph::paintEvent(QPaintEvent *event)
         if (node.kind != ProjectGraphNode::Kind::Revision)
         {
             const bool server = node.kind == ProjectGraphNode::Kind::Server;
-            const bool branch = node.kind == ProjectGraphNode::Kind::Branch;
-            const QColor group_color = server ? QColor(50, 174, 173)
-                : branch ? QColor(57, 184, 145) : accent;
+            const QColor group_color = server ? QColor(50, 174, 173) : accent;
             painter.setPen(QPen(tint(group_color, selected ? 255 : (server ? 230 : 140)),
                                 selected ? 3.4 : server ? 2.2 : 1.6));
             painter.setBrush(tint(group_color, selected ? 100 : server ? 64 : 24));
@@ -917,7 +908,7 @@ void ProjectRevisionGraph::paintEvent(QPaintEvent *event)
             if (server)
             {
                 // Compact database cylinder icon: unmistakably different
-                // from a revision/branch card, with no platform icon dependency.
+                // from a revision card, with no platform icon dependency.
                 const QRectF icon_box(box.left() + 16, box.top() + 20, 27, 26);
                 painter.setPen(QPen(group_color, 1.7));
                 painter.setBrush(tint(group_color, 45));
@@ -948,7 +939,9 @@ void ProjectRevisionGraph::paintEvent(QPaintEvent *event)
                 painter.setFont(small_font);
                 painter.setPen(muted);
                 painter.drawText(box.adjusted(15, 34, -12, -8),
-                    Qt::AlignVCenter | Qt::AlignLeft, node.branch);
+                    Qt::AlignVCenter | Qt::AlignLeft,
+                    painter.fontMetrics().elidedText(node.branch, Qt::ElideRight,
+                                                     int(box.width() - 27)));
             }
             continue;
         }
@@ -972,31 +965,24 @@ void ProjectRevisionGraph::paintEvent(QPaintEvent *event)
         painter.drawText(box.adjusted(16, 38, -12, -26), Qt::AlignLeft,
                          (node.display_id.isEmpty() ? node.id : node.display_id).left(12));
 
-        const QRectF pill(box.left() + 14, box.bottom() - 26, 118, 19);
-        const bool branch_selected = !node.branch_id.isEmpty()
-            && this->selected_revision == QStringLiteral("group:branch:") + node.branch_id;
-        painter.setBrush(tint(accent, selected || branch_selected ? 110 : 38));
-        painter.setPen(Qt::NoPen);
-        painter.drawRoundedRect(pill, 8, 8);
-        if (branch_selected)
+        // Branch refs belong to immutable revisions. Render each HEAD ref
+        // inside the revision card, independently clickable and selectable.
+        for (int i = 0; i < node.heads.size(); ++i)
         {
-            painter.setPen(QPen(accent, 1.8));
+            const ProjectGraphBranchHead &head = node.heads.at(i);
+            const QRectF pill = branchLabelRect(node, i);
+            const bool branch_selected = this->selected_revision
+                == QStringLiteral("group:branch:") + head.id;
+            painter.setPen(QPen(branch_selected ? QColor(57, 184, 145)
+                : tint(QColor(57, 184, 145), 120), branch_selected ? 2.0 : 1.0));
+            painter.setBrush(tint(QColor(57, 184, 145), branch_selected ? 110 : 45));
             painter.drawRoundedRect(pill, 8, 8);
-        }
-        painter.setPen(ink);
-        painter.drawText(pill.adjusted(7, 1, -7, -1), Qt::AlignVCenter | Qt::AlignLeft,
-                         painter.fontMetrics().elidedText(
-                             node.display_branch.isEmpty() ? node.branch : node.display_branch,
-                             Qt::ElideRight, 101));
-
-        if (!node.head_branch.isEmpty())
-        {
-            const QRectF head(box.left() + 139, box.bottom() - 26, 74, 19);
-            painter.setBrush(tint(QColor(58, 171, 130), 80));
-            painter.setPen(Qt::NoPen);
-            painter.drawRoundedRect(head, 8, 8);
             painter.setPen(ink);
-            painter.drawText(head, Qt::AlignCenter, QStringLiteral("HEAD"));
+            const QString badge = QStringLiteral("%1  ·  HEAD").arg(head.name);
+            painter.drawText(pill.adjusted(9, 1, -9, -1),
+                             Qt::AlignVCenter | Qt::AlignLeft,
+                             painter.fontMetrics().elidedText(badge, Qt::ElideRight,
+                                                             int(pill.width()) - 18));
         }
     }
     // Fold markers are explicitly interactive graph elements, not tooltips.
@@ -1210,17 +1196,18 @@ void ProjectRevisionGraph::mouseReleaseEvent(QMouseEvent *event)
                     emit serverActivated(node->id.mid(QStringLiteral("group:server:").size()));
                 else if (node->kind == ProjectGraphNode::Kind::Project)
                     emit projectActivated(node->id.mid(QStringLiteral("group:project:").size()));
-                else if (node->kind == ProjectGraphNode::Kind::Branch)
-                    emit branchActivated(node->branch_id);
                 else
                 {
-                // The branch badge has a separate hit target from the revision.
-                const QRectF pill(nodeRect(*node).left() + 14,
-                                  nodeRect(*node).bottom() - 26, 118, 19);
-                if (pill.contains(point))
-                    emit branchActivated(node->branch_id.isEmpty() ? node->branch : node->branch_id);
-                else
-                    emit revisionActivated(node->id);
+                    bool branch_hit = false;
+                    for (int i = 0; i < node->heads.size(); ++i)
+                        if (branchLabelRect(*node, i).contains(point))
+                        {
+                            emit branchActivated(node->heads.at(i).id);
+                            branch_hit = true;
+                            break;
+                        }
+                    if (!branch_hit)
+                        emit revisionActivated(node->id);
                 }
             }
         }

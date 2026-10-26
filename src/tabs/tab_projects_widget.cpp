@@ -1419,23 +1419,19 @@ void ProjectsWidget::rebuildGraph()
             project_node.id = project_node_id;
             project_node.title = project.name;
             project_node.branch = tr("PROJECT · %n branch(es)", nullptr, project.branches.size());
+            // A partial catalogue can omit a branch HEAD revision. Keep the
+            // source visible without inventing a revision card for that ref.
+            QSet<QString> loaded_revisions;
+            for (const ProjectPreviewRevision &revision : project.revisions)
+                loaded_revisions.insert(revision.id);
+            int missing_heads = 0;
+            for (const ProjectPreviewBranch &branch : project.branches)
+                if (!branch.head.isEmpty() && !loaded_revisions.contains(branch.head))
+                    ++missing_heads;
+            if (missing_heads > 0)
+                project_node.branch += tr(" · %n HEAD(s) not loaded", nullptr, missing_heads);
             project_node.container_id = server_node_id;
             nodes.append(project_node);
-            for (const ProjectPreviewBranch &branch : project.branches)
-            {
-                ProjectGraphNode branch_node;
-                branch_node.kind = ProjectGraphNode::Kind::Branch;
-                branch_node.id = QStringLiteral("group:branch:") + branch.id;
-                branch_node.title = branch.name;
-                branch_node.branch = tr("BRANCH");
-                branch_node.branch_id = branch.id;
-                branch_node.container_id = project_node_id;
-                branch_node.project_group_id = project_node_id;
-                if (!branch.head.isEmpty())
-                    branch_node.head_revision_id = preview ? branch.head
-                        : project.id + QStringLiteral("|") + branch.head;
-                nodes.append(branch_node);
-            }
             for (const ProjectPreviewRevision &revision : project.revisions)
             {
                 ProjectGraphNode node;
@@ -1444,21 +1440,16 @@ void ProjectsWidget::rebuildGraph()
                 node.branch = preview ? revision.branch
                     : tr("%1 / %2 / %3").arg(source.name, project.name, revision.branch);
                 node.display_id = revision.id;
-                node.display_branch = revision.branch;
                 for (const QString &parent : revision.parents)
                     node.parents.append(preview ? parent : project.id + QStringLiteral("|") + parent);
                 node.tags = revision.tags;
                 node.project_group_id = project_node_id;
                 for (const ProjectPreviewBranch &branch : project.branches)
-                {
-                    if (branch.name == revision.branch)
-                        node.branch_id = branch.id;
-                    if (branch.head == revision.id)
-                    {
-                        node.head_branch = branch.name;
-                        node.branch_id = branch.id;
-                    }
-                }
+                    if (!branch.head.isEmpty() && branch.head == revision.id)
+                        node.heads.append({branch.id, branch.name});
+                std::sort(node.heads.begin(), node.heads.end(),
+                    [](const ProjectGraphBranchHead &lhs, const ProjectGraphBranchHead &rhs)
+                    { return lhs.id < rhs.id; });
                 this->graph_revision_lookup.insert(node.id, qMakePair(project.id, revision.id));
                 nodes.append(node);
             }
