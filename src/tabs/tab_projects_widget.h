@@ -5,6 +5,8 @@
 #include "projects/project_source_reader.h"
 #include "projects/project_source_writer.h"
 
+#include <QHash>
+#include <QPair>
 #include <QList>
 #include <QString>
 #include <QStringList>
@@ -46,6 +48,7 @@ struct ProjectPreviewBranch
 struct ProjectPreviewData
 {
     QString id;
+    QString backend_id; // raw DVMDB ID, distinct from globally unique GUI ID
     QString server_id;
     QString name;
     QString description;
@@ -63,6 +66,7 @@ class ProjectsWidget final : public QWidget
     Q_OBJECT
 public:
     explicit ProjectsWidget(QWidget *parent = nullptr);
+    ~ProjectsWidget() override;
 
 public slots:
     void selectProjectByName(const QString &name);
@@ -92,11 +96,17 @@ private:
     void updateEmptyState();
     void updateSourceFields();
     void updateButtons();
-    void connectSource();
+    struct SourceSession;
+    void startSource(const ProjectServerProfile &profile);
+    void resetSource(const QString &id);
+    void loadSource(const QString &id);
+    void connectSource(); // explicit refresh of selected source (inspector only)
+    bool isSourceReady(const QString &id) const;
+    void restoreVisibleSelection();
     void finishSourceWrite(const QString &created_id, const QString &error,
                            const QString &project_id, const QString &branch_name);
-    void disconnectSource();
-    void applySourceSnapshot(const SourceSnapshot &snapshot);
+
+    void applySourceSnapshot(const QString &source_id, const SourceSnapshot &snapshot);
     void updateConnectionStatus();
     bool isPreviewSource() const;
     void broadcastContext();
@@ -153,20 +163,17 @@ private:
     QPushButton *source_save_button = nullptr;
     QPushButton *source_cancel_button = nullptr;
     QPushButton *create_branch_button = nullptr;
-    ProjectSourceReader *source_reader = nullptr;
+    QHash<QString, SourceSession *> source_sessions;
+    QHash<QString, QPair<QString, QString>> graph_revision_lookup;
     ProjectSourceWriter *source_writer = nullptr;
     QString select_after_write_project;
     QString select_after_write_branch;
-    QPushButton *source_connect_button = nullptr;
     QLabel *source_status = nullptr;
     QLabel *no_projects_description = nullptr;
     QLabel *no_projects_title = nullptr;
     QPushButton *source_refresh_button = nullptr;
     QLabel *preview_banner = nullptr;
     QLabel *inspector_preview_note = nullptr;
-    QString connected_source_id;
-    QString source_error;
-    enum class SourceState { Disconnected, Loading, Connected, Error };
-    SourceState source_state = SourceState::Disconnected;
+    enum class SourceState { Checking, Loading, Connected, Error };
     bool updating_ui = false;
 };

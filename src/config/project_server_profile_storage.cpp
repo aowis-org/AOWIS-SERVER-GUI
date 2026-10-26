@@ -65,7 +65,8 @@ QJsonObject serializeProfile(const ProjectServerProfile &profile)
         {QStringLiteral("tags"), tags},
         {QStringLiteral("auth_mode"), profile.auth_mode},
         {QStringLiteral("connection_type"), profile.connection_type},
-        {QStringLiteral("local_path"), profile.local_path}
+        {QStringLiteral("local_path"), profile.local_path},
+        {QStringLiteral("visible"), profile.visible}
     };
 }
 }
@@ -119,6 +120,7 @@ QList<ProjectServerProfile> loadProjectServerProfiles()
         if (profile.connection_type != QStringLiteral("local"))
             profile.connection_type = QStringLiteral("remote");
         profile.local_path = record.value(QStringLiteral("local_path")).toString().trimmed();
+        profile.visible = record.value(QStringLiteral("visible")).toBool(true);
         profile.description = record.value(QStringLiteral("description")).toString();
         for (const QJsonValue &tag : record.value(QStringLiteral("tags")).toArray())
             if (tag.isString()) profile.tags.append(tag.toString());

@@ -691,6 +691,31 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
         LABELS "aowis"
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+    add_executable(aowis-projects-multi-source-tests
+        tests/projects_multi_source_test.cpp
+        src/tabs/tab_projects_widget.cpp
+        src/tabs/tab_projects_widget.h
+        src/projects/project_source_reader.cpp
+        src/projects/project_source_reader.h
+        src/projects/project_source_writer.cpp
+        src/projects/project_source_writer.h
+        src/tabs/project_revision_graph.cpp
+        src/tabs/project_revision_graph.h
+        src/app/builtin_examples.cpp
+        src/config/project_server_profile_storage.cpp
+        src/config/project_server_profile_storage.h
+        src/widgets/group_box_collapsible.cpp
+        src/widgets/group_box_collapsible.h
+        src/config/gui_configuration.cpp
+        src/config/shortcut_registry.cpp
+        src/config/shortcut_registry.h)
+    target_include_directories(aowis-projects-multi-source-tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(aowis-projects-multi-source-tests PRIVATE Qt6::Widgets Qt6::Network)
+    add_test(NAME aowis-projects-multi-source COMMAND aowis-projects-multi-source-tests)
+    set_tests_properties(aowis-projects-multi-source PROPERTIES
+        LABELS "aowis" ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
     # Native Windows tab padding must not widen the five-icon map sidebar.
     add_executable(aowis-map-mode-tab-bar-tests
         tests/map_mode_tab_bar_test.cpp)

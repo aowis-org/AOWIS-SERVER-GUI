@@ -1,0 +1,185 @@
+#include "tabs/tab_projects_widget.h"
+#include "config/project_server_profile_storage.h"
+#include "services/http_health_monitor.h"
+
+#include <QApplication>
+#include <QElapsedTimer>
+#include <QEventLoop>
+#include <QHostAddress>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QTcpServer>
+#include <QPushButton>
+#include <QTcpSocket>
+#include <QTemporaryDir>
+#include <QTreeWidget>
+#include <QTimer>
+
+#include <cstdio>
+#include <functional>
+#include <memory>
+
+namespace
+{
+bool require(bool value, const char *description)
+{
+    if (!value) std::fprintf(stderr, "projects_multi_source: %s\n", description);
+    return value;
+}
+
+bool waitUntil(QApplication &app, const std::function<bool()> &condition, int timeout_ms = 5000)
+{
+    QElapsedTimer elapsed;
+    elapsed.start();
+    while (!condition() && elapsed.elapsed() < timeout_ms)
+        app.processEvents(QEventLoop::AllEvents, 20);
+    return condition();
+}
+
+struct FakeDvmdb
+{
+    QTcpServer server;
+    bool valid = true;
+    const QString hash = QString(64, QLatin1Char('a'));
+
+    bool start()
+    {
+        if (!this->server.listen(QHostAddress::LocalHost, 0)) return false;
+        QObject::connect(&this->server, &QTcpServer::newConnection, &this->server, [this]
+        {
+            while (this->server.hasPendingConnections())
+            {
+                QTcpSocket *socket = this->server.nextPendingConnection();
+                const std::shared_ptr<QByteArray> buffer = std::make_shared<QByteArray>();
+                QObject::connect(socket, &QTcpSocket::readyRead, socket,
+                    [this, socket, buffer]
+                {
+                    buffer->append(socket->readAll());
+                    if (!buffer->contains("\r\n\r\n")) return;
+                    const QByteArray path = buffer->split(' ').value(1);
+                    QByteArray data = R"({"broken":true})";
+                    if (this->valid)
+                    {
+                        if (path == "/dvmdb/v1/projects")
+                            data = R"({"projects":[{"id":"p1","name":"Shared name"}]})";
+                        else if (path == "/dvmdb/v1/projects/p1/branches")
+                            data = R"({"branches":["main"]})";
+                        else if (path == "/dvmdb/v1/projects/p1/branches/main/history?limit=101")
+                        {
+                            const QJsonObject revision{
+                                {QStringLiteral("id"), this->hash},
+                                {QStringLiteral("parents"), QJsonArray{}}};
+                            const QJsonObject response{
+                                {QStringLiteral("revisions"), QJsonArray{revision}}};
+                            data = QJsonDocument(response).toJson();
+                        }
+                    }
+                    socket->write("HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: "
+                                  + QByteArray::number(data.size()) + "\r\n\r\n" + data);
+                    socket->disconnectFromHost();
+                });
+                QObject::connect(socket, &QTcpSocket::disconnected, socket, &QTcpSocket::deleteLater);
+            }
+        });
+        return true;
+    }
+
+    QString endpoint() const
+    {
+        return QStringLiteral("http://127.0.0.1:%1").arg(this->server.serverPort());
+    }
+};
+}
+
+int main(int argc, char **argv)
+{
+    QTemporaryDir config;
+    if (!require(config.isValid(), "temporary profile store failed")) return 1;
+    qputenv("XDG_DATA_HOME", config.path().toUtf8());
+    QApplication app(argc, argv);
+    FakeDvmdb first;
+    FakeDvmdb second;
+    if (!require(first.start() && second.start(), "loopback servers failed")) return 1;
+
+    ProjectServerProfile a;
+    a.id = QStringLiteral("source-a");
+    a.name = QStringLiteral("Source A");
+    a.connection_type = QStringLiteral("remote");
+    a.auth_mode = QStringLiteral("None");
+    a.endpoint = first.endpoint();
+    ProjectServerProfile b = a;
+    b.id = QStringLiteral("source-b");
+    b.name = QStringLiteral("Source B");
+    b.endpoint = second.endpoint();
+    if (!require(saveProjectServerProfiles({a, b}), "could not store multiple sources")) return 1;
+
+    ProjectsWidget projects;
+    projects.resize(1200, 740);
+    projects.show();
+    QTreeWidget *sources = projects.findChild<QTreeWidget *>(QStringLiteral("serversTree"));
+    QTreeWidget *tree = projects.findChild<QTreeWidget *>(QStringLiteral("projectsTree"));
+    ProjectRevisionGraph *graph = projects.findChild<ProjectRevisionGraph *>(
+        QStringLiteral("projectRevisionGraph"));
+    if (!require(sources != nullptr && tree != nullptr && graph != nullptr,
+                 "missing multi-source components")) return 1;
+    if (!require(waitUntil(app, [&]
+        {
+            return tree->topLevelItemCount() == 2
+                && tree->topLevelItem(0)->childCount() == 1
+                && tree->topLevelItem(1)->childCount() == 1;
+        }), "database catalogues did not load independently at startup")) return 1;
+    if (!require(sources->topLevelItem(0)->checkState(0) == Qt::Checked
+            && sources->topLevelItem(1)->checkState(0) == Qt::Checked,
+            "both sources should be visible by default")) return 1;
+    if (!require(tree->topLevelItem(0)->child(0)->data(0, Qt::UserRole).toString()
+                 != tree->topLevelItem(1)->child(0)->data(0, Qt::UserRole).toString(),
+                 "project identities collide across different databases")) return 1;
+    const QString first_graph_id = QStringLiteral("source-a|p1|") + first.hash;
+    const QString second_graph_id = QStringLiteral("source-b|p1|") + second.hash;
+    graph->fitGraph();
+    if (!require(!graph->revisionViewportPosition(first_graph_id).isNull()
+                 && !graph->revisionViewportPosition(second_graph_id).isNull(),
+                 "aggregate graph omitted a source or merged same-hash revisions")) return 1;
+    if (!require(projects.findChild<QPushButton *>(QStringLiteral("projectsSourceConnectButton")) == nullptr,
+                 "legacy manual connect/disconnect control still exists")) return 1;
+
+    sources->topLevelItem(1)->setCheckState(0, Qt::Unchecked);
+    app.processEvents();
+    if (!require(tree->topLevelItemCount() == 1
+                 && loadProjectServerProfiles().at(1).visible == false
+                 && graph->revisionViewportPosition(second_graph_id).isNull(),
+                 "unchecking a source did not persistently filter navigator and graph")) return 1;
+    sources->topLevelItem(1)->setCheckState(0, Qt::Checked);
+    app.processEvents();
+    if (!require(tree->topLevelItemCount() == 2 && loadProjectServerProfiles().at(1).visible,
+                 "rechecking a source did not restore catalogue visibility")) return 1;
+
+    // A successful HTTP status alone is insufficient: validate service data,
+    // degrade after the first bad response and turn offline after the second.
+    HttpHealthMonitor monitor;
+    HttpHealthMonitor::State status = HttpHealthMonitor::State::Checking;
+    monitor.start(QUrl(first.endpoint() + QStringLiteral("/dvmdb/v1/projects")),
+        [](const QByteArray &body)
+        {
+            const QJsonDocument json = QJsonDocument::fromJson(body);
+            return json.isObject() && json.object().value(QStringLiteral("projects")).isArray();
+        }, [&](HttpHealthMonitor::State value, const QString &) { status = value; }, {}, 30000);
+    if (!require(waitUntil(app, [&] { return status == HttpHealthMonitor::State::Healthy; }),
+                 "health probe did not validate a good service response")) return 1;
+    first.valid = false;
+    monitor.poll();
+    if (!require(waitUntil(app, [&] { return status == HttpHealthMonitor::State::Degraded; }),
+                 "health probe did not degrade after invalid response")) return 1;
+    monitor.poll();
+    if (!require(waitUntil(app, [&] { return status == HttpHealthMonitor::State::Offline; }),
+                 "health probe did not declare offline after repeated failures")) return 1;
+    first.valid = true;
+    monitor.poll();
+    if (!require(waitUntil(app, [&] { return status == HttpHealthMonitor::State::Healthy; }),
+                 "health probe did not recover after service restoration")) return 1;
+    monitor.stop();
+
+    std::puts("Multi-source explorer and health monitor tests passed");
+    return 0;
+}

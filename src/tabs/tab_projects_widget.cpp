@@ -3,6 +3,7 @@
 #include "app/builtin_examples.h"
 #include "config/gui_configuration.h"
 #include "widgets/group_box_collapsible.h"
+#include "services/http_health_monitor.h"
 
 #include <QAbstractItemView>
 #include <QButtonGroup>
@@ -17,8 +18,14 @@
 #include <QFormLayout>
 #include <QFrame>
 #include <QHash>
+#include <QDateTime>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QHBoxLayout>
 #include <QIcon>
+#include <QPainter>
+#include <QPixmap>
 #include <QInputDialog>
 #include <QSet>
 #include <QStandardItemModel>
@@ -61,6 +68,16 @@ QString keyFor(const QString &type, const QString &id)
 {
     return type + QLatin1Char(':') + id;
 }
+QString projectContextLabel(const ProjectPreviewData &project,
+                            const QList<ProjectServerProfile> &servers)
+{
+    if (project.server_id == QStringLiteral("preview-local")
+        || project.server_id == QStringLiteral("preview-remote")) return project.name;
+    for (const ProjectServerProfile &server : servers)
+        if (server.id == project.server_id)
+            return server.name + QStringLiteral(" / ") + project.name;
+    return project.name;
+}
 QTreeWidgetItem *newTreeItem(QTreeWidget *tree, const QString &label, const QString &key)
 {
     QTreeWidgetItem *item = new QTreeWidgetItem(tree, QStringList{label});
@@ -77,11 +94,33 @@ QTreeWidgetItem *newTreeChild(QTreeWidgetItem *parent, const QString &label, con
 }
 }
 
+struct ProjectsWidget::SourceSession
+{
+    ProjectSourceReader *reader = nullptr;
+    HttpHealthMonitor *health = nullptr; // only remote sources have HTTP health monitoring
+    QTimer *refresh = nullptr;
+    SourceState state = SourceState::Checking;
+    QString error;
+    bool loading = false;
+};
+
+ProjectsWidget::~ProjectsWidget()
+{
+    for (SourceSession *session : this->source_sessions)
+    {
+        if (session->health != nullptr) session->health->stop();
+        session->reader->cancel();
+        delete session->refresh;
+        delete session->health;
+        delete session->reader;
+        delete session;
+    }
+}
+
 ProjectsWidget::ProjectsWidget(QWidget *parent)
     : QWidget(parent)
 {
     setObjectName(QStringLiteral("projectsWorkspace"));
-    this->source_reader = new ProjectSourceReader(this);
     this->source_writer = new ProjectSourceWriter(this);
     seedPreview();
     this->servers = loadProjectServerProfiles();
@@ -151,7 +190,7 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     left_layout->setContentsMargins(8, 8, 8, 8);
     left_layout->setSpacing(10);
 
-    // Data-source profiles are persisted locally; no connection is opened here.
+    // Profiles are persisted locally; each source is opened asynchronously at startup.
     GroupBoxCollapsible *servers_group = new GroupBoxCollapsible(tr("Databases"), left);
     servers_group->setObjectName(QStringLiteral("serversCollapsibleGroup"));
     QVBoxLayout *servers_layout = new QVBoxLayout(servers_group);
@@ -173,16 +212,6 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     this->server_tree->setMaximumHeight(112);
     this->server_tree->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     servers_layout->addWidget(this->server_tree, 1);
-    this->source_status = new QLabel(servers_group);
-    this->source_status->setObjectName(QStringLiteral("serversPreviewStatus"));
-    this->source_status->setWordWrap(true);
-    servers_layout->addWidget(this->source_status);
-    this->source_connect_button = compactButton(tr("Connect"), tr("Load the selected database catalogue"), servers_group);
-    this->source_connect_button->setObjectName(QStringLiteral("projectsSourceConnectButton"));
-    servers_layout->addWidget(this->source_connect_button);
-    this->source_refresh_button = compactButton(tr("Refresh"), tr("Reload the current database catalogue"), servers_group);
-    this->source_refresh_button->setObjectName(QStringLiteral("projectsSourceRefreshButton"));
-    servers_layout->addWidget(this->source_refresh_button);
     QLabel *no_sources = new QLabel(tr("No databases configured"), servers_group);
     no_sources->setObjectName(QStringLiteral("projectsNoSourcesSidebar"));
     no_sources->setAlignment(Qt::AlignCenter);
@@ -455,6 +484,16 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     this->server_options = new QWidget(right);
     this->server_options->setObjectName(QStringLiteral("projectServerOptions"));
     QVBoxLayout *source_layout = new QVBoxLayout(this->server_options);
+    this->source_status = new QLabel(this->server_options);
+    this->source_status->setObjectName(QStringLiteral("serversPreviewStatus"));
+    this->source_status->setWordWrap(true);
+    source_layout->addWidget(this->source_status);
+    this->source_refresh_button = compactButton(tr("Refresh catalogue"),
+        tr("Reload this database now; automatic loading and health checks continue in the background"),
+        this->server_options);
+    this->source_refresh_button->setObjectName(QStringLiteral("projectsSourceRefreshButton"));
+    source_layout->addWidget(this->source_refresh_button);
+
     source_layout->setContentsMargins(0, 0, 0, 0);
     this->source_kind_combo = new QComboBox(this->server_options);
     this->source_kind_combo->setObjectName(QStringLiteral("projectSourceKind"));
@@ -483,7 +522,7 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     this->server_auth_combo->addItem(tr("User login"), QStringLiteral("User login"));
     server_form->addRow(tr("REST endpoint"), this->server_endpoint_edit);
     server_form->addRow(tr("Authentication (future)"), this->server_auth_combo);
-    QLabel *server_warning = new QLabel(tr("Saved locally. No connection is made; credentials and tokens are not stored."), this->remote_options);
+    QLabel *server_warning = new QLabel(tr("Automatically monitored and loaded. REST authentication is not yet supported; credentials and tokens are not stored."), this->remote_options);
     server_warning->setWordWrap(true);
     server_form->addRow(server_warning);
     source_layout->addWidget(this->remote_options);
@@ -554,13 +593,6 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
 
     connect(add_server, &QToolButton::clicked, this, &ProjectsWidget::createServer);
     connect(this->source_refresh_button, &QPushButton::clicked, this, &ProjectsWidget::connectSource);
-    connect(this->source_connect_button, &QPushButton::clicked, this, [this]
-    {
-        if (this->source_writer->isBusy()) return;
-        if (this->source_state == SourceState::Loading || this->source_state == SourceState::Connected)
-            disconnectSource();
-        else connectSource();
-    });
     connect(empty_add, &QPushButton::clicked, this, &ProjectsWidget::createServer);
     connect(this->source_save_button, &QPushButton::clicked, this, &ProjectsWidget::saveNewSource);
     connect(this->source_cancel_button, &QPushButton::clicked, this, &ProjectsWidget::cancelNewSource);
@@ -582,6 +614,36 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
         if (items.isEmpty() || this->updating_ui) return;
         const QString key = items.first()->data(0, role_key).toString();
         if (key.startsWith(QStringLiteral("s:"))) select(SelectionKind::Server, key.mid(2));
+    });
+    connect(this->server_tree, &QTreeWidget::itemChanged, this,
+            [this](QTreeWidgetItem *item, int column)
+    {
+        if (this->updating_ui || column != 0 || item == nullptr) return;
+        const QString key = item->data(0, role_key).toString();
+        if (!key.startsWith(QStringLiteral("s:"))) return;
+        const QString id = key.mid(2);
+        for (ProjectServerProfile &profile : this->servers)
+        {
+            if (profile.id != id) continue;
+            const bool old = profile.visible;
+            profile.visible = item->checkState(0) == Qt::Checked;
+            if (!saveProjectServerProfiles(this->servers))
+            {
+                profile.visible = old;
+                const QSignalBlocker blocked(this->server_tree);
+                item->setCheckState(0, old ? Qt::Checked : Qt::Unchecked);
+                reportServerSaveFailure();
+                return;
+            }
+            if (!profile.visible) restoreVisibleSelection();
+            populateProjectTree();
+            populateRevisionTree();
+            rebuildGraph();
+            updateEmptyState();
+            updateButtons();
+            broadcastContext();
+            return;
+        }
     });
     connect(create_project, &QPushButton::clicked, this, &ProjectsWidget::createProject);
     connect(this->create_branch_button, &QPushButton::clicked, this, [this] { createBranch(); });
@@ -615,7 +677,8 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
         const QList<QTreeWidgetItem *> items = this->project_tree->selectedItems();
         if (items.isEmpty() || this->updating_ui) return;
         const QString key = items.first()->data(0, role_key).toString();
-        if (key.startsWith(QStringLiteral("p:"))) select(SelectionKind::Project, key.mid(2));
+        if (key.startsWith(QStringLiteral("s:"))) select(SelectionKind::Server, key.mid(2));
+        else if (key.startsWith(QStringLiteral("p:"))) select(SelectionKind::Project, key.mid(2));
         else if (key.startsWith(QStringLiteral("b:"))) select(SelectionKind::Branch, key.mid(2));
     });
     connect(heads_button, &QPushButton::clicked, this, [this]
@@ -654,10 +717,24 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     });
     connect(this->graph, &ProjectRevisionGraph::revisionActivated, this, [this](const QString &id)
     {
-        select(SelectionKind::Revision, id);
+        const QPair<QString, QString> target = this->graph_revision_lookup.value(id);
+        if (target.first.isEmpty()) return;
+        select(SelectionKind::Project, target.first);
+        select(SelectionKind::Revision, target.second);
     });
     connect(this->graph, &ProjectRevisionGraph::branchActivated, this, [this](const QString &name)
     {
+        // The graph has qualified lane names across all databases.
+        for (const ProjectServerProfile &source : this->servers)
+            if (source.visible)
+                for (const ProjectPreviewData &project : this->projects)
+                    if (project.server_id == source.id)
+                        for (const ProjectPreviewBranch &branch : project.branches)
+                            if (name == tr("%1 / %2 / %3").arg(source.name, project.name, branch.name))
+                            {
+                                select(SelectionKind::Branch, branch.id);
+                                return;
+                            }
         selectBranchByName(name);
     });
     connect(this->server_endpoint_edit, &QLineEdit::editingFinished, this, &ProjectsWidget::applyInspectorEdits);
@@ -689,11 +766,11 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
         updateButtons();
         broadcastContext();
     }
-    // Only the embedded default source opens automatically. Configured remote
-    // servers are not contacted until the user chooses Connect.
-    if (currentServer() != nullptr && currentServer()->connection_type == QStringLiteral("local")
-        && this->server_id == QStringLiteral("local-default"))
-        QTimer::singleShot(0, this, [this] { connectSource(); });
+    // Sources are always active. The checkboxes affect visibility only.
+    QTimer::singleShot(0, this, [this]
+    {
+        for (const ProjectServerProfile &profile : this->servers) startSource(profile);
+    });
 }
 
 bool ProjectsWidget::eventFilter(QObject *watched, QEvent *event)
@@ -759,22 +836,58 @@ void ProjectsWidget::populateServerTree()
         const bool local = server.connection_type == QStringLiteral("local");
         QTreeWidgetItem *item = newTreeItem(this->server_tree, server.name,
             keyFor(QStringLiteral("s"), server.id));
-        item->setIcon(0, QIcon::fromTheme(local ? QStringLiteral("drive-harddisk")
-                                               : QStringLiteral("network-server"),
-            style()->standardIcon(local ? QStyle::SP_DriveHDIcon : QStyle::SP_DriveNetIcon)));
-        item->setToolTip(0, tr("%1\nSaved database profile")
-            .arg(local ? server.local_path : server.endpoint));
+        item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
+        item->setCheckState(0, server.visible ? Qt::Checked : Qt::Unchecked);
+        const SourceSession *session = this->source_sessions.value(server.id, nullptr);
+        if (local)
+            item->setIcon(0, QIcon::fromTheme(QStringLiteral("drive-harddisk"),
+                style()->standardIcon(QStyle::SP_DriveHDIcon)));
+        else
+        {
+            QColor color = QColor(QStringLiteral("#c9a227")); // starting / loading
+            if (session != nullptr && session->state == SourceState::Connected
+                && (session->health == nullptr
+                    || session->health->currentState() == HttpHealthMonitor::State::Healthy))
+                color = QColor(QStringLiteral("#339950"));
+            else if (session != nullptr && session->state == SourceState::Error)
+                color = QColor(QStringLiteral("#c24848"));
+            QPixmap indicator(16, 16);
+            indicator.fill(Qt::transparent);
+            QPainter painter(&indicator);
+            painter.setRenderHint(QPainter::Antialiasing);
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(color);
+            painter.drawEllipse(QRectF(3, 3, 10, 10));
+            item->setIcon(0, QIcon(indicator));
+        }
+        QString status = local ? tr("Embedded · no network check") : tr("Checking…");
+        if (session != nullptr)
+            status = session->health != nullptr
+                     && session->health->currentState() == HttpHealthMonitor::State::Degraded
+                ? tr("Connection unstable")
+                : session->state == SourceState::Connected ? tr("Available")
+                : session->state == SourceState::Loading ? tr("Loading…")
+                : session->state == SourceState::Error ? tr("Unavailable: %1").arg(session->error)
+                : tr("Checking…");
+        item->setToolTip(0, tr("%1\n%2\n%3\nCheckbox: show in explorer and graph")
+            .arg(server.name, local ? server.local_path : server.endpoint, status));
+        if (session != nullptr && session->state == SourceState::Error)
+            item->setForeground(0, palette().color(QPalette::Disabled, QPalette::Text));
     }
+    selectTreeItem(this->server_tree, keyFor(QStringLiteral("s"), this->server_id));
 }
 
 void ProjectsWidget::updateEmptyState()
 {
     const bool empty = this->servers.isEmpty();
-    const bool has_project = currentProject() != nullptr;
+    bool has_projects = false;
+    for (const ProjectPreviewData &project : this->projects)
+        for (const ProjectServerProfile &profile : this->servers)
+            if (profile.id == project.server_id && profile.visible) has_projects = true;
     if (this->graph_stack != nullptr)
-        this->graph_stack->setCurrentIndex(empty ? 1 : has_project ? 0 : 2);
+        this->graph_stack->setCurrentIndex(empty ? 1 : has_projects ? 0 : 2);
     if (QWidget *toolbar = findChild<QWidget *>(QStringLiteral("projectsGraphToolbar")))
-        toolbar->setVisible(!empty && has_project);
+        toolbar->setVisible(!empty && has_projects);
     bool expanded = true;
     if (GroupBoxCollapsible *section = findChild<GroupBoxCollapsible *>(QStringLiteral("serversCollapsibleGroup")))
         expanded = !section->isCollapsed();
@@ -787,149 +900,260 @@ void ProjectsWidget::updateEmptyState()
 
 bool ProjectsWidget::isPreviewSource() const
 {
-    // Legacy version-explorer fixture only; all actual data sources stay
-    // read-only until the explicit DVMDB write/session integration lands.
     return this->server_id == QStringLiteral("preview-local")
         || this->server_id == QStringLiteral("preview-remote");
 }
 
+bool ProjectsWidget::isSourceReady(const QString &id) const
+{
+    const SourceSession *session = this->source_sessions.value(id, nullptr);
+    return session != nullptr && session->state == SourceState::Connected
+        && !session->loading;
+}
+
 void ProjectsWidget::updateConnectionStatus()
 {
-    if (this->source_status == nullptr || this->source_connect_button == nullptr) return;
+    if (this->source_status == nullptr) return;
     const ProjectServerProfile *server = nullptr;
     for (const ProjectServerProfile &candidate : this->servers)
         if (candidate.id == this->server_id) { server = &candidate; break; }
-    const bool has_server = server != nullptr;
-    this->source_connect_button->setVisible(has_server && !isPreviewSource()
-        && this->selection_kind != SelectionKind::NewSource);
-    const QString status = this->source_writer->isBusy() ? tr("Saving to DVMDB…")
-        : this->source_state == SourceState::Loading ? tr("Loading database…")
-        : this->source_state == SourceState::Connected ? tr("Catalogue loaded")
-        : this->source_state == SourceState::Error ? tr("Connection failed: %1").arg(this->source_error)
-        : tr("Not connected");
+    const bool has_server = server != nullptr && this->selection_kind == SelectionKind::Server;
+    const SourceSession *session = has_server ? this->source_sessions.value(server->id, nullptr) : nullptr;
+    const QString status = isPreviewSource() ? tr("In-memory demonstration")
+        : session == nullptr ? tr("Starting automatically…")
+        : session->health != nullptr
+          && session->health->currentState() == HttpHealthMonitor::State::Degraded
+            ? tr("Connection unstable · checking again…")
+        : this->source_writer->isBusy() ? tr("Saving to DVMDB…")
+        : session->state == SourceState::Connected ? tr("Available · catalogue loaded")
+        : session->state == SourceState::Loading ? tr("Available · loading catalogue…")
+        : session->state == SourceState::Error ? tr("Unavailable: %1").arg(session->error)
+        : tr("Checking connection…");
+    this->source_status->setText(status);
     this->source_status->setVisible(has_server);
-    this->source_status->setText(isPreviewSource() ? tr("In-memory demonstration") : status);
-    this->source_connect_button->setEnabled(!this->source_writer->isBusy());
-    this->source_refresh_button->setEnabled(!this->source_writer->isBusy());
+    this->source_refresh_button->setVisible(has_server && !isPreviewSource());
+    this->source_refresh_button->setEnabled(has_server && !this->source_writer->isBusy()
+        && session != nullptr && !session->loading);
     if (this->server_options != nullptr)
         this->server_options->setEnabled(!this->source_writer->isBusy());
-    this->source_refresh_button->setVisible(has_server && !isPreviewSource()
-        && this->source_state == SourceState::Connected
-        && this->selection_kind != SelectionKind::NewSource);
-    this->source_connect_button->setText(this->source_state == SourceState::Loading ? tr("Cancel")
-        : this->source_state == SourceState::Connected ? tr("Disconnect")
-        : this->source_state == SourceState::Error ? tr("Retry") : tr("Connect"));
     if (this->no_projects_title != nullptr)
-        this->no_projects_title->setText(this->source_state == SourceState::Loading ? tr("Loading projects")
-            : this->source_state == SourceState::Connected ? tr("No projects")
-            : this->source_state == SourceState::Error ? tr("Could not load projects")
-            : tr("No projects loaded"));
+        this->no_projects_title->setText(tr("No projects to display"));
     if (this->no_projects_description != nullptr)
-        this->no_projects_description->setText(isPreviewSource()
-            ? tr("This is an in-memory demonstration with no persisted data.")
-            : this->source_state == SourceState::Loading ? tr("Reading DVMDB project catalogue…")
-            : this->source_state == SourceState::Connected ? tr("This database contains no projects. Use + Project to create one.")
-            : this->source_state == SourceState::Error ? tr("Connection failed: %1").arg(this->source_error)
-            : tr("Select Connect to load this database's projects."));
+        this->no_projects_description->setText(tr("No projects are available from the checked databases yet. "
+            "Sources load automatically; remote connectivity is continuously monitored."));
     if (this->preview_banner != nullptr)
         this->preview_banner->setText(isPreviewSource() ? tr("IN-MEMORY PREVIEW")
-            : this->source_state == SourceState::Connected ? tr("DVMDB · CATALOGUE WRITABLE · REVISIONS READ-ONLY")
-            : tr("DATABASE NOT CONNECTED"));
+            : tr("DVMDB · CATALOGUE WRITABLE · REVISIONS READ-ONLY"));
     if (this->inspector_preview_note != nullptr)
         this->inspector_preview_note->setText(isPreviewSource()
             ? tr("Only this demonstration uses in-memory project and revision edits.")
             : tr("DVMDB supports creating projects and branches. Rename, delete, revision editing and annotations are not available yet."));
 }
 
-void ProjectsWidget::disconnectSource()
+void ProjectsWidget::restoreVisibleSelection()
 {
-    if (this->source_writer->isBusy()) return;
-    this->source_reader->cancel();
-    this->connected_source_id.clear();
-    this->source_state = SourceState::Disconnected;
-    this->source_error.clear();
-    for (int i = this->projects.size() - 1; i >= 0; --i)
-        if (this->projects.at(i).database_backed) this->projects.removeAt(i);
-    // A source is never allowed to keep stale, disconnected revision data.
+    const ProjectPreviewData *current = currentProject();
+    if (current != nullptr)
+        for (const ProjectServerProfile &profile : this->servers)
+            if (profile.id == current->server_id && profile.visible) return;
     this->project_id.clear();
     this->branch_id.clear();
-    this->selection_kind = SelectionKind::Server;
-    this->selected_id = this->server_id;
+    if (this->selection_kind == SelectionKind::Project
+        || this->selection_kind == SelectionKind::Branch
+        || this->selection_kind == SelectionKind::Revision)
+    {
+        this->selection_kind = SelectionKind::None;
+        this->selected_id.clear();
+        if (this->inspector_dock != nullptr) this->inspector_dock->hide();
+    }
+}
+
+void ProjectsWidget::resetSource(const QString &id)
+{
+    SourceSession *session = this->source_sessions.take(id);
+    if (session != nullptr)
+    {
+        if (session->health != nullptr) session->health->stop();
+        session->reader->cancel();
+        delete session->refresh;
+        delete session->health;
+        delete session->reader;
+        delete session;
+    }
+    for (int i = this->projects.size() - 1; i >= 0; --i)
+        if (this->projects.at(i).database_backed && this->projects.at(i).server_id == id)
+            this->projects.removeAt(i);
+    restoreVisibleSelection();
     populateProjectTree();
     populateRevisionTree();
     rebuildGraph();
-    updateInspector();
+    populateServerTree();
     updateEmptyState();
     updateButtons();
     broadcastContext();
 }
 
-void ProjectsWidget::connectSource()
+void ProjectsWidget::startSource(const ProjectServerProfile &profile)
 {
-    if (this->source_writer->isBusy()) return;
-    ProjectServerProfile *server = currentServer();
-    if (server == nullptr || isPreviewSource()) return;
-    // Abort previous request and erase stale data before any asynchronous load.
-    disconnectSource();
-    this->source_state = SourceState::Loading;
-    this->connected_source_id = server->id;
-    updateConnectionStatus();
-    const QString requested_id = server->id;
-    this->source_reader->load(*server, [this, requested_id](const SourceSnapshot &snapshot, const QString &error)
+    if (this->source_sessions.contains(profile.id) || this->source_writer->isBusy()) return;
+    // Legacy in-memory example sources deliberately do not initiate network I/O.
+    if (profile.id == QStringLiteral("preview-local") || profile.id == QStringLiteral("preview-remote")) return;
+    SourceSession *session = new SourceSession;
+    session->reader = new ProjectSourceReader(this);
+    session->refresh = new QTimer(this);
+    session->refresh->setInterval(60000);
+    this->source_sessions.insert(profile.id, session);
+    const QString id = profile.id;
+    connect(session->refresh, &QTimer::timeout, this, [this, id]
     {
-        if (requested_id != this->server_id || this->connected_source_id != requested_id) return;
+        SourceSession *current = this->source_sessions.value(id, nullptr);
+        if (current == nullptr || current->loading || this->source_writer->isBusy()) return;
+        if (current->health == nullptr
+            || current->health->currentState() == HttpHealthMonitor::State::Healthy)
+            loadSource(id);
+    });
+    session->refresh->start();
+    if (profile.connection_type == QStringLiteral("local"))
+    {
+        loadSource(id);
+    }
+    else if (profile.auth_mode != QStringLiteral("None") && !profile.auth_mode.isEmpty())
+    {
+        session->state = SourceState::Error;
+        session->error = tr("REST authentication is not implemented");
+    }
+    else
+    {
+        QString endpoint = profile.endpoint.trimmed();
+        while (endpoint.endsWith(QLatin1Char('/'))) endpoint.chop(1);
+        if (!endpoint.endsWith(QStringLiteral("/dvmdb/v1"))) endpoint += QStringLiteral("/dvmdb/v1");
+        session->health = new HttpHealthMonitor(this);
+        session->health->start(QUrl(endpoint + QStringLiteral("/projects")),
+            [](const QByteArray &body)
+            {
+                const QJsonDocument document = QJsonDocument::fromJson(body);
+                return document.isObject()
+                    && document.object().value(QStringLiteral("projects")).isArray();
+            }, [this, id](HttpHealthMonitor::State state, const QString &error)
+            {
+                SourceSession *current = this->source_sessions.value(id, nullptr);
+                if (current == nullptr) return;
+                if (state == HttpHealthMonitor::State::Healthy)
+                {
+                    if (current->state == SourceState::Checking
+                        || current->state == SourceState::Error) loadSource(id);
+                }
+                else if (state == HttpHealthMonitor::State::Offline)
+                {
+                    if (!current->loading)
+                    {
+                        current->state = SourceState::Error;
+                        current->error = error;
+                        // Keep an existing catalogue as an explicitly offline cache;
+                        // never claim it is currently writable.
+                    }
+                }
+                else if (state == HttpHealthMonitor::State::Degraded
+                         && current->state == SourceState::Checking)
+                    current->error = error;
+                populateServerTree();
+                if (state == HttpHealthMonitor::State::Healthy
+                    || state == HttpHealthMonitor::State::Offline)
+                {
+                    populateProjectTree();
+                    rebuildGraph();
+                }
+                updateConnectionStatus();
+                updateButtons();
+            }, {}, 5000);
+    }
+    populateServerTree();
+    updateConnectionStatus();
+}
+
+void ProjectsWidget::loadSource(const QString &id)
+{
+    SourceSession *session = this->source_sessions.value(id, nullptr);
+    if (session == nullptr || session->loading || this->source_writer->isBusy()) return;
+    ProjectServerProfile profile;
+    bool found = false;
+    for (const ProjectServerProfile &entry : this->servers)
+        if (entry.id == id) { profile = entry; found = true; break; }
+    if (!found) return;
+    session->loading = true;
+    session->state = SourceState::Loading;
+    session->error.clear();
+    populateServerTree();
+    updateConnectionStatus();
+    session->reader->load(profile, [this, id](const SourceSnapshot &snapshot, const QString &error)
+    {
+        SourceSession *current = this->source_sessions.value(id, nullptr);
+        if (current == nullptr) return;
+        current->loading = false;
         if (!error.isEmpty())
         {
-            this->source_state = SourceState::Error;
-            this->source_error = error;
-            this->connected_source_id.clear();
-            updateEmptyState();
-            updateInspector();
-            return;
+            current->state = SourceState::Error;
+            current->error = error;
         }
-        applySourceSnapshot(snapshot);
-        this->source_state = SourceState::Connected;
-        updateEmptyState();
-        const QString project_to_select = this->select_after_write_project;
-        const QString branch_to_select = this->select_after_write_branch;
-        this->select_after_write_project.clear();
-        this->select_after_write_branch.clear();
-        if (!project_to_select.isEmpty())
+        else
         {
-            for (const ProjectPreviewData &item : this->projects)
-                if (item.server_id == requested_id && item.id == project_to_select)
-                {
-                    select(SelectionKind::Project, item.id);
-                    if (!branch_to_select.isEmpty())
-                        for (const ProjectPreviewBranch &branch : item.branches)
-                            if (branch.name == branch_to_select)
-                            {
-                                select(SelectionKind::Branch, branch.id);
-                                return;
-                            }
-                    return;
-                }
+            for (int index = this->projects.size() - 1; index >= 0; --index)
+                if (this->projects.at(index).database_backed
+                    && this->projects.at(index).server_id == id)
+                    this->projects.removeAt(index);
+            applySourceSnapshot(id, snapshot);
+            const bool healthy = current->health == nullptr
+                || current->health->currentState() == HttpHealthMonitor::State::Healthy;
+            current->state = healthy ? SourceState::Connected : SourceState::Error;
+            current->error = healthy ? QString() : tr("Network health check is failing");
+            if (this->server_id == id && !this->select_after_write_project.isEmpty())
+            {
+                const QString project_to_select = this->select_after_write_project;
+                const QString branch_to_select = this->select_after_write_branch;
+                this->select_after_write_project.clear();
+                this->select_after_write_branch.clear();
+                for (const ProjectPreviewData &project : this->projects)
+                    if (project.id == project_to_select)
+                    {
+                        select(SelectionKind::Project, project.id);
+                        if (!branch_to_select.isEmpty())
+                            for (const ProjectPreviewBranch &branch : project.branches)
+                                if (branch.name == branch_to_select)
+                                {
+                                    select(SelectionKind::Branch, branch.id);
+                                    break;
+                                }
+                        break;
+                    }
+            }
         }
-        if (!this->branch_id.isEmpty()) select(SelectionKind::Branch, this->branch_id);
-        else if (!this->project_id.isEmpty()) select(SelectionKind::Project, this->project_id);
-        else select(SelectionKind::Server, requested_id);
+        populateServerTree();
+        updateEmptyState();
+        updateConnectionStatus();
+        updateButtons();
     });
 }
 
-void ProjectsWidget::applySourceSnapshot(const SourceSnapshot &snapshot)
+void ProjectsWidget::connectSource()
 {
-    QSet<QString> all_revisions;
+    loadSource(this->server_id);
+}
+
+void ProjectsWidget::applySourceSnapshot(const QString &source_id, const SourceSnapshot &snapshot)
+{
     for (const SourceProject &entry : snapshot.projects)
     {
         ProjectPreviewData project;
-        project.id = entry.id;
-        project.server_id = this->server_id;
+        project.id = source_id + QStringLiteral("|") + entry.id;
+        project.backend_id = entry.id;
+        project.server_id = source_id;
         project.name = entry.name;
         project.database_backed = true;
+        QSet<QString> revisions_seen;
         for (const SourceBranch &source_branch : entry.branches)
         {
             ProjectPreviewBranch branch;
-            branch.id = entry.id + QStringLiteral(":") + source_branch.name;
+            branch.id = project.id + QStringLiteral(":") + source_branch.name;
             branch.name = source_branch.name;
             branch.head = source_branch.head;
             if (source_branch.history_limited)
@@ -937,8 +1161,8 @@ void ProjectsWidget::applySourceSnapshot(const SourceSnapshot &snapshot)
             project.branches.append(branch);
             for (const SourceRevision &source_revision : source_branch.history)
             {
-                if (all_revisions.contains(project.id + source_revision.id)) continue;
-                all_revisions.insert(project.id + source_revision.id);
+                if (revisions_seen.contains(source_revision.id)) continue;
+                revisions_seen.insert(source_revision.id);
                 ProjectPreviewRevision revision;
                 revision.id = source_revision.id;
                 revision.parents = source_revision.parents;
@@ -949,18 +1173,11 @@ void ProjectsWidget::applySourceSnapshot(const SourceSnapshot &snapshot)
         }
         this->projects.append(project);
     }
-    this->project_id.clear();
-    this->branch_id.clear();
-    for (const ProjectPreviewData &project : this->projects)
-        if (project.server_id == this->server_id)
-        {
-            this->project_id = project.id;
-            if (!project.branches.isEmpty()) this->branch_id = project.branches.first().id;
-            break;
-        }
+    restoreVisibleSelection();
     populateProjectTree();
     populateRevisionTree();
     rebuildGraph();
+    broadcastContext();
 }
 
 void ProjectsWidget::updateSourceFields()
@@ -1027,16 +1244,41 @@ void ProjectsWidget::populateProjectTree()
 {
     const QSignalBlocker blocked(this->project_tree);
     this->project_tree->clear();
-    for (const ProjectPreviewData &project : this->projects)
+    for (const ProjectServerProfile &server : this->servers)
     {
-        if (project.server_id != this->server_id) continue;
-        QTreeWidgetItem *parent = newTreeItem(this->project_tree,
-                                               QStringLiteral("▣  ") + project.name,
-                                               keyFor(QStringLiteral("p"), project.id));
-        parent->setExpanded(project.id == this->project_id);
-        for (const ProjectPreviewBranch &branch : project.branches)
-            newTreeChild(parent, QStringLiteral("⑂  ") + branch.name,
-                         keyFor(QStringLiteral("b"), branch.id));
+        if (!server.visible) continue;
+        const bool preview = server.id == QStringLiteral("preview-local")
+            || server.id == QStringLiteral("preview-remote");
+        // Preserve the isolated demonstration explorer's original flat tree.
+        if (preview && server.id != this->server_id) continue;
+        QTreeWidgetItem *group = preview ? nullptr : newTreeItem(this->project_tree,
+            server.name, keyFor(QStringLiteral("s"), server.id));
+        if (group != nullptr)
+        {
+            QFont heading = group->font(0);
+            heading.setBold(true);
+            group->setFont(0, heading);
+            group->setExpanded(true);
+        }
+        const SourceSession *session = this->source_sessions.value(server.id, nullptr);
+        if (group != nullptr && session != nullptr && session->state == SourceState::Error)
+        {
+            group->setToolTip(0, tr("Unavailable · cached projects (read-only): %1").arg(session->error));
+            group->setForeground(0, palette().color(QPalette::Disabled, QPalette::Text));
+        }
+        for (const ProjectPreviewData &project : this->projects)
+        {
+            if (project.server_id != server.id) continue;
+            QTreeWidgetItem *parent = group != nullptr
+                ? newTreeChild(group, QStringLiteral("▣  ") + project.name,
+                    keyFor(QStringLiteral("p"), project.id))
+                : newTreeItem(this->project_tree, QStringLiteral("▣  ") + project.name,
+                    keyFor(QStringLiteral("p"), project.id));
+            parent->setExpanded(project.id == this->project_id);
+            for (const ProjectPreviewBranch &branch : project.branches)
+                newTreeChild(parent, QStringLiteral("⑂  ") + branch.name,
+                             keyFor(QStringLiteral("b"), branch.id));
+        }
     }
 }
 
@@ -1137,33 +1379,51 @@ void ProjectsWidget::populateRevisionTree()
 
 void ProjectsWidget::rebuildGraph()
 {
-    const ProjectPreviewData *project = currentProject();
     QVector<ProjectGraphNode> nodes;
-    if (project != nullptr)
+    this->graph_revision_lookup.clear();
+    int next_lane = 0;
+    for (const ProjectServerProfile &source : this->servers)
     {
-        QStringList lanes;
-        for (const ProjectPreviewBranch &branch : project->branches)
-            lanes.append(branch.name);
-        int row = 0;
-        for (const ProjectPreviewRevision &revision : project->revisions)
+        if (!source.visible) continue;
+        const bool preview = source.id == QStringLiteral("preview-local")
+            || source.id == QStringLiteral("preview-remote");
+        if (preview && source.id != this->server_id) continue;
+        for (const ProjectPreviewData &project : this->projects)
         {
-            ProjectGraphNode node;
-            node.id = revision.id;
-            node.title = revision.title;
-            node.branch = revision.branch;
-            node.parents = revision.parents;
-            node.tags = revision.tags;
-            int lane_index = lanes.indexOf(revision.branch);
-            if (lane_index < 0) lane_index = 0;
-            node.position = QPointF(lane_index * 285.0, row * 155.0);
-            for (const ProjectPreviewBranch &branch : project->branches)
-                if (branch.head == revision.id) node.head_branch = branch.name;
-            nodes.append(node);
-            ++row;
+            if (project.server_id != source.id || (preview && project.id != this->project_id)) continue;
+            QStringList lanes;
+            for (const ProjectPreviewBranch &branch : project.branches)
+                if (!lanes.contains(branch.name)) lanes.append(branch.name);
+            const int start_lane = next_lane;
+            next_lane += qMax(1, lanes.size()) + 1;
+            int row = 0;
+            for (const ProjectPreviewRevision &revision : project.revisions)
+            {
+                ProjectGraphNode node;
+                node.id = preview ? revision.id : project.id + QStringLiteral("|") + revision.id;
+                node.title = preview ? revision.title
+                    : tr("%1 / %2 · %3").arg(source.name, project.name, revision.title);
+                node.branch = preview ? revision.branch
+                    : tr("%1 / %2 / %3").arg(source.name, project.name, revision.branch);
+                for (const QString &parent : revision.parents)
+                    node.parents.append(preview ? parent : project.id + QStringLiteral("|") + parent);
+                node.tags = revision.tags;
+                const int lane = qMax(0, lanes.indexOf(revision.branch));
+                node.position = QPointF((start_lane + lane) * 285.0, row * 155.0);
+                for (const ProjectPreviewBranch &branch : project.branches)
+                    if (branch.head == revision.id) node.head_branch = branch.name;
+                this->graph_revision_lookup.insert(node.id, qMakePair(project.id, revision.id));
+                nodes.append(node);
+                ++row;
+            }
         }
     }
     this->graph->setNodes(nodes);
-    this->graph->setSelection(this->selection_kind == SelectionKind::Revision ? this->selected_id : QString());
+    const QString graph_selection = currentProject() != nullptr
+        && this->selection_kind == SelectionKind::Revision
+        ? (isPreviewSource() ? this->selected_id
+           : this->project_id + QStringLiteral("|") + this->selected_id) : QString();
+    this->graph->setSelection(graph_selection);
 }
 
 void ProjectsWidget::selectTreeItem(QTreeWidget *tree, const QString &key)
@@ -1203,7 +1463,6 @@ void ProjectsWidget::select(SelectionKind kind, const QString &id)
         if (!found) return;
         if (this->server_id != id)
         {
-            disconnectSource();
             this->server_id = id;
             this->project_id.clear();
             this->branch_id.clear();
@@ -1217,7 +1476,7 @@ void ProjectsWidget::select(SelectionKind kind, const QString &id)
             populateProjectTree();
             populateRevisionTree();
             rebuildGraph();
-            this->graph->fitGraph();
+            if (isPreviewSource()) this->graph->fitGraph();
         }
     }
     else if (kind == SelectionKind::Project)
@@ -1307,7 +1566,9 @@ void ProjectsWidget::select(SelectionKind kind, const QString &id)
     selectTreeItem(this->revision_tree,
                    kind == SelectionKind::Revision ? keyFor(QStringLiteral("r"), id) : QString());
     this->updating_ui = false;
-    this->graph->setSelection(kind == SelectionKind::Revision ? id : QString());
+    this->graph->setSelection(kind == SelectionKind::Revision
+        ? (isPreviewSource() ? id : this->project_id + QStringLiteral("|") + id)
+        : QString());
     updateInspector();
     updateEmptyState();
     if (this->inspector_dock->isHidden())
@@ -1354,7 +1615,7 @@ void ProjectsWidget::updateInspector()
         description = project->description;
         tags = project->tags;
         metadata = project->database_backed
-            ? tr("DVMDB project ID: %1 (read-only)").arg(project->id)
+            ? tr("DVMDB project ID: %1 (read-only)").arg(project->backend_id)
             : tr("Preview project ID: %1").arg(project->id);
         if (!project->source_example_resource.isEmpty())
         {
@@ -1443,8 +1704,7 @@ void ProjectsWidget::updateInspector()
 
 void ProjectsWidget::updateButtons()
 {
-    const bool ready = this->source_state == SourceState::Connected
-        && this->connected_source_id == this->server_id
+    const bool ready = isSourceReady(this->server_id)
         && !this->source_writer->isBusy();
     if (QPushButton *create_project = findChild<QPushButton *>(QStringLiteral("projectsCreateProjectButton")))
         create_project->setEnabled(!this->source_writer->isBusy()
@@ -1462,13 +1722,15 @@ void ProjectsWidget::broadcastContext()
 {
     QStringList project_names;
     for (const ProjectPreviewData &project : this->projects)
-        if (project.server_id == this->server_id) project_names.append(project.name);
+        for (const ProjectServerProfile &server : this->servers)
+            if (server.visible && server.id == project.server_id)
+                project_names.append(projectContextLabel(project, this->servers));
     QString current_name;
     QStringList branch_names;
     QString branch_name;
     if (const ProjectPreviewData *project = currentProject())
     {
-        current_name = project->name;
+        current_name = projectContextLabel(*project, this->servers);
         for (const ProjectPreviewBranch &branch : project->branches)
         {
             branch_names.append(branch.name);
@@ -1481,8 +1743,12 @@ void ProjectsWidget::broadcastContext()
 void ProjectsWidget::selectProjectByName(const QString &name)
 {
     for (const ProjectPreviewData &project : this->projects)
-        if (project.server_id == this->server_id && project.name == name)
-        { select(SelectionKind::Project, project.id); return; }
+        if (projectContextLabel(project, this->servers) == name)
+        {
+            for (const ProjectServerProfile &server : this->servers)
+                if (server.id == project.server_id && server.visible)
+                { select(SelectionKind::Project, project.id); return; }
+        }
 }
 
 void ProjectsWidget::selectBranchByName(const QString &name)
@@ -1512,7 +1778,6 @@ void ProjectsWidget::showRevisionHistory()
 void ProjectsWidget::createServer()
 {
     if (this->source_writer->isBusy()) return;
-    if (this->source_state == SourceState::Loading) disconnectSource();
     this->selection_kind = SelectionKind::NewSource;
     this->selected_id.clear();
     updateConnectionStatus();
@@ -1614,7 +1879,7 @@ void ProjectsWidget::saveNewSource()
     populateServerTree();
     updateEmptyState();
     select(SelectionKind::Server, server.id);
-    if (server.connection_type == QStringLiteral("local")) connectSource();
+    startSource(server);
 }
 
 void ProjectsWidget::deleteServer()
@@ -1624,8 +1889,8 @@ void ProjectsWidget::deleteServer()
     if (QMessageBox::question(this, tr("Delete database profile"),
         tr("Remove this database profile from the GUI configuration and discard its local preview projects? The database itself is not modified."))
         != QMessageBox::Yes) return;
-    disconnectSource();
     const QString removed = this->server_id;
+    resetSource(removed);
     const QList<ProjectServerProfile> previous_servers = this->servers;
     for (int i = this->servers.size() - 1; i >= 0; --i)
         if (this->servers.at(i).id == removed) this->servers.removeAt(i);
@@ -1677,7 +1942,8 @@ void ProjectsWidget::finishSourceWrite(const QString &created_id, const QString 
         connectSource();
         return;
     }
-    this->select_after_write_project = project_id.isEmpty() ? created_id : project_id;
+    this->select_after_write_project = this->server_id + QStringLiteral("|")
+        + (project_id.isEmpty() ? created_id : project_id);
     this->select_after_write_branch = branch_name;
     connectSource();
 }
@@ -1686,8 +1952,7 @@ void ProjectsWidget::createProject()
 {
     if (this->source_writer->isBusy() || this->selection_kind == SelectionKind::NewSource) return;
     const bool preview = isPreviewSource();
-    if (!preview && (this->source_state != SourceState::Connected
-                     || this->connected_source_id != this->server_id)) return;
+    if (!preview && !isSourceReady(this->server_id)) return;
     bool accepted = false;
     const QString name = QInputDialog::getText(this,
         preview ? tr("New project (preview)") : tr("New DVMDB project"),
@@ -1727,8 +1992,7 @@ void ProjectsWidget::createBranch(const QString &source_revision)
     ProjectPreviewData *project = currentProject();
     if (this->source_writer->isBusy() || project == nullptr) return;
     const bool preview = isPreviewSource();
-    if (!preview && (!project->database_backed || this->source_state != SourceState::Connected
-                     || this->connected_source_id != this->server_id)) return;
+    if (!preview && (!project->database_backed || !isSourceReady(this->server_id))) return;
     bool accepted = false;
     const QString name = QInputDialog::getText(this,
         preview ? tr("New branch (preview)") : tr("New DVMDB branch"),
@@ -1771,7 +2035,7 @@ void ProjectsWidget::createBranch(const QString &source_revision)
             if (const ProjectPreviewBranch *current = currentBranch())
                 from_branch = current->name;
         }
-        const QString project_id = project->id;
+        const QString project_id = project->backend_id;
         this->source_writer->createBranch(*server, project_id, name, from_branch, from_revision,
             [this, project_id, name](const QString &id, const QString &error)
             {
@@ -2161,7 +2425,10 @@ void ProjectsWidget::applyInspectorEdits()
             }
             if (server->endpoint != previous.endpoint || server->local_path != previous.local_path
                 || server->auth_mode != previous.auth_mode)
-                disconnectSource();
+            {
+                resetSource(server->id);
+                startSource(*server);
+            }
             // Keep tooltips and selection synchronized after any persisted edit.
             populateServerTree();
             selectTreeItem(this->server_tree, keyFor(QStringLiteral("s"), this->server_id));

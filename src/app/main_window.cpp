@@ -5,6 +5,7 @@
 #include "config/unit_profile_manager.h"
 #include "config/shortcut_registry.h"
 #include "config/map_server_client_configuration.h"
+#include "services/http_health_monitor.h"
 #include "map/render/map_render_diagnostics.h"
 #include <QDebug>
 #include <QPushButton>
@@ -299,7 +300,7 @@ MainWindow::MainWindow(QWidget *parent)
         this->main_navigation->setCurrentIndex(0);
         this->projects_workspace->showRevisionHistory();
     });
-    // First paint the preview context; no server or model connection is made.
+    // Restore an optional bundled-preview selection; real sources load automatically.
     this->projects_workspace->selectProjectByName(QStringLiteral("Sample North Network"));
     this->main_navigation->setCurrentIndex(0);
 
@@ -488,52 +489,25 @@ MainWindow::MainWindow(QWidget *parent)
 
 void MainWindow::checkServerMapInit()
 {
-    this->time_server_map_success_last = QDateTime::currentDateTime().addSecs(-60);
     this->footer->statusUpdateServerMap(StatusColorCode::Yellow);
-
     const MapServerClientConfiguration &configuration = mapServerClientConfiguration();
-    qInfo() << "Using configured map server URL:" << configuration.base_url;
-    this->rest_check_map = new RESTClient(configuration.base_url, configuration.api_key,
-                                          configuration.delete_api_key, this);
-    connect(this->rest_check_map, &RESTClient::requestFinished, this, [this](const QByteArray &data)
-    {
-        this->checking_server_map = false;
-
-        if (!data.contains("AOWIS map server"))
+    QString base = configuration.base_url.trimmed();
+    while (base.endsWith(QLatin1Char('/'))) base.chop(1);
+    this->map_health_monitor = new HttpHealthMonitor(this);
+    this->map_health_monitor->start(QUrl(base + QStringLiteral("/status")),
+        [](const QByteArray &body)
         {
-            qWarning() << "Configured map server did not return the expected /status response:"
-                       << data.left(512);
-            return;
-        }
-
-        this->time_server_map_success_last = QDateTime::currentDateTime();
-    });
-    connect(this->rest_check_map, &RESTClient::requestError, this, [this](const QString &error)
-    {
-        this->checking_server_map = false;
-        qWarning() << "Map server status request failed:" << error;
-    });
-
-    QTimer *timer = new QTimer(this);
-    connect(timer, &QTimer::timeout, this, &MainWindow::checkServerMap);
-    timer->start(4500);
-}
-
-void MainWindow::checkServerMap()
-{
-    if (this->checking_server_map)
-        return;
-    
-    int delta = this->time_server_map_success_last.secsTo(QDateTime::currentDateTime());
-    if (delta < 5)
-        this->footer->statusUpdateServerMap(StatusColorCode::Green);
-    else if (delta < 15)
-        this->footer->statusUpdateServerMap(StatusColorCode::Yellow);
-    else
-        this->footer->statusUpdateServerMap(StatusColorCode::Red);
-    
-    this->checking_server_map = true;
-    this->rest_check_map->get("/status");
+            return body.contains("AOWIS map server");
+        },
+        [this](HttpHealthMonitor::State state, const QString &error)
+        {
+            this->footer->statusUpdateServerMap(state == HttpHealthMonitor::State::Healthy
+                ? StatusColorCode::Green
+                : state == HttpHealthMonitor::State::Offline
+                    ? StatusColorCode::Red : StatusColorCode::Yellow);
+            if (state == HttpHealthMonitor::State::Offline)
+                qWarning() << "Map server health check failed:" << error;
+        }, configuration.api_key, 4500);
 }
 
 void MainWindow::resizeEvent(QResizeEvent *event)

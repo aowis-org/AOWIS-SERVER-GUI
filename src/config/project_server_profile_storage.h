@@ -17,6 +17,7 @@ struct ProjectServerProfile
     QString auth_mode;
     QString connection_type = QStringLiteral("remote"); // "remote" or "local"
     QString local_path;
+    bool visible = true; // include this source in the navigator and graph
 };
 
 QList<ProjectServerProfile> loadProjectServerProfiles();

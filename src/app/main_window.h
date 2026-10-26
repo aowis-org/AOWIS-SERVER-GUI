@@ -166,12 +166,8 @@ private:
     QLabel *label_image_a;
     QLabel *label_image_b;
     
-    RESTClient *rest_check_map;
-    
-    QDateTime time_server_map_success_last;
+    class HttpHealthMonitor *map_health_monitor = nullptr;
     void checkServerMapInit();
-    void checkServerMap();
-    bool checking_server_map = false;
     
 protected:
     void resizeEvent(QResizeEvent *event) override;

@@ -91,3 +91,36 @@ present data-source profile storage uses Qt settings/JSON and introduces no SQL.
 - Native/REST checkout and model revision writes still require network
   enumeration and pinned-session/expected-head integration; both are deferred.
   Do not treat the absence of these backend operations as completed CRUD.
+
+## Stage 3b — automatic source monitoring and aggregated explorer (this patch)
+
+- Database profiles are **always active**: embedded sources open on startup,
+  and remote sources start asynchronous liveness checks and catalogue loading.
+  The old Connect/Disconnect sidebar controls are removed, and manual **Refresh
+  catalogue** now belongs to the selected database's inspector.
+- A shared `HttpHealthMonitor` replaces the Map Server footer's unbounded
+  polling and is also used for remote DVMDB connections. Each request has
+  HTTP-code and service-response validation, no redirect following, an
+  inactivity timeout and an absolute deadline. The first failure is degraded;
+  two consecutive failures mark a service offline; recovery is automatic.
+  Map Server monitoring remains disabled in standalone as before. Embedded
+  DVMDB uses no network polling.
+- Health probes use `/dvmdb/v1/projects`; they **do not** fetch revision
+  history. Independent catalogue readers load each database on recovery and
+  refresh every 60 seconds. Offline catalogue snapshots remain visibly marked
+  as caches and are **not writable**. Unchecking a source only filters the
+  navigator and graph; it does not stop the health monitor.
+- Visibility checkboxes persist per database profile, defaulting to enabled
+  for existing saved profiles. The navigator groups projects by source, and
+  the revision graph shows data from every checked real database. GUI project
+  IDs and graph revision IDs are source-qualified to prevent collisions;
+  backend REST/native write calls continue to use raw DVMDB IDs.
+- The revision-sidebar remains scoped to the selected project, and the
+  top-bar project chooser uses qualified "Database / Project" labels for
+  real sources to disambiguate duplicate project names. The in-memory preview
+  fixture keeps its isolated one-project graph and flat navigator semantics.
+- Loopback tests cover two services with colliding IDs, checkbox persistence,
+  graph filtering, invalid HTTP 200 responses, offline/degraded state, and
+  recovery. The graph renderer remains the existing QWidget fallback and does
+  **not** create a second bgfx device. Full DAG paging, network checkout,
+  revision saving, lifecycle rename/delete and authentication are not added.
