@@ -220,6 +220,8 @@ qt_add_executable(aowis-server-gui
     src/tabs/tab_logs_widget.h
     src/tabs/tab_projects_widget.cpp
     src/tabs/tab_projects_widget.h
+    src/projects/project_source_reader.cpp
+    src/projects/project_source_reader.h
     src/tabs/project_revision_graph.cpp
     src/tabs/project_revision_graph.h
     src/tabs/tab_map_workspace.cpp
@@ -635,12 +637,26 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
         LABELS "aowis"
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+    # Deterministic loopback REST contract; no external DVMDB daemon required.
+    add_executable(aowis-project-source-reader-tests
+        tests/project_source_reader_test.cpp
+        src/projects/project_source_reader.cpp
+        src/projects/project_source_reader.h
+    )
+    target_include_directories(aowis-project-source-reader-tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(aowis-project-source-reader-tests PRIVATE Qt6::Core Qt6::Network)
+    add_test(NAME aowis-project-source-reader COMMAND aowis-project-source-reader-tests)
+    set_tests_properties(aowis-project-source-reader PROPERTIES LABELS "aowis")
+
     # Projects uses a real nested dock: closing it must leave the graph
     # visible and selections must still synchronize while it is hidden.
     add_executable(aowis-projects-inspector-dock-tests
         tests/projects_inspector_dock_test.cpp
         src/tabs/tab_projects_widget.cpp
         src/tabs/tab_projects_widget.h
+        src/projects/project_source_reader.cpp
+        src/projects/project_source_reader.h
         src/tabs/project_revision_graph.cpp
         src/tabs/project_revision_graph.h
         src/app/builtin_examples.cpp
@@ -653,7 +669,7 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
         src/config/shortcut_registry.h)
     target_include_directories(aowis-projects-inspector-dock-tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src)
-    target_link_libraries(aowis-projects-inspector-dock-tests PRIVATE Qt6::Widgets)
+    target_link_libraries(aowis-projects-inspector-dock-tests PRIVATE Qt6::Widgets Qt6::Network)
     add_test(NAME aowis-projects-inspector-dock
         COMMAND aowis-projects-inspector-dock-tests)
     set_tests_properties(aowis-projects-inspector-dock PROPERTIES
@@ -1313,6 +1329,7 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
         DEPENDS
             aowis-project-revision-graph-tests
             aowis-projects-inspector-dock-tests
+            aowis-project-source-reader-tests
             aowis-map-workspace-contract-tests
             aowis-map-bgfx-layer-visibility-tests
             aowis-map-workspace-diagnostics-tests

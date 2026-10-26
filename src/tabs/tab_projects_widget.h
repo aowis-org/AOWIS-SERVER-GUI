@@ -2,6 +2,7 @@
 
 #include "config/project_server_profile_storage.h"
 #include "tabs/project_revision_graph.h"
+#include "projects/project_source_reader.h"
 
 #include <QList>
 #include <QString>
@@ -15,6 +16,7 @@ class QComboBox;
 class QLabel;
 class QLineEdit;
 class QPushButton;
+class QStackedWidget;
 class QTextEdit;
 class QTreeWidget;
 class QTreeWidgetItem;
@@ -47,13 +49,14 @@ struct ProjectPreviewData
     QString name;
     QString description;
     QString source_example_resource; // template origin, preview only: network not persisted
+    bool database_backed = false;
     QStringList tags;
     QList<ProjectPreviewBranch> branches;
     QList<ProjectPreviewRevision> revisions;
 };
 
-// Server profiles are locally persisted. Project/branch/revision changes are
-// still in-memory preview data, with no DVMDB requests in this step.
+// Data-source profiles are locally persisted; real DVMDB listings are read-only.
+// The legacy example fixture is explicitly isolated from connected data.
 class ProjectsWidget final : public QWidget
 {
     Q_OBJECT
@@ -73,8 +76,11 @@ signals:
     void builtinExampleRequested(const QString &resource_path, const QString &file_name);
     void importProjectRequested();
 
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override;
+
 private:
-    enum class SelectionKind { None, Server, Project, Branch, Revision };
+    enum class SelectionKind { None, Server, Project, Branch, Revision, NewSource };
     void seedPreview();
     void populateServerTree();
     void populateProjectTree();
@@ -82,11 +88,20 @@ private:
     bool isBranchHead(const QString &revision_id) const;
     void rebuildGraph();
     void updateInspector();
+    void updateEmptyState();
+    void updateSourceFields();
     void updateButtons();
+    void connectSource();
+    void disconnectSource();
+    void applySourceSnapshot(const SourceSnapshot &snapshot);
+    void updateConnectionStatus();
+    bool isPreviewSource() const;
     void broadcastContext();
     void select(SelectionKind kind, const QString &id);
     void selectTreeItem(QTreeWidget *tree, const QString &key);
     void createServer();
+    void saveNewSource();
+    void cancelNewSource();
     void deleteServer();
     void createProject();
     void createBranch(const QString &source_revision = QString());
@@ -113,12 +128,17 @@ private:
     QTreeWidget *server_tree = nullptr;
     QLineEdit *server_endpoint_edit = nullptr;
     QComboBox *server_auth_combo = nullptr;
+    QComboBox *source_kind_combo = nullptr;
+    QLineEdit *local_path_edit = nullptr;
     QWidget *server_options = nullptr;
+    QWidget *remote_options = nullptr;
+    QWidget *local_options = nullptr;
     QTreeWidget *project_tree = nullptr;
     QTreeWidget *revision_tree = nullptr;
     QPushButton *full_tree_button = nullptr;
     bool show_full_revision_tree = true;
     ProjectRevisionGraph *graph = nullptr;
+    QStackedWidget *graph_stack = nullptr;
     QDockWidget *inspector_dock = nullptr;
     QLabel *inspector_heading = nullptr;
     QLabel *inspector_subtitle = nullptr;
@@ -127,6 +147,20 @@ private:
     QLineEdit *tags_edit = nullptr;
     QTextEdit *description_edit = nullptr;
     QPushButton *inspector_delete_button = nullptr;
+    QPushButton *source_save_button = nullptr;
+    QPushButton *source_cancel_button = nullptr;
     QPushButton *create_branch_button = nullptr;
+    ProjectSourceReader *source_reader = nullptr;
+    QPushButton *source_connect_button = nullptr;
+    QLabel *source_status = nullptr;
+    QLabel *no_projects_description = nullptr;
+    QLabel *no_projects_title = nullptr;
+    QPushButton *source_refresh_button = nullptr;
+    QLabel *preview_banner = nullptr;
+    QLabel *inspector_preview_note = nullptr;
+    QString connected_source_id;
+    QString source_error;
+    enum class SourceState { Disconnected, Loading, Connected, Error };
+    SourceState source_state = SourceState::Disconnected;
     bool updating_ui = false;
 };

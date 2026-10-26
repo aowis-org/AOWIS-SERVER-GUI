@@ -66,8 +66,72 @@ int main(int argc, char **argv)
         ProjectsWidget empty_profiles;
         QTreeWidget *empty_tree = empty_profiles.findChild<QTreeWidget *>(
             QStringLiteral("serversTree"));
+        QDockWidget *empty_dock = empty_profiles.findChild<QDockWidget *>(
+            QStringLiteral("projectsInspectorDock"));
+        QStackedWidget *empty_stack = empty_profiles.findChild<QStackedWidget *>(
+            QStringLiteral("projectsGraphStack"));
+        QPushButton *empty_add = empty_profiles.findChild<QPushButton *>(
+            QStringLiteral("projectsEmptyAddDatabaseButton"));
+        QPushButton *draft_cancel = empty_profiles.findChild<QPushButton *>(
+            QStringLiteral("projectSourceCancelButton"));
         if (!require(empty_tree != nullptr && empty_tree->topLevelItemCount() == 0,
                      "a fresh configuration contains fictitious server profiles"))
+            return 1;
+        if (!require(empty_dock != nullptr && empty_dock->isHidden()
+                         && empty_stack != nullptr && empty_stack->currentIndex() == 1
+                         && empty_add != nullptr && draft_cancel != nullptr,
+                     "empty workspace must hide the inspector and display add-database prompt"))
+            return 1;
+        empty_profiles.resize(1200, 740);
+        empty_profiles.show();
+        app.processEvents();
+        empty_add->click();
+        app.processEvents();
+        if (!require(empty_dock->isVisible() && draft_cancel->isVisible()
+                         && loadProjectServerProfiles().isEmpty(),
+                     "starting a database must only open an unsaved inspector draft"))
+            return 1;
+        draft_cancel->click();
+        app.processEvents();
+        if (!require(empty_dock->isHidden() && loadProjectServerProfiles().isEmpty(),
+                     "cancelled database draft was persisted or left the inspector open"))
+            return 1;
+    }
+
+    // The storage format supports embedded sources, while existing endpoint-only
+    // records remain REST sources. Merely displaying a local source opens no DB.
+    ProjectServerProfile embedded_fixture;
+    embedded_fixture.id = QStringLiteral("test-embedded");
+    embedded_fixture.name = QStringLiteral("Embedded fixture");
+    embedded_fixture.connection_type = QStringLiteral("local");
+    embedded_fixture.local_path = configuration_dir.path() + QStringLiteral("/embedded");
+    embedded_fixture.auth_mode = QStringLiteral("None");
+    if (!require(saveProjectServerProfiles({embedded_fixture}),
+                 "could not persist an embedded data-source fixture"))
+        return 1;
+    {
+        ProjectsWidget embedded_profiles;
+        embedded_profiles.resize(1200, 740);
+        embedded_profiles.show();
+        app.processEvents();
+        QComboBox *kind = embedded_profiles.findChild<QComboBox *>(
+            QStringLiteral("projectSourceKind"));
+        QLineEdit *path = embedded_profiles.findChild<QLineEdit *>(
+            QStringLiteral("projectLocalDvmdbPath"));
+        QWidget *local_options = path != nullptr ? path->parentWidget() : nullptr;
+        QLineEdit *endpoint = embedded_profiles.findChild<QLineEdit *>(
+            QStringLiteral("projectServerEndpoint"));
+        if (!require(kind != nullptr && kind->currentData().toString() == QStringLiteral("local")
+                         && !kind->isEnabled() && path != nullptr
+                         && path->text() == embedded_fixture.local_path
+                         && local_options != nullptr && local_options->isVisible()
+                         && endpoint != nullptr && !endpoint->isVisible(),
+                     "embedded profile did not use the local inspector fields"))
+            return 1;
+        path->setText(configuration_dir.path() + QStringLiteral("/updated-embedded"));
+        QMetaObject::invokeMethod(path, "editingFinished", Qt::DirectConnection);
+        if (!require(loadProjectServerProfiles().first().local_path == path->text(),
+                     "local directory changes were not persisted"))
             return 1;
     }
 
@@ -82,6 +146,9 @@ int main(int argc, char **argv)
          {}, QStringLiteral("API token")}
     };
     if (!require(saveProjectServerProfiles(sample_profiles), "could not seed profile fixtures"))
+        return 1;
+    if (!require(loadProjectServerProfiles().at(0).connection_type == QStringLiteral("remote"),
+                 "legacy server profile without connection type must remain REST"))
         return 1;
 
     ProjectsWidget projects;
@@ -102,7 +169,7 @@ int main(int argc, char **argv)
         return 1;
     QPushButton *delete_in_inspector = projects.findChild<QPushButton *>(
         QStringLiteral("projectInspectorDeleteButton"));
-    QPushButton *add_server = projects.findChild<QPushButton *>(
+    QToolButton *add_server = projects.findChild<QToolButton *>(
         QStringLiteral("serversCreateButton"));
     QPushButton *add_project = projects.findChild<QPushButton *>(
         QStringLiteral("projectsCreateProjectButton"));
@@ -193,7 +260,7 @@ int main(int argc, char **argv)
                  "remote server selection did not show its preview inspector"))
         return 1;
     if (!require(delete_in_inspector->isVisible()
-                     && delete_in_inspector->text() == QStringLiteral("Delete server…"),
+                     && delete_in_inspector->text() == QStringLiteral("Delete database…"),
                  "selecting a server did not offer deletion in the inspector"))
         return 1;
     // Inspector renaming replaces the redundant Rename buttons in the trees.
@@ -864,20 +931,28 @@ int main(int argc, char **argv)
                  "inspector Delete project action did not remove the preview project"))
         return 1;
 
-    // + Server writes immediately and appears after a fresh widget reload.
-    QTimer::singleShot(0, []
-    {
-        if (QInputDialog *dialog = qobject_cast<QInputDialog *>(QApplication::activeModalWidget()))
-        {
-            dialog->setTextValue(QStringLiteral("Added server"));
-            dialog->accept();
-        }
-    });
+    // The compact + opens the inspector; only Create persists a full profile.
     add_server->click();
     app.processEvents();
+    QPushButton *create_source = projects.findChild<QPushButton *>(
+        QStringLiteral("projectSourceCreateButton"));
+    QPushButton *cancel_source = projects.findChild<QPushButton *>(
+        QStringLiteral("projectSourceCancelButton"));
+    QComboBox *source_kind = projects.findChild<QComboBox *>(
+        QStringLiteral("projectSourceKind"));
+    if (!require(create_source != nullptr && cancel_source != nullptr
+                     && create_source->isVisible() && source_kind != nullptr
+                     && loadProjectServerProfiles().size() == 2,
+                 "opening the creation inspector should not save a name-only profile"))
+        return 1;
+    name->setText(QStringLiteral("Added server"));
+    endpoint->setText(QStringLiteral("https://added.example.invalid"));
+    create_source->click();
+    app.processEvents();
     if (!require(servers->topLevelItemCount() == 3
-                     && loadProjectServerProfiles().size() == 3,
-                 "+ Server did not persist a new server profile"))
+                     && loadProjectServerProfiles().size() == 3
+                     && loadProjectServerProfiles().at(2).connection_type == QStringLiteral("remote"),
+                 "inspector Create did not persist a configured remote database"))
         return 1;
     ProjectsWidget reloaded;
     QTreeWidget *reloaded_servers = reloaded.findChild<QTreeWidget *>(

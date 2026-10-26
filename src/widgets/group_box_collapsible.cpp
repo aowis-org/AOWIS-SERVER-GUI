@@ -1,7 +1,9 @@
 #include "widgets/group_box_collapsible.h"
 
+#include <QAbstractButton>
 #include <QChildEvent>
 #include <QLayout>
+#include <QResizeEvent>
 #include <QWidget>
 
 GroupBoxCollapsible::GroupBoxCollapsible(QWidget *parent)
@@ -31,6 +33,24 @@ bool GroupBoxCollapsible::isCollapsed() const
     return !isChecked();
 }
 
+void GroupBoxCollapsible::setHeaderAction(QAbstractButton *button)
+{
+    this->header_action = button;
+    if (button == nullptr) return;
+    button->setParent(this);
+    button->setFixedSize(22, 22);
+    button->move(width() - button->width() - 8, 1);
+    button->raise();
+    button->show();
+}
+
+void GroupBoxCollapsible::resizeEvent(QResizeEvent *event)
+{
+    QGroupBox::resizeEvent(event);
+    if (this->header_action != nullptr)
+        this->header_action->move(width() - this->header_action->width() - 8, 1);
+}
+
 void GroupBoxCollapsible::applyExpandedState(bool expanded)
 {
     const auto children = findChildren<QWidget *>(
@@ -39,7 +59,8 @@ void GroupBoxCollapsible::applyExpandedState(bool expanded)
         );
     
     for (QWidget *child : children)
-        child->setVisible(expanded);
+        if (child != this->header_action)
+            child->setVisible(expanded);
     
     if (layout())
         layout()->invalidate();
@@ -75,6 +96,6 @@ void GroupBoxCollapsible::childEvent(QChildEvent *event)
     
     auto *widget = qobject_cast<QWidget *>(event->child());
     
-    if (widget)
+    if (widget && widget != this->header_action)
         widget->setVisible(false);
 }

@@ -10,20 +10,28 @@
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDockWidget>
+#include <QDir>
+#include <QEvent>
+#include <QFileDialog>
 #include <QMainWindow>
 #include <QFormLayout>
 #include <QFrame>
 #include <QHash>
 #include <QHBoxLayout>
+#include <QIcon>
 #include <QInputDialog>
 #include <QSet>
+#include <QStandardItemModel>
 #include <QLabel>
 #include <QLineEdit>
+#include <QTimer>
 #include <QListWidget>
 #include <QMessageBox>
 #include <QPushButton>
 #include <QSizePolicy>
 #include <QScrollArea>
+#include <QStyle>
+#include <QStackedWidget>
 #include <QSpacerItem>
 #include <QSignalBlocker>
 #include <QSplitter>
@@ -31,11 +39,13 @@
 #include <QTreeWidget>
 #include <QTreeWidgetItem>
 #include <QTreeWidgetItemIterator>
+#include <QToolButton>
 #include <QUrl>
 #include <QUuid>
 #include <QVBoxLayout>
 
 #include <functional>
+#include <algorithm>
 
 namespace
 {
@@ -71,8 +81,10 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     : QWidget(parent)
 {
     setObjectName(QStringLiteral("projectsWorkspace"));
+    this->source_reader = new ProjectSourceReader(this);
     seedPreview();
     this->servers = loadProjectServerProfiles();
+    ensureDefaultLocalDvmdbProfile(this->servers);
     this->server_id.clear();
     this->project_id.clear();
     this->branch_id.clear();
@@ -104,9 +116,9 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     page_title->setFont(title_font);
     header_layout->addWidget(page_title);
     header_layout->addStretch();
-    QLabel *preview = new QLabel(tr("PROJECT DATA PREVIEW  ·  NOT CONNECTED TO DATABASE"), header);
-    preview->setObjectName(QStringLiteral("projectsPreviewBanner"));
-    header_layout->addWidget(preview);
+    this->preview_banner = new QLabel(header);
+    this->preview_banner->setObjectName(QStringLiteral("projectsPreviewBanner"));
+    header_layout->addWidget(this->preview_banner);
     outer->addWidget(header);
 
     // Give Projects its own dock host: closing/floating this inspector must
@@ -138,16 +150,16 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     left_layout->setContentsMargins(8, 8, 8, 8);
     left_layout->setSpacing(10);
 
-    // Server profiles are persisted locally. Selecting one scopes the preview
-    // project/branch/revision panels; no connection is opened or tested.
-    GroupBoxCollapsible *servers_group = new GroupBoxCollapsible(tr("Servers"), left);
+    // Data-source profiles are persisted locally; no connection is opened here.
+    GroupBoxCollapsible *servers_group = new GroupBoxCollapsible(tr("Databases"), left);
     servers_group->setObjectName(QStringLiteral("serversCollapsibleGroup"));
     QVBoxLayout *servers_layout = new QVBoxLayout(servers_group);
-    QPushButton *add_server = compactButton(tr("+ Server"), tr("Add a server profile to the GUI configuration"), servers_group);
+    QToolButton *add_server = new QToolButton(servers_group);
+    add_server->setText(QStringLiteral("+"));
+    add_server->setToolTip(tr("Add a database (local or REST)"));
+    add_server->setAccessibleName(tr("Add database"));
     add_server->setObjectName(QStringLiteral("serversCreateButton"));
-    add_server->setMinimumWidth(0);
-    add_server->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
-    servers_layout->addWidget(add_server);
+    servers_group->setHeaderAction(add_server);
     this->server_tree = new QTreeWidget(servers_group);
     this->server_tree->setObjectName(QStringLiteral("serversTree"));
     this->server_tree->setHeaderHidden(true);
@@ -160,9 +172,20 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     this->server_tree->setMaximumHeight(112);
     this->server_tree->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     servers_layout->addWidget(this->server_tree, 1);
-    QLabel *server_notice = new QLabel(tr("Saved profiles · Offline"), servers_group);
-    server_notice->setObjectName(QStringLiteral("serversPreviewStatus"));
-    servers_layout->addWidget(server_notice);
+    this->source_status = new QLabel(servers_group);
+    this->source_status->setObjectName(QStringLiteral("serversPreviewStatus"));
+    this->source_status->setWordWrap(true);
+    servers_layout->addWidget(this->source_status);
+    this->source_connect_button = compactButton(tr("Connect"), tr("Load the selected database catalogue"), servers_group);
+    this->source_connect_button->setObjectName(QStringLiteral("projectsSourceConnectButton"));
+    servers_layout->addWidget(this->source_connect_button);
+    this->source_refresh_button = compactButton(tr("Refresh"), tr("Reload the current database catalogue"), servers_group);
+    this->source_refresh_button->setObjectName(QStringLiteral("projectsSourceRefreshButton"));
+    servers_layout->addWidget(this->source_refresh_button);
+    QLabel *no_sources = new QLabel(tr("No databases configured"), servers_group);
+    no_sources->setObjectName(QStringLiteral("projectsNoSourcesSidebar"));
+    no_sources->setAlignment(Qt::AlignCenter);
+    servers_layout->addWidget(no_sources);
     left_layout->addWidget(servers_group, 0);
 
     // QGroupBox interprets a single & as a mnemonic marker. Use && for a visible ampersand.
@@ -284,6 +307,10 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
             [update_section_stretches](GroupBoxCollapsible *) { update_section_stretches(); });
     connect(servers_group, &GroupBoxCollapsible::signalCollapsed, left,
             [update_section_stretches](GroupBoxCollapsible *) { update_section_stretches(); });
+    connect(servers_group, &GroupBoxCollapsible::signalExpanded, this,
+            [this](GroupBoxCollapsible *) { updateEmptyState(); });
+    connect(servers_group, &GroupBoxCollapsible::signalCollapsed, this,
+            [this](GroupBoxCollapsible *) { updateEmptyState(); });
     connect(projects_group, &GroupBoxCollapsible::signalExpanded, left,
             [update_section_stretches](GroupBoxCollapsible *) { update_section_stretches(); });
     connect(projects_group, &GroupBoxCollapsible::signalCollapsed, left,
@@ -300,7 +327,10 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     QVBoxLayout *center_layout = new QVBoxLayout(center);
     center_layout->setContentsMargins(0, 8, 0, 8);
     center_layout->setSpacing(5);
-    QHBoxLayout *graph_header = new QHBoxLayout();
+    QWidget *graph_toolbar = new QWidget(center);
+    graph_toolbar->setObjectName(QStringLiteral("projectsGraphToolbar"));
+    QHBoxLayout *graph_header = new QHBoxLayout(graph_toolbar);
+    graph_header->setContentsMargins(0, 0, 0, 0);
     QLabel *graph_title = new QLabel(tr("Branch & revision graph"), center);
     QFont graph_font = graph_title->font();
     graph_font.setBold(true);
@@ -349,9 +379,44 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     QPushButton *fit_button = compactButton(tr("Fit graph"), tr("Fit all revisions to the canvas"), center);
     fit_button->setObjectName(QStringLiteral("projectsGraphFitButton"));
     graph_header->addWidget(fit_button);
-    center_layout->addLayout(graph_header);
-    this->graph = new ProjectRevisionGraph(center);
-    center_layout->addWidget(this->graph, 1);
+    center_layout->addWidget(graph_toolbar);
+    this->graph_stack = new QStackedWidget(center);
+    this->graph_stack->setObjectName(QStringLiteral("projectsGraphStack"));
+    this->graph = new ProjectRevisionGraph(this->graph_stack);
+    this->graph_stack->addWidget(this->graph);
+    QWidget *empty_page = new QWidget(this->graph_stack);
+    empty_page->setObjectName(QStringLiteral("projectsNoSourcesPage"));
+    QVBoxLayout *empty_layout = new QVBoxLayout(empty_page);
+    empty_layout->setAlignment(Qt::AlignCenter);
+    QLabel *empty_title = new QLabel(tr("No database configured"), empty_page);
+    QFont empty_font = empty_title->font();
+    empty_font.setPointSizeF(empty_font.pointSizeF() + 3);
+    empty_font.setBold(true);
+    empty_title->setFont(empty_font);
+    empty_title->setAlignment(Qt::AlignCenter);
+    QLabel *empty_description = new QLabel(tr("Add a database to explore its projects, branches and revisions."), empty_page);
+    empty_description->setAlignment(Qt::AlignCenter);
+    empty_description->setWordWrap(true);
+    QPushButton *empty_add = compactButton(tr("Add database"), tr("Configure a local or remote database"), empty_page);
+    empty_add->setObjectName(QStringLiteral("projectsEmptyAddDatabaseButton"));
+    empty_layout->addWidget(empty_title, 0, Qt::AlignHCenter);
+    empty_layout->addWidget(empty_description, 0, Qt::AlignHCenter);
+    empty_layout->addWidget(empty_add, 0, Qt::AlignHCenter);
+    this->graph_stack->addWidget(empty_page);
+    QWidget *no_projects_page = new QWidget(this->graph_stack);
+    no_projects_page->setObjectName(QStringLiteral("projectsNoProjectsPage"));
+    QVBoxLayout *no_projects_layout = new QVBoxLayout(no_projects_page);
+    no_projects_layout->setAlignment(Qt::AlignCenter);
+    this->no_projects_title = new QLabel(no_projects_page);
+    this->no_projects_title->setFont(empty_font);
+    this->no_projects_title->setAlignment(Qt::AlignCenter);
+    this->no_projects_description = new QLabel(no_projects_page);
+    this->no_projects_description->setAlignment(Qt::AlignCenter);
+    this->no_projects_description->setWordWrap(true);
+    no_projects_layout->addWidget(this->no_projects_title, 0, Qt::AlignHCenter);
+    no_projects_layout->addWidget(this->no_projects_description, 0, Qt::AlignHCenter);
+    this->graph_stack->addWidget(no_projects_page);
+    center_layout->addWidget(this->graph_stack, 1);
     splitter->addWidget(center);
 
     QScrollArea *right_scroll = new QScrollArea();
@@ -385,44 +450,88 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     this->description_edit->setMinimumHeight(100);
     this->description_edit->setMaximumHeight(190);
     form->addRow(tr("Name / title"), this->name_edit);
-    form->addRow(tr("Tags"), this->tags_edit);
-    form->addRow(tr("Description"), this->description_edit);
     right_layout->addLayout(form);
     this->server_options = new QWidget(right);
     this->server_options->setObjectName(QStringLiteral("projectServerOptions"));
-    QFormLayout *server_form = new QFormLayout(this->server_options);
+    QVBoxLayout *source_layout = new QVBoxLayout(this->server_options);
+    source_layout->setContentsMargins(0, 0, 0, 0);
+    this->source_kind_combo = new QComboBox(this->server_options);
+    this->source_kind_combo->setObjectName(QStringLiteral("projectSourceKind"));
+    this->source_kind_combo->addItem(tr("Remote database (REST)"), QStringLiteral("remote"));
+    this->source_kind_combo->addItem(tr("Local database (embedded)"), QStringLiteral("local"));
+#ifndef AOWIS_STANDALONE_DVMDB_ENABLED
+    // Existing local profiles can be inspected, but a build without DVMDB
+    // must not offer creation of an unusable embedded connection.
+    if (QStandardItemModel *model = qobject_cast<QStandardItemModel *>(this->source_kind_combo->model()))
+        model->item(1)->setEnabled(false);
+#endif
+    QFormLayout *kind_form = new QFormLayout();
+    kind_form->addRow(tr("Connection type"), this->source_kind_combo);
+    source_layout->addLayout(kind_form);
+    this->remote_options = new QWidget(this->server_options);
+    QFormLayout *server_form = new QFormLayout(this->remote_options);
     server_form->setRowWrapPolicy(QFormLayout::WrapAllRows);
     server_form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
-    this->server_endpoint_edit = new QLineEdit(this->server_options);
+    this->server_endpoint_edit = new QLineEdit(this->remote_options);
     this->server_endpoint_edit->setObjectName(QStringLiteral("projectServerEndpoint"));
     this->server_endpoint_edit->setPlaceholderText(tr("https://database.example.invalid"));
-    this->server_auth_combo = new QComboBox(this->server_options);
+    this->server_auth_combo = new QComboBox(this->remote_options);
     this->server_auth_combo->setObjectName(QStringLiteral("projectServerAuthMode"));
     this->server_auth_combo->addItem(tr("None"), QStringLiteral("None"));
     this->server_auth_combo->addItem(tr("API token"), QStringLiteral("API token"));
     this->server_auth_combo->addItem(tr("User login"), QStringLiteral("User login"));
-    server_form->addRow(tr("Server URL"), this->server_endpoint_edit);
+    server_form->addRow(tr("REST endpoint"), this->server_endpoint_edit);
     server_form->addRow(tr("Authentication (future)"), this->server_auth_combo);
-    QLabel *server_warning = new QLabel(tr("Profile stored locally. No connection is made and no credentials or tokens are stored."), this->server_options);
+    QLabel *server_warning = new QLabel(tr("Saved locally. No connection is made; credentials and tokens are not stored."), this->remote_options);
     server_warning->setWordWrap(true);
     server_form->addRow(server_warning);
+    source_layout->addWidget(this->remote_options);
+    this->local_options = new QWidget(this->server_options);
+    QFormLayout *local_form = new QFormLayout(this->local_options);
+    local_form->setRowWrapPolicy(QFormLayout::WrapAllRows);
+    local_form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+    this->local_path_edit = new QLineEdit(this->local_options);
+    this->local_path_edit->setObjectName(QStringLiteral("projectLocalDvmdbPath"));
+    this->local_path_edit->setPlaceholderText(defaultLocalDvmdbPath());
+    QPushButton *browse_path = compactButton(tr("Browse…"), tr("Choose a local DVMDB data directory"), this->local_options);
+    browse_path->setObjectName(QStringLiteral("projectLocalBrowseButton"));
+    QHBoxLayout *local_path_row = new QHBoxLayout();
+    local_path_row->addWidget(this->local_path_edit, 1);
+    local_path_row->addWidget(browse_path);
+    local_form->addRow(tr("Data directory"), local_path_row);
+    QLabel *local_warning = new QLabel(tr("Local DVMDB uses the embedded C++ library. Choose a dedicated data directory, not a directory used by a running HTTP server."), this->local_options);
+    local_warning->setWordWrap(true);
+    local_form->addRow(local_warning);
+    source_layout->addWidget(this->local_options);
     right_layout->addWidget(this->server_options);
+    QFormLayout *other_fields = new QFormLayout();
+    other_fields->setRowWrapPolicy(QFormLayout::WrapAllRows);
+    other_fields->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+    other_fields->addRow(tr("Tags"), this->tags_edit);
+    other_fields->addRow(tr("Description"), this->description_edit);
+    right_layout->addLayout(other_fields);
     this->metadata_info = new QLabel(right);
     this->metadata_info->setObjectName(QStringLiteral("projectInspectorMetadata"));
     this->metadata_info->setWordWrap(true);
     this->metadata_info->setTextInteractionFlags(Qt::TextSelectableByMouse);
     right_layout->addWidget(this->metadata_info);
-    QLabel *preview_note = new QLabel(tr("Project and revision changes are still in-memory previews. Server profile changes are saved in the GUI configuration."), right);
-    preview_note->setWordWrap(true);
-    preview_note->setObjectName(QStringLiteral("inspectorPreviewNote"));
-    right_layout->addWidget(preview_note);
+    this->inspector_preview_note = new QLabel(right);
+    this->inspector_preview_note->setWordWrap(true);
+    this->inspector_preview_note->setObjectName(QStringLiteral("inspectorPreviewNote"));
+    right_layout->addWidget(this->inspector_preview_note);
     // Renaming is handled by the Name field. Destructive operations belong
     // in the inspector for the selected server/project/branch, not in trees.
     this->inspector_delete_button = compactButton(tr("Delete"),
-        tr("Remove the selected item; server profiles are deleted from the GUI configuration"), right);
+        tr("Remove the selected item; database profiles are deleted from the GUI configuration"), right);
     this->inspector_delete_button->setObjectName(QStringLiteral("projectInspectorDeleteButton"));
+    this->source_save_button = compactButton(tr("Create"), tr("Save the new database profile"), right);
+    this->source_save_button->setObjectName(QStringLiteral("projectSourceCreateButton"));
+    this->source_cancel_button = compactButton(tr("Cancel"), tr("Discard this unsaved database"), right);
+    this->source_cancel_button->setObjectName(QStringLiteral("projectSourceCancelButton"));
     QHBoxLayout *inspector_actions = new QHBoxLayout();
     inspector_actions->addStretch(1);
+    inspector_actions->addWidget(this->source_cancel_button);
+    inspector_actions->addWidget(this->source_save_button);
     inspector_actions->addWidget(this->inspector_delete_button);
     right_layout->addLayout(inspector_actions);
     right_layout->addStretch(1);
@@ -435,12 +544,36 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
                                       QDockWidget::DockWidgetFloatable);
     this->inspector_dock->setWidget(right_scroll);
     dock_host->addDockWidget(Qt::RightDockWidgetArea, this->inspector_dock);
+    this->inspector_dock->installEventFilter(this);
+    this->inspector_dock->hide();
 
     splitter->setSizes(QList<int>{295, 720});
     splitter->setStretchFactor(0, 0);
     splitter->setStretchFactor(1, 1);
 
-    connect(add_server, &QPushButton::clicked, this, &ProjectsWidget::createServer);
+    connect(add_server, &QToolButton::clicked, this, &ProjectsWidget::createServer);
+    connect(this->source_refresh_button, &QPushButton::clicked, this, &ProjectsWidget::connectSource);
+    connect(this->source_connect_button, &QPushButton::clicked, this, [this]
+    {
+        if (this->source_state == SourceState::Loading || this->source_state == SourceState::Connected)
+            disconnectSource();
+        else connectSource();
+    });
+    connect(empty_add, &QPushButton::clicked, this, &ProjectsWidget::createServer);
+    connect(this->source_save_button, &QPushButton::clicked, this, &ProjectsWidget::saveNewSource);
+    connect(this->source_cancel_button, &QPushButton::clicked, this, &ProjectsWidget::cancelNewSource);
+    connect(this->source_kind_combo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, [this](int) { updateSourceFields(); });
+    connect(browse_path, &QPushButton::clicked, this, [this]
+    {
+        const QString path = QFileDialog::getExistingDirectory(this, tr("Select DVMDB data directory"),
+            this->local_path_edit->text());
+        if (!path.isEmpty())
+        {
+            this->local_path_edit->setText(path);
+            applyInspectorEdits();
+        }
+    });
     connect(this->server_tree, &QTreeWidget::itemSelectionChanged, this, [this]
     {
         const QList<QTreeWidgetItem *> items = this->server_tree->selectedItems();
@@ -526,6 +659,7 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
         selectBranchByName(name);
     });
     connect(this->server_endpoint_edit, &QLineEdit::editingFinished, this, &ProjectsWidget::applyInspectorEdits);
+    connect(this->local_path_edit, &QLineEdit::editingFinished, this, &ProjectsWidget::applyInspectorEdits);
     connect(this->server_auth_combo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, [this](int) { applyInspectorEdits(); });
     connect(this->inspector_delete_button, &QPushButton::clicked, this, [this]
@@ -539,6 +673,7 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     connect(this->description_edit, &QTextEdit::textChanged, this, &ProjectsWidget::applyInspectorEdits);
 
     populateServerTree();
+    updateEmptyState();
     populateProjectTree();
     populateRevisionTree();
     rebuildGraph();
@@ -552,6 +687,19 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
         updateButtons();
         broadcastContext();
     }
+    // Only the embedded default source opens automatically. Configured remote
+    // servers are not contacted until the user chooses Connect.
+    if (currentServer() != nullptr && currentServer()->connection_type == QStringLiteral("local")
+        && this->server_id == QStringLiteral("local-default"))
+        QTimer::singleShot(0, this, [this] { connectSource(); });
+}
+
+bool ProjectsWidget::eventFilter(QObject *watched, QEvent *event)
+{
+    if (watched == this->inspector_dock && event->type() == QEvent::Close
+        && this->selection_kind == SelectionKind::NewSource)
+        cancelNewSource();
+    return QWidget::eventFilter(watched, event);
 }
 
 QString ProjectsWidget::makeId(const QString &prefix)
@@ -606,10 +754,201 @@ void ProjectsWidget::populateServerTree()
     this->server_tree->clear();
     for (const ProjectServerProfile &server : this->servers)
     {
+        const bool local = server.connection_type == QStringLiteral("local");
         QTreeWidgetItem *item = newTreeItem(this->server_tree, server.name,
             keyFor(QStringLiteral("s"), server.id));
-        item->setToolTip(0, tr("%1\nSaved profile · Not connected").arg(server.endpoint));
+        item->setIcon(0, QIcon::fromTheme(local ? QStringLiteral("drive-harddisk")
+                                               : QStringLiteral("network-server"),
+            style()->standardIcon(local ? QStyle::SP_DriveHDIcon : QStyle::SP_DriveNetIcon)));
+        item->setToolTip(0, tr("%1\nSaved database profile")
+            .arg(local ? server.local_path : server.endpoint));
     }
+}
+
+void ProjectsWidget::updateEmptyState()
+{
+    const bool empty = this->servers.isEmpty();
+    const bool has_project = currentProject() != nullptr;
+    if (this->graph_stack != nullptr)
+        this->graph_stack->setCurrentIndex(empty ? 1 : has_project ? 0 : 2);
+    if (QWidget *toolbar = findChild<QWidget *>(QStringLiteral("projectsGraphToolbar")))
+        toolbar->setVisible(!empty && has_project);
+    bool expanded = true;
+    if (GroupBoxCollapsible *section = findChild<GroupBoxCollapsible *>(QStringLiteral("serversCollapsibleGroup")))
+        expanded = !section->isCollapsed();
+    if (QLabel *notice = findChild<QLabel *>(QStringLiteral("projectsNoSourcesSidebar")))
+        notice->setVisible(empty && expanded);
+    if (this->server_tree != nullptr)
+        this->server_tree->setVisible(!empty && expanded);
+    updateConnectionStatus();
+}
+
+bool ProjectsWidget::isPreviewSource() const
+{
+    // Legacy version-explorer fixture only; all actual data sources stay
+    // read-only until the explicit DVMDB write/session integration lands.
+    return this->server_id == QStringLiteral("preview-local")
+        || this->server_id == QStringLiteral("preview-remote");
+}
+
+void ProjectsWidget::updateConnectionStatus()
+{
+    if (this->source_status == nullptr || this->source_connect_button == nullptr) return;
+    const ProjectServerProfile *server = nullptr;
+    for (const ProjectServerProfile &candidate : this->servers)
+        if (candidate.id == this->server_id) { server = &candidate; break; }
+    const bool has_server = server != nullptr;
+    this->source_connect_button->setVisible(has_server && !isPreviewSource()
+        && this->selection_kind != SelectionKind::NewSource);
+    const QString status = this->source_state == SourceState::Loading ? tr("Loading database…")
+        : this->source_state == SourceState::Connected ? tr("Loaded snapshot · read-only")
+        : this->source_state == SourceState::Error ? tr("Connection failed: %1").arg(this->source_error)
+        : tr("Not connected");
+    this->source_status->setVisible(has_server);
+    this->source_status->setText(isPreviewSource() ? tr("In-memory demonstration") : status);
+    this->source_refresh_button->setVisible(has_server && !isPreviewSource()
+        && this->source_state == SourceState::Connected
+        && this->selection_kind != SelectionKind::NewSource);
+    this->source_connect_button->setText(this->source_state == SourceState::Loading ? tr("Cancel")
+        : this->source_state == SourceState::Connected ? tr("Disconnect")
+        : this->source_state == SourceState::Error ? tr("Retry") : tr("Connect"));
+    if (this->no_projects_title != nullptr)
+        this->no_projects_title->setText(this->source_state == SourceState::Loading ? tr("Loading projects")
+            : this->source_state == SourceState::Connected ? tr("No projects")
+            : this->source_state == SourceState::Error ? tr("Could not load projects")
+            : tr("No projects loaded"));
+    if (this->no_projects_description != nullptr)
+        this->no_projects_description->setText(isPreviewSource()
+            ? tr("This is an in-memory demonstration with no persisted data.")
+            : this->source_state == SourceState::Loading ? tr("Reading DVMDB project catalogue…")
+            : this->source_state == SourceState::Connected ? tr("This database contains no projects.")
+            : this->source_state == SourceState::Error ? tr("Connection failed: %1").arg(this->source_error)
+            : tr("Select Connect to load this database's projects."));
+    if (this->preview_banner != nullptr)
+        this->preview_banner->setText(isPreviewSource() ? tr("IN-MEMORY PREVIEW")
+            : this->source_state == SourceState::Connected ? tr("DVMDB SNAPSHOT · READ-ONLY · FIRST-PARENT HISTORY")
+            : tr("DATABASE NOT CONNECTED"));
+    if (this->inspector_preview_note != nullptr)
+        this->inspector_preview_note->setText(isPreviewSource()
+            ? tr("Only this demonstration uses in-memory project and revision edits.")
+            : tr("DVMDB projects, branches and revisions are read-only. The service does not yet provide editable revision annotations or full DAG paging."));
+}
+
+void ProjectsWidget::disconnectSource()
+{
+    this->source_reader->cancel();
+    this->connected_source_id.clear();
+    this->source_state = SourceState::Disconnected;
+    this->source_error.clear();
+    for (int i = this->projects.size() - 1; i >= 0; --i)
+        if (this->projects.at(i).database_backed) this->projects.removeAt(i);
+    // A source is never allowed to keep stale, disconnected revision data.
+    this->project_id.clear();
+    this->branch_id.clear();
+    this->selection_kind = SelectionKind::Server;
+    this->selected_id = this->server_id;
+    populateProjectTree();
+    populateRevisionTree();
+    rebuildGraph();
+    updateInspector();
+    updateEmptyState();
+    updateButtons();
+    broadcastContext();
+}
+
+void ProjectsWidget::connectSource()
+{
+    ProjectServerProfile *server = currentServer();
+    if (server == nullptr || isPreviewSource()) return;
+    // Abort previous request and erase stale data before any asynchronous load.
+    disconnectSource();
+    this->source_state = SourceState::Loading;
+    this->connected_source_id = server->id;
+    updateConnectionStatus();
+    const QString requested_id = server->id;
+    this->source_reader->load(*server, [this, requested_id](const SourceSnapshot &snapshot, const QString &error)
+    {
+        if (requested_id != this->server_id || this->connected_source_id != requested_id) return;
+        if (!error.isEmpty())
+        {
+            this->source_state = SourceState::Error;
+            this->source_error = error;
+            this->connected_source_id.clear();
+            updateEmptyState();
+            updateInspector();
+            return;
+        }
+        applySourceSnapshot(snapshot);
+        this->source_state = SourceState::Connected;
+        updateEmptyState();
+        if (!this->branch_id.isEmpty()) select(SelectionKind::Branch, this->branch_id);
+        else if (!this->project_id.isEmpty()) select(SelectionKind::Project, this->project_id);
+        else select(SelectionKind::Server, requested_id);
+    });
+}
+
+void ProjectsWidget::applySourceSnapshot(const SourceSnapshot &snapshot)
+{
+    QSet<QString> all_revisions;
+    for (const SourceProject &entry : snapshot.projects)
+    {
+        ProjectPreviewData project;
+        project.id = entry.id;
+        project.server_id = this->server_id;
+        project.name = entry.name;
+        project.database_backed = true;
+        for (const SourceBranch &source_branch : entry.branches)
+        {
+            ProjectPreviewBranch branch;
+            branch.id = entry.id + QStringLiteral(":") + source_branch.name;
+            branch.name = source_branch.name;
+            branch.head = source_branch.head;
+            if (source_branch.history_limited)
+                branch.description = tr("Showing the latest 100 first-parent revisions only.");
+            project.branches.append(branch);
+            for (const SourceRevision &source_revision : source_branch.history)
+            {
+                if (all_revisions.contains(project.id + source_revision.id)) continue;
+                all_revisions.insert(project.id + source_revision.id);
+                ProjectPreviewRevision revision;
+                revision.id = source_revision.id;
+                revision.parents = source_revision.parents;
+                revision.branch = branch.name;
+                revision.title = tr("Revision %1").arg(revision.id.left(12));
+                project.revisions.append(revision);
+            }
+        }
+        this->projects.append(project);
+    }
+    this->project_id.clear();
+    this->branch_id.clear();
+    for (const ProjectPreviewData &project : this->projects)
+        if (project.server_id == this->server_id)
+        {
+            this->project_id = project.id;
+            if (!project.branches.isEmpty()) this->branch_id = project.branches.first().id;
+            break;
+        }
+    populateProjectTree();
+    populateRevisionTree();
+    rebuildGraph();
+}
+
+void ProjectsWidget::updateSourceFields()
+{
+    if (this->server_options == nullptr) return;
+    const bool source = this->selection_kind == SelectionKind::Server
+        || this->selection_kind == SelectionKind::NewSource;
+    this->server_options->setVisible(source);
+    if (!source) return;
+    const bool creating = this->selection_kind == SelectionKind::NewSource;
+    this->source_kind_combo->setEnabled(creating);
+    // Changing the type of an already configured source is deliberately not
+    // supported: it would silently reinterpret a URL as a filesystem path.
+    const bool local = this->source_kind_combo->currentData().toString()
+        == QStringLiteral("local");
+    this->remote_options->setVisible(!local);
+    this->local_options->setVisible(local);
 }
 
 ProjectPreviewData *ProjectsWidget::currentProject()
@@ -830,6 +1169,7 @@ void ProjectsWidget::select(SelectionKind kind, const QString &id)
         if (!found) return;
         if (this->server_id != id)
         {
+            disconnectSource();
             this->server_id = id;
             this->project_id.clear();
             this->branch_id.clear();
@@ -933,6 +1273,9 @@ void ProjectsWidget::select(SelectionKind kind, const QString &id)
     this->updating_ui = false;
     this->graph->setSelection(kind == SelectionKind::Revision ? id : QString());
     updateInspector();
+    updateEmptyState();
+    if (this->inspector_dock->isHidden())
+        this->inspector_dock->show();
     updateButtons();
     broadcastContext();
 }
@@ -949,16 +1292,23 @@ void ProjectsWidget::updateInspector()
     bool editable = true;
 
     ProjectPreviewData *project = currentProject();
-    if (this->selection_kind == SelectionKind::Server)
+    if (this->selection_kind == SelectionKind::NewSource)
+    {
+        heading = tr("New database");
+        subtitle = tr("Configure a data source. Nothing is saved until you select Create.");
+        metadata = tr("Local and REST sources share the same read-only project explorer.");
+    }
+    else if (this->selection_kind == SelectionKind::Server)
     {
         if (ProjectServerProfile *server = currentServer())
         {
-            heading = tr("Server");
+            heading = tr("Database");
             name = server->name;
             description = server->description;
             tags = server->tags;
-            subtitle = tr("Saved GUI profile · not connected");
-            metadata = tr("Profile: %1\nStatus: Not connected").arg(server->id);
+            subtitle = server->connection_type == QStringLiteral("local")
+                ? tr("Embedded DVMDB") : tr("REST DVMDB");
+            metadata = tr("Profile: %1").arg(server->id);
         }
     }
     else if (this->selection_kind == SelectionKind::Project && project != nullptr)
@@ -967,7 +1317,9 @@ void ProjectsWidget::updateInspector()
         name = project->name;
         description = project->description;
         tags = project->tags;
-        metadata = tr("Preview project ID: %1").arg(project->id);
+        metadata = project->database_backed
+            ? tr("DVMDB project ID: %1 (read-only)").arg(project->id)
+            : tr("Preview project ID: %1").arg(project->id);
         if (!project->source_example_resource.isEmpty())
         {
             metadata += tr("\nSource: bundled example (%1)\n"
@@ -985,7 +1337,7 @@ void ProjectsWidget::updateInspector()
                     name = branch.name;
                     description = branch.description;
                     tags = branch.tags;
-                    metadata = tr("Head revision: %1\nBranch ID: %2").arg(branch.head, branch.id);
+                    metadata = tr("Head revision: %1\nBranch: %2").arg(branch.head, branch.name);
                 }
     }
     else if (this->selection_kind == SelectionKind::Revision)
@@ -996,7 +1348,9 @@ void ProjectsWidget::updateInspector()
             name = revision->title;
             description = revision->description;
             tags = revision->tags;
-            subtitle = tr("Historical model state is immutable; these are preview annotations only.");
+            subtitle = project != nullptr && project->database_backed
+                ? tr("Immutable DVMDB revision (read-only; metadata editing unavailable).")
+                : tr("Historical model state is immutable; these are preview annotations only.");
             metadata = tr("Revision: %1\nBranch: %2\nParents: %3\nAuthor: %4\nCreated: %5")
                 .arg(revision->id, revision->branch,
                      revision->parents.isEmpty() ? tr("(root)") : revision->parents.join(QStringLiteral(", ")),
@@ -1008,16 +1362,18 @@ void ProjectsWidget::updateInspector()
         editable = false;
         subtitle = tr("Select a server, project, branch, or revision.");
     }
-    const bool server_selected = this->selection_kind == SelectionKind::Server
-        && currentServer() != nullptr;
-    this->server_options->setVisible(server_selected);
-    if (server_selected)
+    const bool new_source = this->selection_kind == SelectionKind::NewSource;
+    if (this->selection_kind == SelectionKind::Server && currentServer() != nullptr)
     {
         const ProjectServerProfile *server = currentServer();
+        const int kind_index = this->source_kind_combo->findData(server->connection_type);
+        this->source_kind_combo->setCurrentIndex(kind_index < 0 ? 0 : kind_index);
         this->server_endpoint_edit->setText(server->endpoint);
+        this->local_path_edit->setText(server->local_path);
         const int index = this->server_auth_combo->findData(server->auth_mode);
         this->server_auth_combo->setCurrentIndex(index < 0 ? 0 : index);
     }
+    updateSourceFields();
     this->inspector_heading->setText(heading);
     this->inspector_subtitle->setText(subtitle);
     this->inspector_subtitle->setVisible(!subtitle.isEmpty());
@@ -1025,9 +1381,13 @@ void ProjectsWidget::updateInspector()
     this->tags_edit->setText(tags.join(QStringLiteral(", ")));
     this->description_edit->setPlainText(description);
     this->metadata_info->setText(metadata);
-    this->name_edit->setEnabled(editable);
-    this->tags_edit->setEnabled(editable);
-    this->description_edit->setEnabled(editable);
+    const bool real_data = project != nullptr && project->database_backed
+        && (this->selection_kind == SelectionKind::Project
+            || this->selection_kind == SelectionKind::Branch
+            || this->selection_kind == SelectionKind::Revision);
+    this->name_edit->setEnabled(editable && !real_data);
+    this->tags_edit->setEnabled(editable && !real_data);
+    this->description_edit->setEnabled(editable && !real_data);
     const bool deletable_server = this->selection_kind == SelectionKind::Server
         && currentServer() != nullptr;
     const bool deletable_project = this->selection_kind == SelectionKind::Project
@@ -1035,24 +1395,24 @@ void ProjectsWidget::updateInspector()
     const bool deletable_branch = this->selection_kind == SelectionKind::Branch
         && currentBranch() != nullptr;
     this->inspector_delete_button->setVisible(
-        deletable_server || deletable_project || deletable_branch);
-    this->inspector_delete_button->setText(deletable_server ? tr("Delete server…")
+        (deletable_server && this->server_id != QStringLiteral("local-default"))
+        || ((deletable_project || deletable_branch) && !real_data));
+    this->inspector_delete_button->setText(deletable_server ? tr("Delete database…")
         : deletable_project ? tr("Delete project…") : tr("Delete branch…"));
+    this->source_save_button->setVisible(new_source);
+    this->source_cancel_button->setVisible(new_source);
     this->updating_ui = false;
-
-    // The close button hides the inspector until the next action updates its
-    // contents (tree, graph, toolbar selection, creation/rename/deletion, etc.).
-    // isHidden() tests the dock's own close state, rather than the visibility
-    // of its parent page in the tab navigator.
-    if (this->inspector_dock != nullptr && this->inspector_dock->isHidden())
-        this->inspector_dock->show();
+    updateConnectionStatus();
 }
 
 void ProjectsWidget::updateButtons()
 {
     if (QPushButton *create_project = findChild<QPushButton *>(QStringLiteral("projectsCreateProjectButton")))
-        create_project->setEnabled(currentServer() != nullptr);
-    this->create_branch_button->setEnabled(currentProject() != nullptr);
+        create_project->setEnabled(isPreviewSource()
+            && this->selection_kind != SelectionKind::NewSource);
+    this->create_branch_button->setEnabled(isPreviewSource() && currentProject() != nullptr
+        && !currentProject()->database_backed
+        && this->selection_kind != SelectionKind::NewSource);
     // Keep the action label short and stable so the three-button row never
     // changes width when selecting a historical revision. createBranch()
     // already uses the selected revision as the branch base when applicable.
@@ -1111,20 +1471,98 @@ void ProjectsWidget::showRevisionHistory()
 
 void ProjectsWidget::createServer()
 {
-    bool accepted = false;
-    const QString name = QInputDialog::getText(this, tr("New server"),
-        tr("Server name"), QLineEdit::Normal, QString(), &accepted).trimmed();
-    if (!accepted || name.isEmpty()) return;
+    if (this->source_state == SourceState::Loading) disconnectSource();
+    this->selection_kind = SelectionKind::NewSource;
+    this->selected_id.clear();
+    updateConnectionStatus();
+    this->updating_ui = true;
+    selectTreeItem(this->server_tree, QString());
+    selectTreeItem(this->project_tree, QString());
+    selectTreeItem(this->revision_tree, QString());
+    this->source_kind_combo->setCurrentIndex(0);
+    this->server_endpoint_edit->clear();
+    this->server_auth_combo->setCurrentIndex(0);
+    this->updating_ui = false;
+    updateInspector();
+    this->local_path_edit->setText(defaultLocalDvmdbPath());
+    updateSourceFields();
+    this->inspector_dock->show();
+    this->name_edit->setFocus();
+}
+
+void ProjectsWidget::cancelNewSource()
+{
+    if (this->selection_kind != SelectionKind::NewSource) return;
+    this->selection_kind = SelectionKind::None;
+    this->selected_id.clear();
+    this->inspector_dock->hide();
+    updateInspector();
+    updateButtons();
+}
+
+void ProjectsWidget::saveNewSource()
+{
+    if (this->selection_kind != SelectionKind::NewSource) return;
+    const QString name = this->name_edit->text().trimmed();
+    if (name.isEmpty())
+    {
+        QMessageBox::warning(this, tr("Invalid name"), tr("Enter a database name."));
+        this->name_edit->setFocus();
+        return;
+    }
     for (const ProjectServerProfile &server : this->servers)
         if (server.name.compare(name, Qt::CaseInsensitive) == 0)
         {
-            QMessageBox::information(this, tr("Already exists"), tr("Choose a different server name."));
+            QMessageBox::warning(this, tr("Already exists"), tr("Choose a different database name."));
             return;
         }
     ProjectServerProfile server;
     server.id = makeId(QStringLiteral("s-"));
     server.name = name;
-    server.auth_mode = QStringLiteral("None");
+    server.connection_type = this->source_kind_combo->currentData().toString();
+    server.description = this->description_edit->toPlainText();
+    server.tags = parseTags(this->tags_edit->text());
+    server.auth_mode = this->server_auth_combo->currentData().toString();
+    if (server.connection_type == QStringLiteral("local"))
+    {
+#ifndef AOWIS_STANDALONE_DVMDB_ENABLED
+        QMessageBox::warning(this, tr("Embedded database unavailable"),
+            tr("This application was built without embedded DVMDB support."));
+        return;
+#endif
+        server.auth_mode = QStringLiteral("None");
+        server.local_path = QDir::cleanPath(this->local_path_edit->text().trimmed());
+        if (!QDir::isAbsolutePath(server.local_path))
+        {
+            QMessageBox::warning(this, tr("Invalid directory"),
+                tr("Enter an absolute path for the local DVMDB data directory."));
+            this->local_path_edit->setFocus();
+            return;
+        }
+        for (const ProjectServerProfile &existing : this->servers)
+            if (existing.connection_type == QStringLiteral("local")
+                && QDir::cleanPath(existing.local_path) == server.local_path)
+            {
+                QMessageBox::warning(this, tr("Database already configured"),
+                    tr("This local data directory is already configured."));
+                return;
+            }
+    }
+    else
+    {
+        server.endpoint = this->server_endpoint_edit->text().trimmed();
+        const QUrl url(server.endpoint);
+        if (server.endpoint.isEmpty() || !url.isValid()
+            || (url.scheme() != QStringLiteral("http") && url.scheme() != QStringLiteral("https"))
+            || url.host().isEmpty() || !url.userInfo().isEmpty()
+            || url.hasQuery() || url.hasFragment())
+        {
+            QMessageBox::warning(this, tr("Invalid database URL"),
+                tr("Enter an http:// or https:// URL with a host, without credentials, query or fragment."));
+            this->server_endpoint_edit->setFocus();
+            return;
+        }
+    }
     this->servers.append(server);
     if (!saveProjectServerProfiles(this->servers))
     {
@@ -1133,15 +1571,18 @@ void ProjectsWidget::createServer()
         return;
     }
     populateServerTree();
+    updateEmptyState();
     select(SelectionKind::Server, server.id);
+    if (server.connection_type == QStringLiteral("local")) connectSource();
 }
 
 void ProjectsWidget::deleteServer()
 {
-    if (currentServer() == nullptr) return;
-    if (QMessageBox::question(this, tr("Delete server profile"),
-        tr("Remove this server profile from the GUI configuration and discard its local preview projects? No database server is contacted."))
+    if (currentServer() == nullptr || this->server_id == QStringLiteral("local-default")) return;
+    if (QMessageBox::question(this, tr("Delete database profile"),
+        tr("Remove this database profile from the GUI configuration and discard its local preview projects? The database itself is not modified."))
         != QMessageBox::Yes) return;
+    disconnectSource();
     const QString removed = this->server_id;
     const QList<ProjectServerProfile> previous_servers = this->servers;
     for (int i = this->servers.size() - 1; i >= 0; --i)
@@ -1160,6 +1601,7 @@ void ProjectsWidget::deleteServer()
     populateServerTree();
     this->selection_kind = SelectionKind::None;
     this->selected_id.clear();
+    updateEmptyState();
     if (!this->servers.isEmpty()) select(SelectionKind::Server, this->servers.first().id);
     else
     {
@@ -1167,6 +1609,7 @@ void ProjectsWidget::deleteServer()
         populateRevisionTree();
         rebuildGraph();
         updateInspector();
+        this->inspector_dock->hide();
         updateButtons();
         broadcastContext();
     }
@@ -1174,14 +1617,14 @@ void ProjectsWidget::deleteServer()
 
 void ProjectsWidget::reportServerSaveFailure()
 {
-    QMessageBox::warning(this, tr("Cannot save server profiles"),
-        tr("The server profile change could not be written to the GUI configuration:\n%1")
+    QMessageBox::warning(this, tr("Cannot save database profiles"),
+        tr("The database profile change could not be written to the GUI configuration:\n%1")
             .arg(guiConfigurationFilePath()));
 }
 
 void ProjectsWidget::createProject()
 {
-    if (currentServer() == nullptr) return;
+    if (!isPreviewSource()) return;
     bool accepted = false;
     QString name = QInputDialog::getText(this, tr("New project (preview)"), tr("Project name"),
                                          QLineEdit::Normal, QString(), &accepted).trimmed();
@@ -1205,7 +1648,7 @@ void ProjectsWidget::createProject()
 void ProjectsWidget::createBranch(const QString &source_revision)
 {
     ProjectPreviewData *project = currentProject();
-    if (project == nullptr) return;
+    if (!isPreviewSource() || project == nullptr || project->database_backed) return;
     bool accepted = false;
     const QString name = QInputDialog::getText(this, tr("New branch (preview)"), tr("Branch name"),
                                                 QLineEdit::Normal, QString(), &accepted).trimmed();
@@ -1237,6 +1680,7 @@ void ProjectsWidget::deleteSelection()
     const SelectionKind kind = this->selection_kind;
     const QString id = this->selected_id;
     if (kind != SelectionKind::Project && kind != SelectionKind::Branch) return;
+    if (!isPreviewSource() || (currentProject() != nullptr && currentProject()->database_backed)) return;
     if (QMessageBox::question(this, tr("Delete from preview"),
         tr("Remove this %1 from the in-memory UI preview? No database data is touched.")
             .arg(kind == SelectionKind::Project ? tr("project") : tr("branch"))) != QMessageBox::Yes)
@@ -1268,9 +1712,15 @@ void ProjectsWidget::deleteSelection()
         select(SelectionKind::Project, this->project_id);
     else if (!this->branch_id.isEmpty())
         select(SelectionKind::Branch, this->branch_id);
+    else if (currentProject() != nullptr)
+        select(SelectionKind::Project, this->project_id);
+    else if (currentServer() != nullptr)
+        select(SelectionKind::Server, this->server_id);
     else
     {
         updateInspector();
+        updateEmptyState();
+        this->inspector_dock->hide();
         updateButtons();
         broadcastContext();
     }
@@ -1291,8 +1741,7 @@ void ProjectsWidget::browseExamples()
     heading_font.setPointSizeF(heading_font.pointSizeF() + 2);
     heading->setFont(heading_font);
     layout->addWidget(heading);
-    QLabel *intro = new QLabel(tr("Open a network for experimentation, or prepare a new project "
-                                "on any configured server."), &browser);
+    QLabel *intro = new QLabel(tr("Open an example network in the editor, or create an isolated in-memory demonstration."), &browser);
     intro->setWordWrap(true);
     layout->addWidget(intro);
 
@@ -1343,9 +1792,14 @@ void ProjectsWidget::browseExamples()
     QPushButton *open_button = compactButton(tr("Open in editor"),
         tr("Load this EPANET example into the current working model"), &browser);
     open_button->setObjectName(QStringLiteral("exampleLibraryOpenButton"));
-    QPushButton *create_button = compactButton(tr("Create project from example…"),
+    QPushButton *create_button = compactButton(tr("Create preview project…"),
         tr("Choose a target server and prepare a project preview"), &browser);
     create_button->setObjectName(QStringLiteral("exampleLibraryCreateButton"));
+    bool has_preview_profile = false;
+    for (const ProjectServerProfile &source : this->servers)
+        if (source.id == QStringLiteral("preview-local") || source.id == QStringLiteral("preview-remote"))
+            has_preview_profile = true;
+    create_button->setVisible(has_preview_profile);
     buttons->addWidget(close_button);
     buttons->addWidget(open_button);
     buttons->addWidget(create_button);
@@ -1409,10 +1863,12 @@ void ProjectsWidget::browseExamples()
 
 void ProjectsWidget::createProjectFromExample(const BuiltinExampleRevision &example)
 {
-    if (this->servers.isEmpty())
+    if (this->servers.isEmpty() || !std::any_of(this->servers.cbegin(), this->servers.cend(),
+        [](const ProjectServerProfile &source)
+        { return source.id == QStringLiteral("preview-local") || source.id == QStringLiteral("preview-remote"); }))
     {
-        QMessageBox::information(this, tr("No servers configured"),
-            tr("Add a server profile before preparing a project from an example."));
+        QMessageBox::information(this, tr("No preview database"),
+            tr("Creating an in-memory example project is only available in the demonstration profile."));
         return;
     }
 
@@ -1425,7 +1881,8 @@ void ProjectsWidget::createProjectFromExample(const BuiltinExampleRevision &exam
     QComboBox *server = new QComboBox(&dialog);
     server->setObjectName(QStringLiteral("exampleCreateServer"));
     for (const ProjectServerProfile &entry : this->servers)
-        server->addItem(entry.name, entry.id);
+        if (entry.id == QStringLiteral("preview-local") || entry.id == QStringLiteral("preview-remote"))
+            server->addItem(entry.name, entry.id);
     const int selected_server = server->findData(this->server_id);
     if (selected_server >= 0) server->setCurrentIndex(selected_server);
     QLineEdit *project_name = new QLineEdit(example.display_name, &dialog);
@@ -1436,7 +1893,7 @@ void ProjectsWidget::createProjectFromExample(const BuiltinExampleRevision &exam
     tags->setObjectName(QStringLiteral("exampleCreateTags"));
     QLineEdit *description = new QLineEdit(tr("Based on %1").arg(example.display_name), &dialog);
     description->setObjectName(QStringLiteral("exampleCreateDescription"));
-    fields->addRow(tr("Destination server"), server);
+    fields->addRow(tr("Destination database"), server);
     fields->addRow(tr("Project name"), project_name);
     fields->addRow(tr("Initial branch"), branch_name);
     fields->addRow(tr("Tags"), tags);
@@ -1515,7 +1972,7 @@ void ProjectsWidget::applyInspectorEdits()
         {
             if (sender() == this->name_edit)
             {
-                QMessageBox::warning(this, tr("Invalid server name"), tr("A server name cannot be empty."));
+                QMessageBox::warning(this, tr("Invalid database name"), tr("A database name cannot be empty."));
                 this->name_edit->setText(server->name);
             }
         }
@@ -1529,31 +1986,47 @@ void ProjectsWidget::applyInspectorEdits()
             {
                 if (sender() == this->name_edit)
                 {
-                    QMessageBox::warning(this, tr("Already exists"), tr("Choose a different server name."));
+                    QMessageBox::warning(this, tr("Already exists"), tr("Choose a different database name."));
                     this->name_edit->setText(server->name);
                 }
             }
             else server->name = name;
         }
-        const QString endpoint = this->server_endpoint_edit->text().trimmed();
-        const QUrl url(endpoint);
-        if (!endpoint.isEmpty() && (!url.isValid()
+        if (server->connection_type == QStringLiteral("local"))
+        {
+            const QString path = QDir::cleanPath(this->local_path_edit->text().trimmed());
+            if (QDir::isAbsolutePath(path))
+                server->local_path = path;
+            else if (sender() == this->local_path_edit)
+            {
+                QMessageBox::warning(this, tr("Invalid directory"),
+                    tr("Enter an absolute path for the local DVMDB data directory."));
+                this->local_path_edit->setText(server->local_path);
+            }
+        }
+        else
+        {
+            const QString endpoint = this->server_endpoint_edit->text().trimmed();
+            const QUrl url(endpoint);
+            if (!endpoint.isEmpty() && (!url.isValid()
                 || (url.scheme() != QStringLiteral("http")
                     && url.scheme() != QStringLiteral("https")) || url.host().isEmpty()
                 || !url.userInfo().isEmpty() || url.hasQuery() || url.hasFragment()))
-        {
-            if (sender() == this->server_endpoint_edit)
             {
-                QMessageBox::warning(this, tr("Invalid server URL"),
-                    tr("Use an http:// or https:// URL with a host, without embedded credentials, query or fragment."));
-                this->server_endpoint_edit->setText(server->endpoint);
+                if (sender() == this->server_endpoint_edit)
+                {
+                    QMessageBox::warning(this, tr("Invalid server URL"),
+                        tr("Use an http:// or https:// URL with a host, without embedded credentials, query or fragment."));
+                    this->server_endpoint_edit->setText(server->endpoint);
+                }
             }
+            else server->endpoint = endpoint;
+            server->auth_mode = this->server_auth_combo->currentData().toString();
         }
-        else server->endpoint = endpoint;
-        server->auth_mode = this->server_auth_combo->currentData().toString();
         server->description = description;
         server->tags = tags;
         if (server->name != previous.name || server->endpoint != previous.endpoint
+            || server->local_path != previous.local_path
             || server->auth_mode != previous.auth_mode
             || server->description != previous.description || server->tags != previous.tags)
         {
@@ -1564,6 +2037,9 @@ void ProjectsWidget::applyInspectorEdits()
                 reportServerSaveFailure();
                 return;
             }
+            if (server->endpoint != previous.endpoint || server->local_path != previous.local_path
+                || server->auth_mode != previous.auth_mode)
+                disconnectSource();
             // Keep tooltips and selection synchronized after any persisted edit.
             populateServerTree();
             selectTreeItem(this->server_tree, keyFor(QStringLiteral("s"), this->server_id));
@@ -1572,6 +2048,7 @@ void ProjectsWidget::applyInspectorEdits()
     else if (this->selection_kind == SelectionKind::Project)
     {
         ProjectPreviewData *project = currentProject();
+        if (project != nullptr && project->database_backed) return;
         if (project == nullptr) return;
         if (!name.isEmpty() && name != project->name)
         {
@@ -1587,6 +2064,7 @@ void ProjectsWidget::applyInspectorEdits()
     else if (this->selection_kind == SelectionKind::Branch)
     {
         ProjectPreviewData *project = currentProject();
+        if (project != nullptr && project->database_backed) return;
         if (project == nullptr) return;
         for (ProjectPreviewBranch &branch : project->branches)
             if (branch.id == this->selected_id)
@@ -1612,6 +2090,7 @@ void ProjectsWidget::applyInspectorEdits()
     }
     else if (this->selection_kind == SelectionKind::Revision)
     {
+        if (currentProject() != nullptr && currentProject()->database_backed) return;
         if (ProjectPreviewRevision *revision = selectedRevision())
         {
             if (!name.isEmpty() && revision->title != name) { revision->title = name; tree_changed = true; }

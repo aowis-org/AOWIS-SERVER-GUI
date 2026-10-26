@@ -7,6 +7,8 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSet>
+#include <QStandardPaths>
+#include <QDir>
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
@@ -61,7 +63,9 @@ QJsonObject serializeProfile(const ProjectServerProfile &profile)
         {QStringLiteral("endpoint"), profile.endpoint},
         {QStringLiteral("description"), profile.description},
         {QStringLiteral("tags"), tags},
-        {QStringLiteral("auth_mode"), profile.auth_mode}
+        {QStringLiteral("auth_mode"), profile.auth_mode},
+        {QStringLiteral("connection_type"), profile.connection_type},
+        {QStringLiteral("local_path"), profile.local_path}
     };
 }
 }
@@ -111,6 +115,10 @@ QList<ProjectServerProfile> loadProjectServerProfiles()
             || seen_names.contains(profile.name.toCaseFolded()))
             continue;
         profile.endpoint = record.value(QStringLiteral("endpoint")).toString().trimmed();
+        profile.connection_type = record.value(QStringLiteral("connection_type")).toString();
+        if (profile.connection_type != QStringLiteral("local"))
+            profile.connection_type = QStringLiteral("remote");
+        profile.local_path = record.value(QStringLiteral("local_path")).toString().trimmed();
         profile.description = record.value(QStringLiteral("description")).toString();
         for (const QJsonValue &tag : record.value(QStringLiteral("tags")).toArray())
             if (tag.isString()) profile.tags.append(tag.toString());
@@ -146,4 +154,52 @@ bool saveProjectServerProfiles(const QList<ProjectServerProfile> &profiles)
     if (!saved)
         qWarning() << "Unable to save project server profiles to GUI configuration";
     return saved;
+}
+
+QString defaultLocalDvmdbPath()
+{
+    // Keep standalone's embedded database separate from the DVMDB HTTP
+    // daemon's default root. Never silently point two processes at one store.
+    return QDir(QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation))
+        .filePath(QStringLiteral("aowis-standalone-dvmdb"));
+}
+
+bool ensureDefaultLocalDvmdbProfile(QList<ProjectServerProfile> &profiles)
+{
+#ifdef AOWIS_STANDALONE_DVMDB_ENABLED
+    const QString data_root = QDir::cleanPath(defaultLocalDvmdbPath());
+    for (const ProjectServerProfile &profile : profiles)
+        if ((profile.id == QStringLiteral("local-default")
+             && profile.connection_type == QStringLiteral("local"))
+            || (profile.connection_type == QStringLiteral("local")
+                && QDir::cleanPath(profile.local_path) == data_root))
+            return true;
+
+    ProjectServerProfile local;
+    local.id = QStringLiteral("local-default");
+    local.name = QStringLiteral("Local database");
+    int suffix = 2;
+    bool name_used = true;
+    while (name_used)
+    {
+        name_used = false;
+        for (const ProjectServerProfile &profile : profiles)
+            if (profile.name.compare(local.name, Qt::CaseInsensitive) == 0)
+            {
+                local.name = QStringLiteral("Local database (%1)").arg(suffix++);
+                name_used = true;
+                break;
+            }
+    }
+    local.connection_type = QStringLiteral("local");
+    local.auth_mode = QStringLiteral("None");
+    local.local_path = data_root;
+    profiles.prepend(local);
+    if (!saveProjectServerProfiles(profiles))
+        qWarning() << "Unable to persist default local DVMDB profile";
+    return true;
+#else
+    Q_UNUSED(profiles);
+    return false;
+#endif
 }
