@@ -31,7 +31,9 @@ many independent projects, including projects on different server profiles.
   future Save-to-revision action, working History action. The previous revision
   dropdown is removed. The selectors and Projects sidebar stay synchronized.
 - Left pane: a new top `GroupBoxCollapsible` **Servers** section with a
-  server-profile list and **+ Server / Rename / Delete** actions. Selecting a
+  server-profile list and a **+ Server** action. Server renaming uses the
+  inspector's Name field, and server deletion is available only from its
+  inspector (with confirmation). Selecting a
   server chooses the scope of the project and revision trees and the current
   preview graph. The default profiles **Local preview** and **Remote preview**
   are fictional and are never contacted. Adding, renaming, or deleting profiles
@@ -45,7 +47,12 @@ many independent projects, including projects on different server profiles.
   the selected server profile.
 - Under Servers, reusable `GroupBoxCollapsible` **Projects & Branches** and
   **Revisions** groups. Projects tree contains only projects and branches;
-  project and branch actions work on the preview. The bundled examples instead
+  project and branch actions work on the preview. The sidebar has no
+  redundant Rename/Delete buttons: the inspector's Name field renames the
+  selected server, project or branch, and a contextual Delete action handles
+  preview removals with confirmation. Historical revisions cannot be deleted
+  from the inspector. The Revisions group starts with its view switch, without
+  an instructional caption. The bundled examples instead
   have a full-width library entry separate from the server hierarchy. The Revisions section offers
   a two-state **Editable heads / Full tree** switch (Full tree by default).
   Both modes display **revision titles only**, never IDs or hashes. **Full tree**

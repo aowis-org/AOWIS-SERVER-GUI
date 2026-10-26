@@ -126,23 +126,11 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     GroupBoxCollapsible *servers_group = new GroupBoxCollapsible(tr("Servers"), left);
     servers_group->setObjectName(QStringLiteral("serversCollapsibleGroup"));
     QVBoxLayout *servers_layout = new QVBoxLayout(servers_group);
-    QHBoxLayout *server_actions = new QHBoxLayout();
-    server_actions->setSpacing(4);
     QPushButton *add_server = compactButton(tr("+ Server"), tr("Add a server profile (preview only)"), servers_group);
     add_server->setObjectName(QStringLiteral("serversCreateButton"));
-    this->rename_server_button = compactButton(tr("Rename"), tr("Rename the selected server profile"), servers_group);
-    this->rename_server_button->setObjectName(QStringLiteral("serversRenameButton"));
-    this->delete_server_button = compactButton(tr("Delete"), tr("Delete the server and its preview projects"), servers_group);
-    this->delete_server_button->setObjectName(QStringLiteral("serversDeleteButton"));
-    for (QPushButton *button : {add_server, this->rename_server_button, this->delete_server_button})
-    {
-        button->setMinimumWidth(0);
-        button->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
-    }
-    server_actions->addWidget(add_server, 3);
-    server_actions->addWidget(this->rename_server_button, 2);
-    server_actions->addWidget(this->delete_server_button, 2);
-    servers_layout->addLayout(server_actions);
+    add_server->setMinimumWidth(0);
+    add_server->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+    servers_layout->addWidget(add_server);
     this->server_tree = new QTreeWidget(servers_group);
     this->server_tree->setObjectName(QStringLiteral("serversTree"));
     this->server_tree->setHeaderHidden(true);
@@ -164,22 +152,11 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     GroupBoxCollapsible *projects_group = new GroupBoxCollapsible(tr("Projects && Branches"), left);
     projects_group->setObjectName(QStringLiteral("projectsCollapsibleGroup"));
     QVBoxLayout *projects_layout = new QVBoxLayout(projects_group);
-    QHBoxLayout *project_actions = new QHBoxLayout();
-    project_actions->setSpacing(4);
     QPushButton *create_project = compactButton(tr("+ Project"), tr("Add a project to this GUI preview"), projects_group);
     create_project->setObjectName(QStringLiteral("projectsCreateProjectButton"));
-    this->rename_button = compactButton(tr("Rename"), tr("Rename selected project or branch in preview"), projects_group);
-    this->delete_button = compactButton(tr("Delete"), tr("Remove selected project or branch from preview"), projects_group);
-    // Keep the existing upper action row responsive at the same narrow widths.
-    for (QPushButton *button : {create_project, this->rename_button, this->delete_button})
-    {
-        button->setMinimumWidth(0);
-        button->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
-    }
-    project_actions->addWidget(create_project, 3);
-    project_actions->addWidget(this->rename_button, 2);
-    project_actions->addWidget(this->delete_button, 2);
-    projects_layout->addLayout(project_actions);
+    create_project->setMinimumWidth(0);
+    create_project->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+    projects_layout->addWidget(create_project);
     this->project_tree = new QTreeWidget(projects_group);
     this->project_tree->setObjectName(QStringLiteral("projectsTree"));
     this->project_tree->setHeaderHidden(true);
@@ -224,9 +201,6 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     GroupBoxCollapsible *revisions_group = new GroupBoxCollapsible(tr("Revisions"), left);
     revisions_group->setObjectName(QStringLiteral("revisionsCollapsibleGroup"));
     QVBoxLayout *revisions_layout = new QVBoxLayout(revisions_group);
-    QLabel *history_caption = new QLabel(tr("Select a revision to inspect it. Earlier revisions remain read-only."), revisions_group);
-    history_caption->setWordWrap(true);
-    revisions_layout->addWidget(history_caption);
     // Two exclusive views over the same immutable revisions. The "editable"
     // heads are branch pointers, not mutable historical snapshots.
     QHBoxLayout *revision_views = new QHBoxLayout();
@@ -424,6 +398,15 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     preview_note->setWordWrap(true);
     preview_note->setObjectName(QStringLiteral("inspectorPreviewNote"));
     right_layout->addWidget(preview_note);
+    // Renaming is handled by the Name field. Destructive operations belong
+    // in the inspector for the selected server/project/branch, not in trees.
+    this->inspector_delete_button = compactButton(tr("Delete"),
+        tr("Remove the selected item from the in-memory preview"), right);
+    this->inspector_delete_button->setObjectName(QStringLiteral("projectInspectorDeleteButton"));
+    QHBoxLayout *inspector_actions = new QHBoxLayout();
+    inspector_actions->addStretch(1);
+    inspector_actions->addWidget(this->inspector_delete_button);
+    right_layout->addLayout(inspector_actions);
     right_layout->addStretch(1);
     right_scroll->setWidget(right);
     this->inspector_dock = new QDockWidget(tr("Project Inspector"), dock_host);
@@ -440,8 +423,6 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     splitter->setStretchFactor(1, 1);
 
     connect(add_server, &QPushButton::clicked, this, &ProjectsWidget::createServer);
-    connect(this->rename_server_button, &QPushButton::clicked, this, &ProjectsWidget::renameServer);
-    connect(this->delete_server_button, &QPushButton::clicked, this, &ProjectsWidget::deleteServer);
     connect(this->server_tree, &QTreeWidget::itemSelectionChanged, this, [this]
     {
         const QList<QTreeWidgetItem *> items = this->server_tree->selectedItems();
@@ -450,8 +431,6 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
         if (key.startsWith(QStringLiteral("s:"))) select(SelectionKind::Server, key.mid(2));
     });
     connect(create_project, &QPushButton::clicked, this, &ProjectsWidget::createProject);
-    connect(this->rename_button, &QPushButton::clicked, this, &ProjectsWidget::renameSelection);
-    connect(this->delete_button, &QPushButton::clicked, this, &ProjectsWidget::deleteSelection);
     connect(this->create_branch_button, &QPushButton::clicked, this, [this] { createBranch(); });
     connect(import_button, &QPushButton::clicked, this, &ProjectsWidget::importProjectRequested);
     if (browse_examples_button != nullptr)
@@ -531,6 +510,12 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     connect(this->server_endpoint_edit, &QLineEdit::editingFinished, this, &ProjectsWidget::applyInspectorEdits);
     connect(this->server_auth_combo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, [this](int) { applyInspectorEdits(); });
+    connect(this->inspector_delete_button, &QPushButton::clicked, this, [this]
+    {
+        if (this->selection_kind == SelectionKind::Server) deleteServer();
+        else if (this->selection_kind == SelectionKind::Project
+                 || this->selection_kind == SelectionKind::Branch) deleteSelection();
+    });
     connect(this->name_edit, &QLineEdit::editingFinished, this, &ProjectsWidget::applyInspectorEdits);
     connect(this->tags_edit, &QLineEdit::editingFinished, this, &ProjectsWidget::applyInspectorEdits);
     connect(this->description_edit, &QTextEdit::textChanged, this, &ProjectsWidget::applyInspectorEdits);
@@ -1022,6 +1007,16 @@ void ProjectsWidget::updateInspector()
     this->name_edit->setEnabled(editable);
     this->tags_edit->setEnabled(editable);
     this->description_edit->setEnabled(editable);
+    const bool deletable_server = this->selection_kind == SelectionKind::Server
+        && currentServer() != nullptr;
+    const bool deletable_project = this->selection_kind == SelectionKind::Project
+        && currentProject() != nullptr;
+    const bool deletable_branch = this->selection_kind == SelectionKind::Branch
+        && currentBranch() != nullptr;
+    this->inspector_delete_button->setVisible(
+        deletable_server || deletable_project || deletable_branch);
+    this->inspector_delete_button->setText(deletable_server ? tr("Delete server…")
+        : deletable_project ? tr("Delete project…") : tr("Delete branch…"));
     this->updating_ui = false;
 
     // The close button hides the inspector until the next action updates its
@@ -1036,12 +1031,6 @@ void ProjectsWidget::updateButtons()
 {
     if (QPushButton *create_project = findChild<QPushButton *>(QStringLiteral("projectsCreateProjectButton")))
         create_project->setEnabled(currentServer() != nullptr);
-    this->rename_server_button->setEnabled(currentServer() != nullptr);
-    this->delete_server_button->setEnabled(currentServer() != nullptr);
-    const bool project_selected = this->selection_kind == SelectionKind::Project;
-    const bool branch_selected = this->selection_kind == SelectionKind::Branch;
-    this->rename_button->setEnabled(project_selected || branch_selected);
-    this->delete_button->setEnabled(project_selected || branch_selected);
     this->create_branch_button->setEnabled(currentProject() != nullptr);
     // Keep the action label short and stable so the three-button row never
     // changes width when selecting a historical revision. createBranch()
@@ -1118,25 +1107,6 @@ void ProjectsWidget::createServer()
     this->servers.append(server);
     populateServerTree();
     select(SelectionKind::Server, server.id);
-}
-
-void ProjectsWidget::renameServer()
-{
-    ProjectPreviewServer *server = currentServer();
-    if (server == nullptr) return;
-    bool accepted = false;
-    const QString requested = QInputDialog::getText(this, tr("Rename server (preview)"),
-        tr("Server name"), QLineEdit::Normal, server->name, &accepted).trimmed();
-    if (!accepted || requested.isEmpty() || requested == server->name) return;
-    for (const ProjectPreviewServer &other : this->servers)
-        if (other.id != server->id && other.name.compare(requested, Qt::CaseInsensitive) == 0)
-        {
-            QMessageBox::information(this, tr("Already exists"), tr("Choose a different server name."));
-            return;
-        }
-    server->name = requested;
-    populateServerTree();
-    select(SelectionKind::Server, this->server_id);
 }
 
 void ProjectsWidget::deleteServer()
@@ -1219,39 +1189,6 @@ void ProjectsWidget::createBranch(const QString &source_revision)
     populateRevisionTree();
     rebuildGraph();
     select(SelectionKind::Branch, id);
-}
-
-void ProjectsWidget::renameSelection()
-{
-    if (this->selection_kind != SelectionKind::Project && this->selection_kind != SelectionKind::Branch)
-        return;
-    const QString existing = this->name_edit->text();
-    bool accepted = false;
-    const QString requested = QInputDialog::getText(this, tr("Rename (preview)"),
-        tr("New name"), QLineEdit::Normal, existing, &accepted).trimmed();
-    if (!accepted || requested.isEmpty() || requested == existing) return;
-    if (this->selection_kind == SelectionKind::Project)
-    {
-        for (const ProjectPreviewData &other : this->projects)
-            if (other.id != this->project_id && other.server_id == this->server_id
-                && other.name.compare(requested, Qt::CaseInsensitive) == 0)
-            {
-                QMessageBox::information(this, tr("Already exists"), tr("Choose a different project name."));
-                return;
-            }
-    }
-    else if (ProjectPreviewData *project = currentProject())
-    {
-        for (const ProjectPreviewBranch &other : project->branches)
-            if (other.id != this->selected_id
-                && other.name.compare(requested, Qt::CaseInsensitive) == 0)
-            {
-                QMessageBox::information(this, tr("Already exists"), tr("Choose a different branch name."));
-                return;
-            }
-    }
-    this->name_edit->setText(requested);
-    applyInspectorEdits();
 }
 
 void ProjectsWidget::deleteSelection()

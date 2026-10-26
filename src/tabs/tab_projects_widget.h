@@ -96,11 +96,9 @@ private:
     void select(SelectionKind kind, const QString &id);
     void selectTreeItem(QTreeWidget *tree, const QString &key);
     void createServer();
-    void renameServer();
     void deleteServer();
     void createProject();
     void createBranch(const QString &source_revision = QString());
-    void renameSelection();
     void deleteSelection();
     void browseExamples();
     void createProjectFromExample(const BuiltinExampleRevision &example);
@@ -121,8 +119,6 @@ private:
     SelectionKind selection_kind = SelectionKind::None;
     QString selected_id;
     QTreeWidget *server_tree = nullptr;
-    QPushButton *rename_server_button = nullptr;
-    QPushButton *delete_server_button = nullptr;
     QLineEdit *server_endpoint_edit = nullptr;
     QComboBox *server_auth_combo = nullptr;
     QWidget *server_options = nullptr;
@@ -138,8 +134,7 @@ private:
     QLineEdit *name_edit = nullptr;
     QLineEdit *tags_edit = nullptr;
     QTextEdit *description_edit = nullptr;
-    QPushButton *rename_button = nullptr;
-    QPushButton *delete_button = nullptr;
+    QPushButton *inspector_delete_button = nullptr;
     QPushButton *create_branch_button = nullptr;
     bool updating_ui = false;
 };

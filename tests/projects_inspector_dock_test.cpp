@@ -14,6 +14,7 @@
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QMainWindow>
+#include <QMessageBox>
 #include <QSplitter>
 #include <QStackedWidget>
 #include <QTemporaryDir>
@@ -71,6 +72,32 @@ int main(int argc, char **argv)
                      && revisions != nullptr && name != nullptr && graph != nullptr,
                  "workspace did not create its dock and inspector controls"))
         return 1;
+    QPushButton *delete_in_inspector = projects.findChild<QPushButton *>(
+        QStringLiteral("projectInspectorDeleteButton"));
+    QPushButton *add_server = projects.findChild<QPushButton *>(
+        QStringLiteral("serversCreateButton"));
+    QPushButton *add_project = projects.findChild<QPushButton *>(
+        QStringLiteral("projectsCreateProjectButton"));
+    if (!require(delete_in_inspector != nullptr && add_server != nullptr
+                     && add_project != nullptr && delete_in_inspector->isVisible()
+                     && delete_in_inspector->text() == QStringLiteral("Delete branch…"),
+                 "server/project creation or branch deletion in the inspector is missing"))
+        return 1;
+    if (!require(projects.findChild<QPushButton *>(QStringLiteral("serversRenameButton")) == nullptr
+                     && projects.findChild<QPushButton *>(QStringLiteral("serversDeleteButton")) == nullptr,
+                 "redundant server rename/delete controls remain in the sidebar"))
+        return 1;
+    for (QPushButton *button : projects.findChildren<QPushButton *>())
+        if (!require(button == delete_in_inspector
+                         || (button->text() != QStringLiteral("Rename")
+                             && button->text() != QStringLiteral("Delete")),
+                     "redundant project/branch rename or delete button remains"))
+            return 1;
+    for (QLabel *label : projects.findChildren<QLabel *>())
+        if (!require(!label->text().contains(QStringLiteral("Select a revision to inspect it")),
+                     "obsolete revision help text remains in the sidebar"))
+            return 1;
+
     if (!require(!host->isWindow(),
                  "projects dock host must be embedded, not a separate top-level window"))
         return 1;
@@ -134,6 +161,20 @@ int main(int argc, char **argv)
                      && server_options->isVisible() && endpoint->text().startsWith(QStringLiteral("https://")),
                  "remote server selection did not show its preview inspector"))
         return 1;
+    if (!require(delete_in_inspector->isVisible()
+                     && delete_in_inspector->text() == QStringLiteral("Delete server…"),
+                 "selecting a server did not offer deletion in the inspector"))
+        return 1;
+    // Inspector renaming replaces the redundant Rename buttons in the trees.
+    name->setText(QStringLiteral("Renamed remote preview"));
+    QMetaObject::invokeMethod(name, "editingFinished", Qt::DirectConnection);
+    app.processEvents();
+    if (!require(servers->topLevelItem(1)->text(0) == QStringLiteral("Renamed remote preview"),
+                 "server rename through inspector was not reflected in the tree"))
+        return 1;
+    name->setText(QStringLiteral("Remote preview"));
+    QMetaObject::invokeMethod(name, "editingFinished", Qt::DirectConnection);
+    app.processEvents();
     if (!require(project_tree->topLevelItemCount() == 1
                      || project_tree->topLevelItemCount() == 0,
                  "projects from the local server leaked into the remote server view"))
@@ -523,6 +564,10 @@ int main(int argc, char **argv)
     if (!require(dock->isVisible() && name->text() == QStringLiteral("Sample Pump Station"),
                  "selecting a project in the tree did not reopen its inspector"))
         return 1;
+    if (!require(delete_in_inspector->isVisible()
+                     && delete_in_inspector->text() == QStringLiteral("Delete project…"),
+                 "selecting a project did not offer deletion in the inspector"))
+        return 1;
     const QPointF south_node_center = graph->graphToViewport(QPointF(0.0, 0.0));
     if (!require(std::abs(south_node_center.x() - graph->width() / 2.0) < 1.0
                      && std::abs(south_node_center.y() - graph->height() / 2.0) < 1.0,
@@ -543,6 +588,10 @@ int main(int argc, char **argv)
     if (!require(dock->isVisible() && name->text() == QStringLiteral("pressure-study"),
                  "toolbar branch change did not reopen its inspector"))
         return 1;
+    if (!require(delete_in_inspector->isVisible()
+                     && delete_in_inspector->text() == QStringLiteral("Delete branch…"),
+                 "selecting a branch did not offer deletion in the inspector"))
+        return 1;
 
     // The graph and the left tree must behave identically.
     dock->close();
@@ -550,6 +599,9 @@ int main(int argc, char **argv)
     app.processEvents();
     if (!require(dock->isVisible() && name->text() == QStringLiteral("Pressure tuning"),
                  "selecting a revision on the graph did not reopen its inspector"))
+        return 1;
+    if (!require(!delete_in_inspector->isVisible(),
+                 "immutable revision must not expose a delete action"))
         return 1;
 
     dock->close();
@@ -726,6 +778,41 @@ int main(int argc, char **argv)
     if (!require(embedded_dock->isVisible() && embedded_tree->isVisible()
                      && embedded_graph->isVisible(),
                  "selection did not restore the inspector in an embedded Projects page"))
+        return 1;
+
+    // Deleting from the inspector still performs the original preview-only
+    // action, including its confirmation, without sidebar Delete buttons.
+    ProjectsWidget delete_preview;
+    delete_preview.resize(1200, 740);
+    delete_preview.show();
+    app.processEvents();
+    QPushButton *delete_action = delete_preview.findChild<QPushButton *>(
+        QStringLiteral("projectInspectorDeleteButton"));
+    QTreeWidget *delete_projects = delete_preview.findChild<QTreeWidget *>(
+        QStringLiteral("projectsTree"));
+    if (!require(delete_action != nullptr && delete_projects != nullptr,
+                 "inspector deletion regression setup failed"))
+        return 1;
+    delete_preview.selectProjectByName(QStringLiteral("Sample Pump Station"));
+    app.processEvents();
+    if (!require(delete_action->text() == QStringLiteral("Delete project…"),
+                 "inspector project deletion is not available"))
+        return 1;
+    QTimer::singleShot(0, []
+    {
+        for (QWidget *widget : QApplication::topLevelWidgets())
+        {
+            QMessageBox *confirmation = qobject_cast<QMessageBox *>(widget);
+            if (confirmation != nullptr && confirmation->isVisible())
+                confirmation->done(QMessageBox::Yes);
+        }
+    });
+    delete_action->click();
+    app.processEvents();
+    if (!require(delete_projects->topLevelItemCount() == 1
+                     && delete_projects->topLevelItem(0)->text(0)
+                        == QStringLiteral("Sample North Network"),
+                 "inspector Delete project action did not remove the preview project"))
         return 1;
 
     std::puts("Projects inspector dock tests passed");
