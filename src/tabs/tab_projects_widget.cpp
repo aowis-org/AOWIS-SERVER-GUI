@@ -3,6 +3,7 @@
 
 #include "app/builtin_examples.h"
 #include "config/gui_configuration.h"
+#include "common/_sizes.h"
 #include "widgets/group_box_collapsible.h"
 #include "services/http_health_monitor.h"
 
@@ -506,6 +507,9 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     overview_layout->addWidget(this->inspector_fields);
     this->inspector_connection_page = new QWidget(this->inspector_tabs);
     this->inspector_connection_page->setObjectName(QStringLiteral("projectsInspectorConnection"));
+    // A page not yet added to QTabWidget is an ordinary visible child widget.
+    // Keep optional pages hidden until addTab() makes them active.
+    this->inspector_connection_page->hide();
     QVBoxLayout *connection_layout = new QVBoxLayout(this->inspector_connection_page);
     connection_layout->setContentsMargins(0, 12, 0, 4);
     this->source_name_edit = new QLineEdit(this->inspector_connection_page);
@@ -514,6 +518,7 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     connection_layout->addWidget(this->source_name_edit);
     this->inspector_related_page = new QWidget(this->inspector_tabs);
     this->inspector_related_page->setObjectName(QStringLiteral("projectsInspectorRelated"));
+    this->inspector_related_page->hide();
     QVBoxLayout *related_layout = new QVBoxLayout(this->inspector_related_page);
     related_layout->setContentsMargins(0, 12, 0, 4);
     this->inspector_related_list = new QListWidget(this->inspector_related_page);
@@ -664,6 +669,13 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     right_scroll->setWidget(right);
     this->inspector_dock = new QDockWidget(tr("Project Inspector"), dock_host);
     this->inspector_dock->setObjectName(QStringLiteral("projectsInspectorDock"));
+    // Use the same fixed right-sidebar width as the map's EntityInspectorDock.
+    // Without an explicit dock width QMainWindow allocates roughly half of the
+    // entire Projects workspace to this inspector.
+    this->inspector_dock->setMinimumWidth(Sizes::SidebarRightWidth);
+    this->inspector_dock->setMaximumWidth(Sizes::SidebarRightWidth);
+    this->inspector_dock->resize(Sizes::SidebarRightWidth, this->inspector_dock->height());
+    this->inspector_dock->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
     this->inspector_dock->setAllowedAreas(Qt::RightDockWidgetArea);
     this->inspector_dock->setFeatures(QDockWidget::DockWidgetClosable |
                                       QDockWidget::DockWidgetMovable |
@@ -1799,6 +1811,9 @@ void ProjectsWidget::updateInspectorTabs()
     const bool same_kind = this->inspector_tab_kind == this->selection_kind;
     this->inspector_tab_kind = this->selection_kind;
     this->inspector_tabs->clear();
+    // Detached optional pages must never draw over the active tab.
+    this->inspector_connection_page->hide();
+    this->inspector_related_page->hide();
     this->inspector_related_list->clear();
     this->inspector_tabs->addTab(this->inspector_overview_page, tr("Overview"));
 
