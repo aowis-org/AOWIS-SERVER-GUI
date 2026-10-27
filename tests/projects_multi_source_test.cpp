@@ -156,18 +156,20 @@ int main(int argc, char **argv)
     if (!require(!graph->revisionViewportPosition(first_graph_id).isNull()
                  && !graph->revisionViewportPosition(second_graph_id).isNull(),
                  "aggregate graph omitted a source or merged same-hash revisions")) return 1;
-    // Both servers contain the same immutable revision hash, but their
-    // branch references are different source/project-scoped HEADs. The
-    // reference decoration belongs to its revision, not another graph node.
+    // Branch UUIDs are independently selectable reference cards, not revision
+    // duplicates. Even when two databases have identical revision content,
+    // each source's HEAD must point to its own revision card.
     const QString first_branch = QStringLiteral("group:branch:source-a|") + first.project_id
         + QStringLiteral(":") + first.branch_id;
     const QString second_branch = QStringLiteral("group:branch:source-b|") + second.project_id
         + QStringLiteral(":") + second.branch_id;
-    if (!require(graph->nodeViewportPosition(first_branch)
-                     == graph->revisionViewportPosition(first_graph_id)
-                 && graph->nodeViewportPosition(second_branch)
-                     == graph->revisionViewportPosition(second_graph_id),
-                 "branch HEAD decorations did not follow their own revision/source")) return 1;
+    if (!require(!graph->nodeViewportPosition(first_branch).isNull()
+                 && !graph->nodeViewportPosition(second_branch).isNull()
+                 && graph->nodeViewportPosition(first_branch).y()
+                     > graph->revisionViewportPosition(first_graph_id).y()
+                 && graph->nodeViewportPosition(second_branch).y()
+                     > graph->revisionViewportPosition(second_graph_id).y(),
+                 "distinct branch reference cards are missing below their HEAD revisions")) return 1;
     const QPointF first_server = graph->nodeViewportPosition(QStringLiteral("group:server:source-a"));
     const QPointF second_server = graph->nodeViewportPosition(QStringLiteral("group:server:source-b"));
     const QPointF first_project = graph->nodeViewportPosition(

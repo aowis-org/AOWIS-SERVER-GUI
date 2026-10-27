@@ -17,7 +17,7 @@ for future checkout/save work, see the
 | Catalogue | Projects and consistent, fully paginated two-parent revision DAGs: native and REST use UUIDv7 identities and canonical record SHA-256 integrity bindings. |
 | Real writes | Project create and branch create/fork only. Subsequent catalogue reload confirms persisted results. |
 | Preview | Explicit demo profiles and built-in example *placeholders* remain in-memory and cannot be mistaken for DVMDB revisions. |
-| Graph | Source-qualified nodes for all checked real databases. QWidget/QPainter revision graph; no second bgfx instance. |
+| Graph | Source-qualified nodes for databases, projects, immutable revisions and separately selectable branch HEAD references. QWidget/QPainter revision graph; no second bgfx instance. |
 
 The current GUI does **not** enumerate and check out hydraulic networks,
 commit edited models to a new revision, perform remote project/branch
@@ -52,9 +52,11 @@ database: settings are stored using Qt settings/JSON.
   deletes remote or native database files. The default Standalone local
   source cannot be deleted.
 - With no configured sources, the inspector is closed and the central
-  workspace offers **Add database**. With sources but no currently visible
-  loaded projects, it displays **No projects to display** rather than a
-  fictitious network graph.
+  workspace offers **Add database**. Every checked database remains visible
+  as a real server node in the central graph even if its catalogue contains
+  zero projects. If databases are configured but all are unchecked, the
+  canvas displays **No databases selected**. No project or revision nodes
+  are fabricated for empty catalogues.
 
 ### Left: Projects & Branches
 
@@ -70,8 +72,9 @@ database: settings are stored using Qt settings/JSON.
   a source branch through both-parent reachability). The default is `main`
   for a project, the selected branch HEAD for a branch, and the *exact*
   selected revision for a revision. The form displays the full resulting
-  HEAD hash, explains that branch creation **does not commit**, and validates
-  names before allowing Create. Cancel discards the draft; changing selection
+  HEAD revision UUID, explains that branch creation **does not commit**, and
+  validates UTF-8 branch labels, including spaces (maximum 96 bytes, no path
+  separators or control characters), before allowing Create. Cancel discards the draft; changing selection
   with an entered name asks before discarding. Writes refresh the authoritative
   catalogue; uncertain HTTP results are never blindly retried.
 - A persisted DVMDB project/branch name, description and tags are displayed
@@ -112,6 +115,17 @@ database: settings are stored using Qt settings/JSON.
   and branch labels include source/project context. Revisions from
   different sources are never deduplicated merely because their content
   hashes or project names match.
+- Each branch UUIDv7 is shown as a **separate green branch-reference card**,
+  connected by a green dashed reference link to its exact immutable HEAD revision.
+  When DVMDB supplies an `originBranchId`, a distinct **blue dashed edge** links
+  it to its creation-source branch reference. This is branch provenance,
+  never a revision ancestry edge; branches without this durable metadata are
+  not given guessed parents.
+  Multiple branches can reference the same revision without stacking their
+  labels inside its card, duplicating commits or inventing ancestry. Clicking
+  a branch card selects that specific branch; branches stay visible in both
+  Full tree and Editable heads modes. Solid edges are reserved for actual
+  revision ancestry and database/project ownership.
 - The renderer is a **QWidget/QPainter** surface. The map owns the
   process-global bgfx lifecycle; do **not** initialize another bgfx
   instance for a future GPU revision graph. A future renderer can share

@@ -28,7 +28,7 @@ struct ProjectGraphBranchHead
 
 struct ProjectGraphNode
 {
-    enum class Kind { Revision, Project, Server };
+    enum class Kind { Revision, Project, Server, Branch };
     QString id;
     QString title;
     QString branch;
@@ -40,7 +40,11 @@ struct ProjectGraphNode
     // Structural hierarchy, separate from immutable revision ancestry.
     QString container_id;
     QString project_group_id;
-    QVector<ProjectGraphBranchHead> heads; // Branch refs attached to this revision, NOT DAG nodes.
+    // A branch ref is its own selectable GUI node. This links it to the
+    // revision it points at, without adding an immutable ancestry edge.
+    QString head_revision_id;
+    QString origin_branch_node_id; // Creation provenance edge, NOT a revision parent.
+    QVector<ProjectGraphBranchHead> heads; // Real HEAD pointers; the GUI gives each its own reference card.
     // Layered-DAG cubic routes keyed by immutable parent revision ID.
     // Coordinates are the same canonical graph-space units as position.
     QHash<QString, QVector<QPointF>> parent_routes;
@@ -117,6 +121,7 @@ private:
     void scheduleInitialFit();
     QPointF mapToGraph(const QPointF &point) const;
     QRectF nodeRect(const ProjectGraphNode &node) const;
+    bool hasBranchReferenceCards(const QString &revision_id) const;
     QRectF branchLabelRect(const ProjectGraphNode &node, int index) const;
     void clampCamera();
     const ProjectGraphNode *hitNode(const QPointF &point) const;
@@ -136,6 +141,7 @@ private:
     void setZoomAnchor(const QPointF &anchor);
     QPointF keyboardDirection() const;
     QVector<ProjectGraphNode> source_nodes;
+    QSet<QString> reference_head_revisions;
     QVector<ProjectGraphNode> nodes;
     QVector<Omission> omissions;
     QSet<QString> expanded_revisions;

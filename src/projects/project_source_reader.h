@@ -32,6 +32,7 @@ struct SourceBranch
     QString id; // Real backend branch UUIDv7 when available; never synthesized.
     QString head;
     QString record_sha256; // Expected canonical record digest of HEAD revision.
+    QString origin_branch_id; // Persisted creation-source UUIDv7, if known.
 };
 
 struct SourceProject

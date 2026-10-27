@@ -174,9 +174,18 @@ bool loadNativeV2Graph(Service &service, const std::string &project_id,
                     throw std::runtime_error("Invalid UUIDv7 branch HEAD in native graph");
                 current_branch_ids.insert(branch_id);
                 current_names.insert(name);
+                QString origin;
+                // Embedded Standalone builds can still link a DVMDB checkout
+                // without branch provenance; do not fabricate a parent.
+                if constexpr (requires { head.originBranchId; })
+                    if (head.originBranchId)
+                        origin = QString::fromStdString(head.originBranchId->toString());
+                if (!origin.isEmpty() && (!DvmdbIdentity::isUuidV7(origin) || origin == branch_id))
+                    throw std::runtime_error("Invalid DVMDB branch creation origin");
                 current_heads.append(name + QLatin1Char('\n') + branch_id
                                      + QLatin1Char('\n') + revision_id
-                                     + QLatin1Char('\n') + digest);
+                                     + QLatin1Char('\n') + digest
+                                     + QLatin1Char('\n') + origin);
                 if (first_page)
                 {
                     SourceBranch branch;
@@ -184,6 +193,7 @@ bool loadNativeV2Graph(Service &service, const std::string &project_id,
                     branch.id = branch_id;
                     branch.head = revision_id;
                     branch.record_sha256 = digest;
+                    branch.origin_branch_id = origin;
                     project.branches.append(branch);
                 }
             }
@@ -468,6 +478,16 @@ bool ProjectSourceReader::processRestDocument(const QByteArray &json, QString &e
         branch.head = head.value(QStringLiteral("revision")).toString();
         branch.id = head.value(QStringLiteral("branchId")).toString();
         branch.record_sha256 = head.value(QStringLiteral("recordHash")).toString();
+        const QJsonValue origin = head.value(QStringLiteral("originBranchId"));
+        if (!origin.isUndefined() && !origin.isNull())
+        {
+            if (!origin.isString())
+            { error = tr("Invalid DVMDB branch creation origin."); return false; }
+            branch.origin_branch_id = origin.toString();
+            if (!DvmdbIdentity::isUuidV7(branch.origin_branch_id)
+                || branch.origin_branch_id == branch.id)
+            { error = tr("Invalid DVMDB branch creation origin."); return false; }
+        }
         if (branch.name.isEmpty() || !DvmdbIdentity::isUuidV7(branch.id)
             || !DvmdbIdentity::isUuidV7(branch.head)
             || !DvmdbIdentity::isLegacySha256(branch.record_sha256)
@@ -491,7 +511,8 @@ bool ProjectSourceReader::processRestDocument(const QByteArray &json, QString &e
             if (page_heads[index].name != project.branches[index].name
                 || page_heads[index].id != project.branches[index].id
                 || page_heads[index].head != project.branches[index].head
-                || page_heads[index].record_sha256 != project.branches[index].record_sha256)
+                || page_heads[index].record_sha256 != project.branches[index].record_sha256
+                || page_heads[index].origin_branch_id != project.branches[index].origin_branch_id)
             { error = tr("DVMDB graph HEADs changed during pagination."); return false; }
     }
     if (revisions.toArray().isEmpty() && !complete.toBool())

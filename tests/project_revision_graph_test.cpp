@@ -661,6 +661,64 @@ int main(int argc, char **argv)
                      "shared HEAD labels cannot be clicked independently")) return 1;
     }
 
+    // A UUIDv7 branch has its own identity and selectable visual node,
+    // independent of the UUIDv7 revision it references. Three branches can
+    // point to the same revision without stacking inside that revision card.
+    QVector<ProjectGraphNode> references{server_card, project_card};
+    ProjectGraphNode shared_revision = revision_card;
+    shared_revision.id = QStringLiteral("uuidv7-revision-1");
+    shared_revision.parents.clear();
+    shared_revision.heads = {
+        {QStringLiteral("uuidv7-branch-1"), QStringLiteral("main")},
+        {QStringLiteral("uuidv7-branch-2"), QStringLiteral("revA")},
+        {QStringLiteral("uuidv7-branch-3"), QStringLiteral("revAbranch")}
+    };
+    references.append(shared_revision);
+    for (const ProjectGraphBranchHead &head : shared_revision.heads)
+    {
+        ProjectGraphNode reference;
+        reference.kind = ProjectGraphNode::Kind::Branch;
+        reference.id = QStringLiteral("group:branch:") + head.id;
+        reference.title = head.name;
+        reference.branch = QStringLiteral("BRANCH · HEAD");
+        reference.project_group_id = project_card.id;
+        reference.head_revision_id = shared_revision.id;
+        references.append(reference);
+    }
+    ProjectGraphPlacement::place(references);
+    if (!require(references.size() == 6 && references.at(2).heads.size() == 3
+                 && references.at(2).parents.isEmpty(),
+                 "branch reference cards created additional immutable revisions")) return 1;
+    QSet<int> reference_columns;
+    for (int index = 3; index < references.size(); ++index)
+    {
+        if (!require(references.at(index).position.y() < references.at(2).position.y()
+                     && references.at(index).head_revision_id == shared_revision.id
+                     && references.at(index).parents.isEmpty(),
+                     "branch node does not reference the same UUIDv7 HEAD")) return 1;
+        reference_columns.insert(qRound(references.at(index).position.x()));
+        for (int earlier = 3; earlier < index; ++earlier)
+            if (!require(std::abs(references.at(index).position.x()
+                     - references.at(earlier).position.x()) >= 196.0,
+                     "independent branch cards overlap")) return 1;
+    }
+    if (!require(reference_columns.size() == 3,
+                 "three branch UUIDs collapsed into one graph leaf")) return 1;
+    graph.setShowFullTree(true);
+    graph.setNodes(references);
+    graph.fitGraph();
+    for (int index = 3; index < references.size(); ++index)
+    {
+        selected_branch.clear();
+        click(graph, graph.nodeViewportPosition(references.at(index).id));
+        if (!require(selected_branch == shared_revision.heads.at(index - 3).id,
+                     "independent UUIDv7 branch card did not activate its own branch")) return 1;
+    }
+    graph.setShowFullTree(false);
+    for (int index = 3; index < references.size(); ++index)
+        if (!require(!graph.nodeViewportPosition(references.at(index).id).isNull(),
+                     "heads-only graph hid a branch reference card")) return 1;
+
     // Placement regression: database roots must share one horizontal layer
     // even with very uneven project widths and revision history depths.
     QVector<ProjectGraphNode> compound;

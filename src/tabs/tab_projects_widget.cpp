@@ -1041,14 +1041,15 @@ void ProjectsWidget::populateServerTree()
 void ProjectsWidget::updateEmptyState()
 {
     const bool empty = this->servers.isEmpty();
-    bool has_projects = false;
-    for (const ProjectPreviewData &project : this->projects)
-        for (const ProjectServerProfile &profile : this->servers)
-            if (profile.id == project.server_id && profile.visible) has_projects = true;
+    bool has_visible_database = false;
+    for (const ProjectServerProfile &profile : this->servers)
+        if (profile.visible) { has_visible_database = true; break; }
+    // The graph contains database nodes even when their catalogues are empty.
+    // Only the *absence of checked databases* warrants a placeholder page.
     if (this->graph_stack != nullptr)
-        this->graph_stack->setCurrentIndex(empty ? 1 : has_projects ? 0 : 2);
+        this->graph_stack->setCurrentIndex(empty ? 1 : has_visible_database ? 0 : 2);
     if (QWidget *toolbar = findChild<QWidget *>(QStringLiteral("projectsGraphToolbar")))
-        toolbar->setVisible(!empty && has_projects);
+        toolbar->setVisible(has_visible_database);
     bool expanded = true;
     if (GroupBoxCollapsible *section = findChild<GroupBoxCollapsible *>(QStringLiteral("serversCollapsibleGroup")))
         expanded = !section->isCollapsed();
@@ -1098,10 +1099,9 @@ void ProjectsWidget::updateConnectionStatus()
     if (this->server_options != nullptr)
         this->server_options->setEnabled(!this->source_writer->isBusy());
     if (this->no_projects_title != nullptr)
-        this->no_projects_title->setText(tr("No projects to display"));
+        this->no_projects_title->setText(tr("No databases selected"));
     if (this->no_projects_description != nullptr)
-        this->no_projects_description->setText(tr("No projects are available from the checked databases yet. "
-            "Sources load automatically; remote connectivity is continuously monitored."));
+        this->no_projects_description->setText(tr("Check a database in the sidebar to show it on the canvas."));
     if (this->preview_banner != nullptr)
         this->preview_banner->setText(isPreviewSource() ? tr("IN-MEMORY PREVIEW")
             : tr("DVMDB · CATALOGUE WRITABLE · REVISIONS READ-ONLY"));
@@ -1323,6 +1323,7 @@ void ProjectsWidget::applySourceSnapshot(const QString &source_id, const SourceS
                 + (source_branch.id.isEmpty() ? source_branch.name : source_branch.id);
             branch.name = source_branch.name;
             branch.head = source_branch.head;
+            branch.origin_branch_id = source_branch.origin_branch_id;
             project.branches.append(branch);
         }
         for (const SourceRevision &source_revision : entry.revisions)
@@ -1597,6 +1598,43 @@ void ProjectsWidget::rebuildGraph()
                     { return lhs.id < rhs.id; });
                 this->graph_revision_lookup.insert(node.id, qMakePair(project.id, revision.id));
                 nodes.append(node);
+                // One independent UI reference for each branch UUIDv7. Multiple
+                // branches can legitimately reference this same revision UUID;
+                // they must not be stacked as pills inside its revision card.
+                for (const ProjectGraphBranchHead &head : node.heads)
+                {
+                    ProjectGraphNode reference;
+                    reference.kind = ProjectGraphNode::Kind::Branch;
+                    reference.id = QStringLiteral("group:branch:") + head.id;
+                    reference.title = head.name;
+                    const QString branch_uuid = head.id.right(36);
+                    reference.display_id = DvmdbIdentity::isUuidV7(branch_uuid)
+                        ? branch_uuid : QString();
+                    reference.branch = reference.display_id.isEmpty()
+                        ? tr("BRANCH · HEAD")
+                        : tr("HEAD · %1").arg(DvmdbIdentity::shortLabel(reference.display_id));
+                    reference.project_group_id = project_node_id;
+                    reference.head_revision_id = node.id;
+                    for (const ProjectPreviewBranch &candidate : project.branches)
+                        if (candidate.id == head.id && !candidate.origin_branch_id.isEmpty())
+                        {
+                            const QString origin_id = candidate.origin_branch_id;
+                            if (DvmdbIdentity::isUuidV7(origin_id))
+                                reference.origin_branch_node_id = QStringLiteral("group:branch:")
+                                    + project.id + QStringLiteral(":") + origin_id;
+                            else // In-memory preview identity, scoped to this project.
+                                reference.origin_branch_node_id = QStringLiteral("group:branch:") + origin_id;
+                            for (const ProjectPreviewBranch &source_branch : project.branches)
+                                if (source_branch.id == (DvmdbIdentity::isUuidV7(origin_id)
+                                    ? project.id + QStringLiteral(":") + origin_id : origin_id))
+                                {
+                                    reference.branch = tr("FROM %1 · HEAD").arg(source_branch.name);
+                                    break;
+                                }
+                            break;
+                        }
+                    nodes.append(reference);
+                }
             }
         }
         // Also show checked databases with an empty catalogue when the graph
@@ -1992,6 +2030,19 @@ void ProjectsWidget::validateCreation()
     }
     else
     {
+        // Mirrors DVMDB's UTF-8 branch-label contract. Labels are metadata,
+        // not filesystem paths: internal spaces are supported.
+        const QByteArray bytes = name.toUtf8();
+        if (bytes.size() > 96 || QString::fromUtf8(bytes) != name
+            || name == QStringLiteral(".") || name == QStringLiteral("..")
+            || name.startsWith(QLatin1Char(' ')) || name.endsWith(QLatin1Char(' ')))
+            error = tr("Branch name must be valid UTF-8, at most 96 bytes, without surrounding spaces.");
+        for (const QChar character : name)
+            if (character.unicode() < 0x20 || character.unicode() == 0x7f
+                || character == QLatin1Char('/') || character == QLatin1Char('\\')
+                || character == QLatin1Char('%') || character == QLatin1Char('?')
+                || character == QLatin1Char('#'))
+                error = tr("Branch name contains an unsupported control or path character.");
         const ProjectPreviewData *project = currentProject();
         if (project == nullptr || project->id != this->creation_project_id)
             error = tr("The source project is no longer selected.");
@@ -2107,6 +2158,17 @@ void ProjectsWidget::updateInspector()
                     metadata = tr("Head revision: %1\nBranch: %2\nRevision identity: %3")
                         .arg(branch.head, branch.name,
                              DvmdbIdentity::revisionFormatName(branch.head));
+                    if (!branch.origin_branch_id.isEmpty())
+                    {
+                        const QString origin_id = entry.database_backed
+                            ? entry.id + QStringLiteral(":") + branch.origin_branch_id
+                            : branch.origin_branch_id;
+                        QString origin_name;
+                        for (const ProjectPreviewBranch &candidate : entry.branches)
+                            if (candidate.id == origin_id) { origin_name = candidate.name; break; }
+                        metadata += tr("\nCreated from branch: %1")
+                            .arg(origin_name.isEmpty() ? branch.origin_branch_id : origin_name);
+                    }
                     if (entry.database_backed)
                     {
                         const QString prefix = entry.id + QStringLiteral(":");
@@ -2565,6 +2627,10 @@ void ProjectsWidget::createBranch()
     }
     else if (origin.startsWith(QStringLiteral("revision:")))
         branch.head = origin.mid(9);
+    if (origin.startsWith(QStringLiteral("branch:")))
+        for (const ProjectPreviewBranch &candidate : project->branches)
+            if (candidate.name == origin.mid(7))
+                branch.origin_branch_id = candidate.id;
     const QString id = branch.id;
     project->branches.append(branch);
     populateProjectTree();

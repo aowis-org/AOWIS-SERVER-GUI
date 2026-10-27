@@ -115,6 +115,31 @@ int main(int argc, char **argv)
         embedded_profiles.resize(1200, 740);
         embedded_profiles.show();
         app.processEvents();
+        // Even before any project is created, a checked database belongs on
+        // the graph canvas as a real server node, not behind an empty page.
+        QStackedWidget *server_graph_stack = embedded_profiles.findChild<QStackedWidget *>(
+            QStringLiteral("projectsGraphStack"));
+        ProjectRevisionGraph *server_graph = embedded_profiles.findChild<ProjectRevisionGraph *>(
+            QStringLiteral("projectRevisionGraph"));
+        QTreeWidget *embedded_servers = embedded_profiles.findChild<QTreeWidget *>(
+            QStringLiteral("serversTree"));
+        if (!require(server_graph_stack != nullptr && server_graph != nullptr
+                         && embedded_servers != nullptr && embedded_servers->topLevelItemCount() > 0
+                         && server_graph_stack->currentWidget() == server_graph
+                         && !server_graph->graphBounds().isEmpty(),
+                     "checked database without projects is missing its graph server node")) return 1;
+        // A Standalone build may also inject its default local profile. Test
+        // all-unchecked independently of how many profiles are configured.
+        for (int i = 0; i < embedded_servers->topLevelItemCount(); ++i)
+            embedded_servers->topLevelItem(i)->setCheckState(0, Qt::Unchecked);
+        app.processEvents();
+        if (!require(server_graph_stack->currentIndex() == 2,
+                     "unchecked databases did not show the no-databases-selected page")) return 1;
+        embedded_servers->topLevelItem(0)->setCheckState(0, Qt::Checked);
+        app.processEvents();
+        if (!require(server_graph_stack->currentWidget() == server_graph
+                         && !server_graph->graphBounds().isEmpty(),
+                     "rechecking a database did not restore its server node")) return 1;
         QComboBox *kind = embedded_profiles.findChild<QComboBox *>(
             QStringLiteral("projectSourceKind"));
         QLineEdit *path = embedded_profiles.findChild<QLineEdit *>(

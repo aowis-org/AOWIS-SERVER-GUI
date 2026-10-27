@@ -116,6 +116,21 @@ int main()
     CHECK(!layoutLayeredDag({{"self", {"other"}}, {"other", {"self"}}}).valid);
     CHECK(!layoutLayeredDag({{"invalid", {}, 0, 12}}).valid);
 
+    // Branch UUID references are distinct from revision ancestry. A branch
+    // can point at the same revision while also recording which branch it was
+    // created from. The layout must put the child below the source branch.
+    const std::vector<LayeredVertex> branch_origins = {
+        {"revision", {}, 224, 90},
+        {"main", {"revision"}, 196, 70},
+        {"feature", {"revision", "main"}, 196, 70},
+        {"child", {"revision", "feature"}, 196, 70}
+    };
+    const LayeredDag branch_layout = layoutLayeredDag(branch_origins);
+    CHECK(branch_layout.valid);
+    CHECK(branch_layout.ranks[2] > branch_layout.ranks[1]);
+    CHECK(branch_layout.ranks[3] > branch_layout.ranks[2]);
+    CHECK(checkGeometry(branch_origins, branch_layout));
+
     const std::vector<LayeredVertex> linear = {
         {"oldest", {}, 224, 84},
         {"older", {"oldest"}, 224, 84},

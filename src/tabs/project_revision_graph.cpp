@@ -446,6 +446,7 @@ void ProjectRevisionGraph::setNodes(const QVector<ProjectGraphNode> &nodes)
                 || old_node.heads != new_node.heads
                 || old_node.parent_routes != new_node.parent_routes
                 || old_node.kind != new_node.kind
+                || old_node.head_revision_id != new_node.head_revision_id
                 || old_node.container_id != new_node.container_id
                 || old_node.project_group_id != new_node.project_group_id)
             {
@@ -457,6 +458,10 @@ void ProjectRevisionGraph::setNodes(const QVector<ProjectGraphNode> &nodes)
     if (!same_layout)
         this->expanded_revisions.clear();
     this->source_nodes = nodes;
+    this->reference_head_revisions.clear();
+    for (const ProjectGraphNode &node : this->source_nodes)
+        if (node.kind == ProjectGraphNode::Kind::Branch)
+            this->reference_head_revisions.insert(node.head_revision_id);
     rebuildDisplayNodes();
     // The first server card can arrive before the asynchronous catalogue.
     // Frame that placeholder once, then frame the first actual project load
@@ -554,14 +559,22 @@ void ProjectRevisionGraph::setSelection(const QString &revision_id)
     update();
 }
 
+bool ProjectRevisionGraph::hasBranchReferenceCards(const QString &revision_id) const
+{
+    return this->reference_head_revisions.contains(revision_id);
+}
+
 QRectF ProjectRevisionGraph::nodeRect(const ProjectGraphNode &node) const
 {
     if (node.kind == ProjectGraphNode::Kind::Revision)
-        return ProjectRevisionCardGeometry::bounds(node.position, node.heads.size());
+        return ProjectRevisionCardGeometry::bounds(node.position,
+            hasBranchReferenceCards(node.id) ? 0 : node.heads.size());
     const double width = node.kind == ProjectGraphNode::Kind::Server
-        ? server_node_width : ProjectRevisionCardGeometry::width;
+        ? server_node_width : node.kind == ProjectGraphNode::Kind::Branch
+            ? 196.0 : ProjectRevisionCardGeometry::width;
     const double height = node.kind == ProjectGraphNode::Kind::Server
-        ? server_node_height : project_node_height;
+        ? server_node_height : node.kind == ProjectGraphNode::Kind::Branch
+            ? 70.0 : project_node_height;
     return QRectF(node.position.x() - width / 2.0,
                   node.position.y() - height / 2.0, width, height);
 }
@@ -908,6 +921,64 @@ void ProjectRevisionGraph::paintEvent(QPaintEvent *event)
         }
     }
 
+    // A branch owns its UUIDv7 identity and points to a revision's UUIDv7
+    // identity. Draw this relationship as a dashed *reference*, never as a
+    // solid immutable revision-parent edge.
+    for (const ProjectGraphNode &branch : this->nodes)
+    {
+        if (branch.kind != ProjectGraphNode::Kind::Branch) continue;
+        const ProjectGraphNode *target = visible_by_id.value(branch.head_revision_id, nullptr);
+        if (target == nullptr || target->kind != ProjectGraphNode::Kind::Revision) continue;
+        const double sign = this->top_down ? 1.0 : -1.0;
+        const QPointF begin = target->position + QPointF(0, sign * nodeRect(*target).height() / 2.0);
+        const QPointF end = branch.position - QPointF(0, sign * nodeRect(branch).height() / 2.0);
+        QPainterPath path(begin);
+        // The DAG placement uses reference links to reserve distinct lanes.
+        // Full-tree routes avoid passing through neighbouring revision cards.
+        const QVector<QPointF> route = branch.parent_routes.value(target->id);
+        if (route.size() >= 4 && (route.size() - 1) % 3 == 0)
+        {
+            path = QPainterPath(route.first());
+            for (int point = 1; point + 2 < route.size(); point += 3)
+                path.cubicTo(route.at(point), route.at(point + 1), route.at(point + 2));
+        }
+        else if (std::abs(begin.x() - end.x()) < 0.01) path.lineTo(end);
+        else path.cubicTo(begin + QPointF(0, sign * 42.0),
+                          end - QPointF(0, sign * 42.0), end);
+        painter.setPen(QPen(tint(QColor(57, 184, 145), 190), 2.2,
+                            Qt::DashLine, Qt::RoundCap));
+        painter.setBrush(Qt::NoBrush);
+        painter.drawPath(path);
+    }
+
+    // Creation provenance is deliberately distinct from a HEAD reference:
+    // blue dashed edge = created from branch, green dashed edge = points to
+    // a revision. Neither is a commit parent edge.
+    for (const ProjectGraphNode &branch : this->nodes)
+    {
+        if (branch.kind != ProjectGraphNode::Kind::Branch
+            || branch.origin_branch_node_id.isEmpty()) continue;
+        const ProjectGraphNode *origin = visible_by_id.value(branch.origin_branch_node_id, nullptr);
+        if (origin == nullptr || origin->kind != ProjectGraphNode::Kind::Branch) continue;
+        const double sign = this->top_down ? 1.0 : -1.0;
+        const QPointF begin = origin->position + QPointF(0, sign * nodeRect(*origin).height() / 2.0);
+        const QPointF end = branch.position - QPointF(0, sign * nodeRect(branch).height() / 2.0);
+        QPainterPath path(begin);
+        const QVector<QPointF> route = branch.parent_routes.value(origin->id);
+        if (route.size() >= 4 && (route.size() - 1) % 3 == 0)
+        {
+            path = QPainterPath(route.first());
+            for (int point = 1; point + 2 < route.size(); point += 3)
+                path.cubicTo(route.at(point), route.at(point + 1), route.at(point + 2));
+        }
+        else path.cubicTo(begin + QPointF(0, sign * 42.0),
+                          end - QPointF(0, sign * 42.0), end);
+        painter.setPen(QPen(tint(QColor(74, 154, 235), 225), 2.2,
+                            Qt::DashLine, Qt::RoundCap));
+        painter.setBrush(Qt::NoBrush);
+        painter.drawPath(path);
+    }
+
     QFont title_font = font();
     title_font.setBold(true);
     QFont small_font = font();
@@ -920,6 +991,28 @@ void ProjectRevisionGraph::paintEvent(QPaintEvent *event)
         if (node.kind != ProjectGraphNode::Kind::Revision)
         {
             const bool server = node.kind == ProjectGraphNode::Kind::Server;
+            const bool branch_reference = node.kind == ProjectGraphNode::Kind::Branch;
+            if (branch_reference)
+            {
+                // Render a branch as a separate selectable HEAD reference,
+                // visibly distinct from an immutable revision card.
+                const QColor green(57, 184, 145);
+                painter.setPen(QPen(tint(green, selected ? 255 : 175),
+                                    selected ? 3.2 : 1.8));
+                painter.setBrush(tint(green, selected ? 100 : 35));
+                painter.drawRoundedRect(box, 11, 11);
+                painter.setFont(title_font);
+                painter.setPen(ink);
+                painter.drawText(box.adjusted(13, 6, -11, -29),
+                    Qt::AlignLeft | Qt::AlignVCenter,
+                    painter.fontMetrics().elidedText(node.title, Qt::ElideRight,
+                        int(box.width() - 24)));
+                painter.setFont(small_font);
+                painter.setPen(tint(green, 235));
+                painter.drawText(box.adjusted(13, 34, -11, -7),
+                    Qt::AlignLeft | Qt::AlignVCenter, node.branch);
+                continue;
+            }
             const QColor group_color = server ? QColor(50, 174, 173) : accent;
             painter.setPen(QPen(tint(group_color, selected ? 255 : (server ? 230 : 140)),
                                 selected ? 3.4 : server ? 2.2 : 1.6));
@@ -997,6 +1090,7 @@ void ProjectRevisionGraph::paintEvent(QPaintEvent *event)
 
         // Branch refs belong to immutable revisions. Render each HEAD ref
         // inside the revision card, independently clickable and selectable.
+        if (hasBranchReferenceCards(node.id)) continue;
         for (int i = 0; i < node.heads.size(); ++i)
         {
             const ProjectGraphBranchHead &head = node.heads.at(i);
@@ -1226,6 +1320,8 @@ void ProjectRevisionGraph::mouseReleaseEvent(QMouseEvent *event)
                     emit serverActivated(node->id.mid(QStringLiteral("group:server:").size()));
                 else if (node->kind == ProjectGraphNode::Kind::Project)
                     emit projectActivated(node->id.mid(QStringLiteral("group:project:").size()));
+                else if (node->kind == ProjectGraphNode::Kind::Branch)
+                    emit branchActivated(node->id.mid(QStringLiteral("group:branch:").size()));
                 else
                 {
                     bool branch_hit = false;

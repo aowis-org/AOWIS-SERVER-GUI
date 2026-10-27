@@ -46,6 +46,7 @@ struct ProjectPreviewBranch
     QString description;
     QStringList tags;
     QString head;
+    QString origin_branch_id; // Source branch UUIDv7 (or preview branch ID), if recorded.
 };
 
 struct ProjectPreviewData

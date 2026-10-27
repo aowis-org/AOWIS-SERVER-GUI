@@ -67,17 +67,20 @@ int main(int argc, char **argv)
             {QStringLiteral("parentRecordHashes"), hashes}};
     };
     const auto head = [&digests](const QString &branch, const QString &branch_id,
-                                  const QString &revision)
+                                  const QString &revision, const QString &origin = {})
     {
         return QJsonObject{{QStringLiteral("branch"), branch},
             {QStringLiteral("branchId"), branch_id},
             {QStringLiteral("revision"), revision},
-            {QStringLiteral("recordHash"), digests.value(revision)}};
+            {QStringLiteral("recordHash"), digests.value(revision)},
+            {QStringLiteral("originBranchId"), origin.isEmpty()
+                ? QJsonValue(QJsonValue::Null) : QJsonValue(origin)}};
     };
     QStringList requests;
     bool change_pinned_head = false;
     bool corrupt_parent_hash = false;
     bool corrupt_branch_id = false;
+    bool corrupt_origin_id = false;
     QObject::connect(&server, &QTcpServer::newConnection, &server, [&]
     {
         while (server.hasPendingConnections())
@@ -86,7 +89,7 @@ int main(int argc, char **argv)
             const std::shared_ptr<QByteArray> buffer = std::make_shared<QByteArray>();
             QObject::connect(socket, &QTcpSocket::readyRead, socket,
                 [socket, buffer, &requests, &change_pinned_head, &corrupt_parent_hash,
-                 &corrupt_branch_id, project_id, a, b, c, d, e, branch_main,
+                 &corrupt_branch_id, &corrupt_origin_id, project_id, a, b, c, d, e, branch_main,
                  branch_feature, branch_alias, branch_history, record, head]
             {
                 buffer->append(socket->readAll());
@@ -103,9 +106,9 @@ int main(int argc, char **argv)
                 {
                     const bool second = path.contains("&cursor=page-2");
                     QJsonArray heads{head(QStringLiteral("main"), branch_main, e),
-                                     head(QStringLiteral("feature"), branch_feature, d),
-                                     head(QStringLiteral("alias"), branch_alias, e),
-                                     head(QStringLiteral("archive"), branch_history, b)};
+                                     head(QStringLiteral("Feature Branch"), branch_feature, d, branch_main),
+                                     head(QStringLiteral("alias"), branch_alias, e, branch_feature),
+                                     head(QStringLiteral("archive"), branch_history, b, branch_main)};
                     if (second && change_pinned_head)
                         heads[0] = head(QStringLiteral("main"), branch_main, c);
                     if (corrupt_branch_id)
@@ -113,6 +116,12 @@ int main(int argc, char **argv)
                         QJsonObject invalid = heads.at(0).toObject();
                         invalid.remove(QStringLiteral("branchId"));
                         heads[0] = invalid;
+                    }
+                    if (corrupt_origin_id)
+                    {
+                        QJsonObject invalid = heads.at(1).toObject();
+                        invalid.insert(QStringLiteral("originBranchId"), 42);
+                        heads[1] = invalid;
                     }
                     const QJsonArray revisions = second
                         ? QJsonArray{record(b, {a}), record(a, {})}
@@ -162,6 +171,9 @@ int main(int argc, char **argv)
         && project.branches.size() == 4 && project.revisions.size() == 5
         && project.branches.first().id == branch_main && project.branches.first().head == e
         && project.branches.at(2).head == e && project.branches.at(2).id == branch_alias
+        && project.branches.at(1).name == QStringLiteral("Feature Branch")
+        && project.branches.at(1).origin_branch_id == branch_main
+        && project.branches.at(2).origin_branch_id == branch_feature
         && project.branches.at(3).head == b
         && project.revisions.first().id == e
         && project.revisions.first().parents == QStringList({c,d})
@@ -185,6 +197,10 @@ int main(int argc, char **argv)
     if (!require(load() && !failure.isEmpty() && received.projects.isEmpty(),
                  "graph accepted missing branch UUIDv7")) return 1;
     corrupt_branch_id = false;
+    corrupt_origin_id = true;
+    if (!require(load() && !failure.isEmpty() && received.projects.isEmpty(),
+                 "graph accepted malformed branch creation provenance")) return 1;
+    corrupt_origin_id = false;
 
     if (!require(DvmdbIdentity::isUuidV7(a)
         && !DvmdbIdentity::isUuidV7(QStringLiteral("018f84c0-0000-4000-8000-000000000001"))

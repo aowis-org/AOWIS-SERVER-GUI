@@ -32,8 +32,11 @@ struct ProjectBlock
 {
     int node_index = -1;
     QVector<int> revision_indices;
+    QVector<int> branch_indices;
     QVector<QPointF> revision_positions;
     QVector<QHash<QString, QVector<QPointF>>> revision_routes;
+    QVector<QPointF> branch_positions;
+    QVector<QHash<QString, QVector<QPointF>>> branch_routes;
     double width = card_width;
     double ancestry_center_x = card_width / 2.0;
 };
@@ -48,11 +51,15 @@ struct DatabaseBlock
 
 inline void layoutRevisions(ProjectBlock &block, const QVector<ProjectGraphNode> &nodes)
 {
-    // Layout revision history in chronological ancestry order. The persistent
-    // 'parents' array already expresses oldest -> newest DAG dependencies;
-    // it MUST NOT be reversed merely because a branch points at HEAD.
+    // Branch refs are visual leaves in the layout, NOT revisions. Their
+    // incoming reference links participate in layout/crossing reduction, but
+    // only Kind::Revision.parents represent immutable ancestry.
     std::vector<AowisGraphLayout::LayeredVertex> vertices;
-    vertices.reserve(std::size_t(block.revision_indices.size()));
+    const int revision_count = block.revision_indices.size();
+    vertices.reserve(std::size_t(revision_count + block.branch_indices.size()));
+    QSet<QString> independently_drawn_heads;
+    for (int index : block.branch_indices)
+        independently_drawn_heads.insert(nodes.at(index).head_revision_id);
     for (int index : block.revision_indices)
     {
         const ProjectGraphNode &revision = nodes.at(index);
@@ -61,23 +68,47 @@ inline void layoutRevisions(ProjectBlock &block, const QVector<ProjectGraphNode>
         for (const QString &parent : revision.parents)
             vertex.parents.push_back(parent.toStdString());
         vertex.width = card_width;
-        vertex.height = ProjectRevisionCardGeometry::height(revision.heads.size());
+        vertex.height = ProjectRevisionCardGeometry::height(
+            independently_drawn_heads.contains(revision.id) ? 0 : revision.heads.size());
+        vertices.push_back(vertex);
+    }
+    for (int index : block.branch_indices)
+    {
+        const ProjectGraphNode &branch = nodes.at(index);
+        AowisGraphLayout::LayeredVertex vertex;
+        vertex.id = branch.id.toStdString();
+        vertex.parents.push_back(branch.head_revision_id.toStdString());
+        if (!branch.origin_branch_node_id.isEmpty())
+        {
+            // The origin may have been deleted from the catalogue. Only
+            // include an existing ref; never invent an ancestry node.
+            for (int candidate_index : block.branch_indices)
+                if (nodes.at(candidate_index).id == branch.origin_branch_node_id)
+                {
+                    vertex.parents.push_back(branch.origin_branch_node_id.toStdString());
+                    break;
+                }
+        }
+        vertex.width = 196.0;
+        vertex.height = 70.0;
         vertices.push_back(vertex);
     }
 
-    // Built-in, Qt-free Sugiyama layout: ranks, dummy routing lanes, crossing
-    // reduction, non-overlapping measured cards, and routed Bezier edges.
     const AowisGraphLayout::LayeredDag dag =
         AowisGraphLayout::layoutLayeredDag(vertices);
-    block.revision_positions.resize(block.revision_indices.size());
-    block.revision_routes.resize(block.revision_indices.size());
+    block.revision_positions.resize(revision_count);
+    block.revision_routes.resize(revision_count);
+    block.branch_positions.resize(block.branch_indices.size());
+    block.branch_routes.resize(block.branch_indices.size());
     if (!dag.valid)
     {
-        // A corrupt cyclic revision graph is not a DAG; refuse to invent
-        // parent chronology. Keep cards accessible in a safe linear layout.
-        for (int i = 0; i < block.revision_indices.size(); ++i)
+        // Keep corrupt histories selectable, without inventing DAG ancestry.
+        for (int i = 0; i < revision_count; ++i)
             block.revision_positions[i] = QPointF(card_width / 2.0,
                 first_graph_layer_y + 140.0 * i);
+        for (int i = 0; i < block.branch_indices.size(); ++i)
+            block.branch_positions[i] = QPointF(card_width / 2.0,
+                first_graph_layer_y + 140.0 * revision_count + 110.0 * i);
         block.width = card_width;
         block.ancestry_center_x = card_width / 2.0;
         return;
@@ -86,19 +117,25 @@ inline void layoutRevisions(ProjectBlock &block, const QVector<ProjectGraphNode>
     block.width = std::max(card_width, dag.width);
     block.ancestry_center_x = block.width / 2.0;
     const double horizontal_offset = (block.width - dag.width) / 2.0;
-    for (int i = 0; i < block.revision_indices.size(); ++i)
+    for (int i = 0; i < revision_count + block.branch_indices.size(); ++i)
     {
         const std::pair<double, double> point = dag.positions.at(std::size_t(i));
-        block.revision_positions[i] = QPointF(horizontal_offset + point.first,
-            first_graph_layer_y + point.second);
+        const QPointF position(horizontal_offset + point.first,
+                                first_graph_layer_y + point.second);
+        const bool is_branch = i >= revision_count;
+        const int local_index = is_branch ? i - revision_count : i;
+        if (is_branch) block.branch_positions[local_index] = position;
+        else block.revision_positions[local_index] = position;
+        QHash<QString, QVector<QPointF>> &routes = is_branch
+            ? block.branch_routes[local_index] : block.revision_routes[local_index];
         for (const AowisGraphLayout::LayeredRoute &edge : dag.parent_routes.at(std::size_t(i)))
         {
             QVector<QPointF> curve;
             curve.reserve(int(edge.cubic.size()));
             for (const std::pair<double, double> &control : edge.cubic)
                 curve.append(QPointF(horizontal_offset + control.first,
-                    first_graph_layer_y + control.second));
-            block.revision_routes[i].insert(QString::fromStdString(edge.parent), curve);
+                                     first_graph_layer_y + control.second));
+            routes.insert(QString::fromStdString(edge.parent), curve);
         }
     }
 }
@@ -136,12 +173,18 @@ inline void place(QVector<ProjectGraphNode> &nodes, double /*viewport_aspect*/ =
     for (int index = 0; index < nodes.size(); ++index)
     {
         const ProjectGraphNode &node = nodes.at(index);
-        if (node.kind != ProjectGraphNode::Kind::Revision)
+        if (node.kind != ProjectGraphNode::Kind::Revision
+            && node.kind != ProjectGraphNode::Kind::Branch)
             continue;
         const QPair<int, int> match = project_index.value(node.project_group_id,
                                                           qMakePair(-1, -1));
         if (match.first >= 0)
-            databases[match.first].projects[match.second].revision_indices.append(index);
+        {
+            ProjectBlock &block = databases[match.first].projects[match.second];
+            if (node.kind == ProjectGraphNode::Kind::Revision)
+                block.revision_indices.append(index);
+            else block.branch_indices.append(index);
+        }
     }
 
     // Stable project order across catalogue refreshes irrespective of backend
@@ -228,6 +271,24 @@ inline void place(QVector<ProjectGraphNode> &nodes, double /*viewport_aspect*/ =
                         for (const QPointF &point : edge.value())
                             shifted.append(QPointF(project_x + point.x(), -point.y()));
                         revision.parent_routes.insert(edge.key(), shifted);
+                    }
+                }
+            }
+            for (int bi = 0; bi < project.branch_indices.size(); ++bi)
+            {
+                ProjectGraphNode &branch = nodes[project.branch_indices.at(bi)];
+                const QPointF position = project.branch_positions.at(bi);
+                branch.position = QPointF(project_x + position.x(), -position.y());
+                branch.parent_routes.clear();
+                if (bi < project.branch_routes.size())
+                {
+                    const QHash<QString, QVector<QPointF>> &routes = project.branch_routes.at(bi);
+                    for (auto edge = routes.constBegin(); edge != routes.constEnd(); ++edge)
+                    {
+                        QVector<QPointF> shifted;
+                        for (const QPointF &point : edge.value())
+                            shifted.append(QPointF(project_x + point.x(), -point.y()));
+                        branch.parent_routes.insert(edge.key(), shifted);
                     }
                 }
             }
