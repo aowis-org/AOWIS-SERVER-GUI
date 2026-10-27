@@ -1,4 +1,5 @@
 #include "tabs/project_revision_graph.h"
+#include "projects/dvmdb_identity.h"
 #include "tabs/project_revision_card_geometry.h"
 
 #include "config/gui_configuration.h"
@@ -980,8 +981,8 @@ void ProjectRevisionGraph::paintEvent(QPaintEvent *event)
         // title, hash and badges to paint on top of one another.
         const QRectF title_box = ProjectRevisionCardGeometry::titleRect(box);
         const QRectF id_box = ProjectRevisionCardGeometry::revisionIdRect(box);
-        const QString short_id = (node.display_id.isEmpty()
-            ? node.id : node.display_id).left(12);
+        const QString short_id = DvmdbIdentity::shortLabel(
+            node.display_id.isEmpty() ? node.id : node.display_id);
         const QString title = ProjectRevisionCardGeometry::distinctTitle(node.title, short_id);
         painter.setPen(ink);
         painter.setFont(title_font);

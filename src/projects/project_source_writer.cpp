@@ -1,4 +1,5 @@
 #include "projects/project_source_writer.h"
+#include "projects/dvmdb_identity.h"
 
 #include <QDir>
 #include <QJsonDocument>
@@ -12,6 +13,8 @@
 #include <exception>
 #include <memory>
 #include <optional>
+#include <type_traits>
+#include <utility>
 #include <stdexcept>
 
 #ifdef AOWIS_STANDALONE_DVMDB_ENABLED
@@ -50,21 +53,74 @@ QString validateProfile(const ProjectServerProfile &profile)
 }
 
 #ifdef AOWIS_STANDALONE_DVMDB_ENABLED
+// Some Standalone builds still embed an older DVMDB submodule. Never create
+// SHA-addressed projects/branches as a fallback: those repositories cannot
+// be displayed by the canonical UUIDv7 graph reader.
+template <typename Service, typename = void>
+struct NativeUuidWritesAvailable : std::false_type {};
+
+template <typename Service>
+struct NativeUuidWritesAvailable<Service, std::void_t<
+    decltype(std::declval<Service &>().createProjectV2(std::declval<std::string_view>())),
+    decltype(std::declval<Service &>().createBranchV2(
+        std::declval<std::string_view>(), std::declval<std::string_view>())),
+    decltype(std::declval<Service &>().headV2(
+        std::declval<std::string_view>(), std::declval<std::string_view>())),
+    decltype(std::declval<Service &>().createBranchAtRevisionV2(
+        std::declval<std::string_view>(), std::declval<std::string_view>(),
+        std::declval<std::string_view>(),
+        std::declval<decltype(std::declval<Service &>().headV2(
+            std::declval<std::string_view>(), std::declval<std::string_view>()))>()))
+    >> : std::true_type {};
+
+template <typename Service>
+QString writeNativeUuid(Service &service, bool project_operation,
+                        const QString &project_id, const QString &name,
+                        const QString &from_branch, const QString &from_revision)
+{
+    if constexpr (!NativeUuidWritesAvailable<Service>::value)
+    {
+        throw std::runtime_error("Embedded DVMDB is outdated: UUIDv7 writes are required");
+    }
+    else
+    {
+        if (project_operation)
+        {
+            const QString id = QString::fromStdString(service.createProjectV2(name.toStdString()).id);
+            if (!DvmdbIdentity::isUuidV7(id))
+                throw std::runtime_error("DVMDB created a project without a UUIDv7 identity");
+            return id;
+        }
+        if (!DvmdbIdentity::isUuidV7(project_id))
+            throw std::runtime_error("Cannot write to an obsolete non-UUIDv7 DVMDB project");
+        const std::string project = project_id.toStdString();
+        const std::string new_name = name.toStdString();
+        const std::string source = from_branch.toStdString();
+        if (!from_revision.isEmpty())
+        {
+            using Revision = decltype(service.headV2(project, source));
+            const std::optional<Revision> revision = Revision::parse(from_revision.toStdString());
+            if (!revision || source.empty())
+                throw std::runtime_error("Invalid historical branch revision UUIDv7/source");
+            service.createBranchAtRevisionV2(project, new_name, source, *revision);
+        }
+        else
+        {
+            const std::optional<std::string_view> branch = source.empty()
+                ? std::nullopt : std::optional<std::string_view>(source);
+            service.createBranchV2(project, new_name, branch);
+        }
+        return name;
+    }
+}
+
 QString writeNative(const ProjectServerProfile &profile, bool project_operation,
                     const QString &project_id, const QString &name,
                     const QString &from_branch, const QString &from_revision)
 {
     aowis::dvmdb::ProjectService service(std::filesystem::path(profile.local_path.toStdString()));
-    if (project_operation)
-        return QString::fromStdString(service.createProject(name.toStdString()).id);
-    const std::string source = from_branch.toStdString();
-    const std::optional<std::string_view> branch = source.empty()
-        ? std::nullopt : std::optional<std::string_view>(source);
-    const std::optional<aowis::dvmdb::Hash> revision = from_revision.isEmpty()
-        ? std::nullopt
-        : std::optional<aowis::dvmdb::Hash>(aowis::dvmdb::fromHex(from_revision.toStdString()));
-    service.createBranch(project_id.toStdString(), name.toStdString(), branch, revision);
-    return name;
+    return writeNativeUuid(service, project_operation, project_id, name,
+                           from_branch, from_revision);
 }
 #endif
 }
@@ -125,6 +181,13 @@ void ProjectSourceWriter::start(const ProjectServerProfile &profile, Operation o
         return;
     }
 
+    if (operation == Operation::Branch
+        && (!DvmdbIdentity::isUuidV7(project_id)
+            || (!from_revision.isEmpty() && !DvmdbIdentity::isUuidV7(from_revision))))
+    {
+        if (completion) completion({}, tr("Canonical DVMDB writes require UUIDv7 project and revision IDs."));
+        return;
+    }
     this->busy = true;
     this->completion = std::move(completion);
     if (profile.connection_type == QStringLiteral("local"))
@@ -212,7 +275,8 @@ void ProjectSourceWriter::start(const ProjectServerProfile &profile, Operation o
         if (operation == Operation::Project)
         {
             const QString id = object.value(QStringLiteral("id")).toString();
-            if (id.isEmpty() || object.value(QStringLiteral("name")).toString() != name)
+            if (!DvmdbIdentity::isUuidV7(id)
+                || object.value(QStringLiteral("name")).toString() != name)
             {
                 finish({}, tr("Invalid project creation response. Refresh before retrying."));
                 return;
@@ -220,7 +284,9 @@ void ProjectSourceWriter::start(const ProjectServerProfile &profile, Operation o
             finish(id, {});
             return;
         }
-        if (object.value(QStringLiteral("id")).toString().size() != 64)
+        if (!DvmdbIdentity::isUuidV7(object.value(QStringLiteral("id")).toString())
+            || !DvmdbIdentity::isUuidV7(object.value(QStringLiteral("branchId")).toString())
+            || object.value(QStringLiteral("branch")).toString() != name)
         {
             finish({}, tr("Invalid branch creation response. Refresh before retrying."));
             return;

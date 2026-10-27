@@ -42,7 +42,10 @@ struct FakeDvmdb
 {
     QTcpServer server;
     bool valid = true;
-    const QString hash = QString(64, QLatin1Char('a'));
+    const QString hash = QStringLiteral("018f84c0-0000-7000-8000-00000000b001");
+    const QString project_id = QStringLiteral("018f84c0-0000-7000-8000-00000000a001");
+    const QString branch_id = QStringLiteral("018f84c0-0000-7000-8000-00000000c001");
+    const QString digest = QString(64, QLatin1Char('a'));
 
     bool start()
     {
@@ -63,17 +66,25 @@ struct FakeDvmdb
                     if (this->valid)
                     {
                         if (path == "/dvmdb/v1/projects")
-                            data = R"({"projects":[{"id":"p1","name":"Shared name"}]})";
-                        else if (path == "/dvmdb/v1/projects/p1/revision-graph?limit=256")
+                            data = QJsonDocument(QJsonObject{
+                                {QStringLiteral("projects"), QJsonArray{QJsonObject{
+                                    {QStringLiteral("id"), this->project_id},
+                                    {QStringLiteral("name"), QStringLiteral("Shared name")}}}}}).toJson();
+                        else if (path == QStringLiteral("/dvmdb/v1/projects/%1/revision-graph?limit=256")
+                                     .arg(this->project_id).toUtf8())
                         {
                             const QJsonObject revision{
                                 {QStringLiteral("id"), this->hash},
-                                {QStringLiteral("parents"), QJsonArray{}}};
+                                {QStringLiteral("recordHash"), this->digest},
+                                {QStringLiteral("parents"), QJsonArray{}},
+                                {QStringLiteral("parentRecordHashes"), QJsonArray{}}};
                             const QJsonObject response{
                                 {QStringLiteral("revisions"), QJsonArray{revision}},
                                 {QStringLiteral("heads"), QJsonArray{QJsonObject{
                                     {QStringLiteral("branch"), QStringLiteral("main")},
-                                    {QStringLiteral("revision"), this->hash}}}},
+                                    {QStringLiteral("branchId"), this->branch_id},
+                                    {QStringLiteral("revision"), this->hash},
+                                    {QStringLiteral("recordHash"), this->digest}}}},
                                 {QStringLiteral("complete"), true},
                                 {QStringLiteral("nextCursor"), QJsonValue(QJsonValue::Null)}};
                             data = QJsonDocument(response).toJson();
@@ -139,8 +150,8 @@ int main(int argc, char **argv)
     if (!require(tree->topLevelItem(0)->child(0)->data(0, Qt::UserRole).toString()
                  != tree->topLevelItem(1)->child(0)->data(0, Qt::UserRole).toString(),
                  "project identities collide across different databases")) return 1;
-    const QString first_graph_id = QStringLiteral("source-a|p1|") + first.hash;
-    const QString second_graph_id = QStringLiteral("source-b|p1|") + second.hash;
+    const QString first_graph_id = QStringLiteral("source-a|") + first.project_id + QStringLiteral("|") + first.hash;
+    const QString second_graph_id = QStringLiteral("source-b|") + second.project_id + QStringLiteral("|") + second.hash;
     graph->fitGraph();
     if (!require(!graph->revisionViewportPosition(first_graph_id).isNull()
                  && !graph->revisionViewportPosition(second_graph_id).isNull(),
@@ -148,8 +159,10 @@ int main(int argc, char **argv)
     // Both servers contain the same immutable revision hash, but their
     // branch references are different source/project-scoped HEADs. The
     // reference decoration belongs to its revision, not another graph node.
-    const QString first_branch = QStringLiteral("group:branch:source-a|p1:main");
-    const QString second_branch = QStringLiteral("group:branch:source-b|p1:main");
+    const QString first_branch = QStringLiteral("group:branch:source-a|") + first.project_id
+        + QStringLiteral(":") + first.branch_id;
+    const QString second_branch = QStringLiteral("group:branch:source-b|") + second.project_id
+        + QStringLiteral(":") + second.branch_id;
     if (!require(graph->nodeViewportPosition(first_branch)
                      == graph->revisionViewportPosition(first_graph_id)
                  && graph->nodeViewportPosition(second_branch)
@@ -158,7 +171,7 @@ int main(int argc, char **argv)
     const QPointF first_server = graph->nodeViewportPosition(QStringLiteral("group:server:source-a"));
     const QPointF second_server = graph->nodeViewportPosition(QStringLiteral("group:server:source-b"));
     const QPointF first_project = graph->nodeViewportPosition(
-        QStringLiteral("group:project:source-a|p1"));
+        QStringLiteral("group:project:source-a|") + first.project_id);
     if (!require(!first_server.isNull() && !second_server.isNull() && !first_project.isNull(),
                  "graph must expose a separate node for each database and project")) return 1;
     if (!require(first_server.y() < first_project.y()

@@ -1,4 +1,5 @@
 #include "projects/project_source_reader.h"
+#include "projects/dvmdb_identity.h"
 
 #include <QCoreApplication>
 #include <QElapsedTimer>
@@ -36,20 +37,47 @@ int main(int argc, char **argv)
 {
     QCoreApplication app(argc, argv);
     QTcpServer server;
-    if (!require(server.listen(QHostAddress::LocalHost, 0), "could not listen on loopback")) return 1;
-    const QString a(64, QLatin1Char('a'));
-    const QString b(64, QLatin1Char('b'));
-    const QString c(64, QLatin1Char('c'));
-    const QString d(64, QLatin1Char('d'));
-    const QString e(64, QLatin1Char('e'));
-    QStringList requested_paths;
-    bool corrupt_second_page = false;
-    const auto record = [](const QString &id, const QStringList &parents)
+    if (!require(server.listen(QHostAddress::LocalHost, 0), "cannot start REST mock")) return 1;
+    const QString project_id = QStringLiteral("018f84c0-0000-7000-8000-000000000900");
+    const QString a = QStringLiteral("018f84c0-0000-7000-8000-000000000001");
+    const QString b = QStringLiteral("018f84c0-0000-7000-8000-000000000002");
+    const QString c = QStringLiteral("018f84c0-0000-7000-8000-000000000003");
+    const QString d = QStringLiteral("018f84c0-0000-7000-8000-000000000004");
+    const QString e = QStringLiteral("018f84c0-0000-7000-8000-000000000005");
+    const QString branch_main = QStringLiteral("018f84c0-0000-7000-8000-000000000101");
+    const QString branch_feature = QStringLiteral("018f84c0-0000-7000-8000-000000000102");
+    const QString branch_alias = QStringLiteral("018f84c0-0000-7000-8000-000000000103");
+    const QString branch_history = QStringLiteral("018f84c0-0000-7000-8000-000000000104");
+    const QHash<QString,QString> digests = {{a,QString(64,QLatin1Char('a'))},
+        {b,QString(64,QLatin1Char('b'))}, {c,QString(64,QLatin1Char('c'))},
+        {d,QString(64,QLatin1Char('d'))}, {e,QString(64,QLatin1Char('e'))}};
+
+    const auto record = [&digests](const QString &id, const QStringList &parents, bool invalid = false)
     {
         QJsonArray links;
-        for (const QString &parent : parents) links.append(parent);
-        return QJsonObject{{QStringLiteral("id"), id}, {QStringLiteral("parents"), links}};
+        QJsonArray hashes;
+        for (const QString &parent : parents)
+        {
+            links.append(parent);
+            hashes.append(invalid ? QString(64, QLatin1Char('f')) : digests.value(parent));
+        }
+        return QJsonObject{{QStringLiteral("id"), id},
+            {QStringLiteral("recordHash"), digests.value(id)},
+            {QStringLiteral("parents"), links},
+            {QStringLiteral("parentRecordHashes"), hashes}};
     };
+    const auto head = [&digests](const QString &branch, const QString &branch_id,
+                                  const QString &revision)
+    {
+        return QJsonObject{{QStringLiteral("branch"), branch},
+            {QStringLiteral("branchId"), branch_id},
+            {QStringLiteral("revision"), revision},
+            {QStringLiteral("recordHash"), digests.value(revision)}};
+    };
+    QStringList requests;
+    bool change_pinned_head = false;
+    bool corrupt_parent_hash = false;
+    bool corrupt_branch_id = false;
     QObject::connect(&server, &QTcpServer::newConnection, &server, [&]
     {
         while (server.hasPendingConnections())
@@ -57,41 +85,46 @@ int main(int argc, char **argv)
             QTcpSocket *socket = server.nextPendingConnection();
             const std::shared_ptr<QByteArray> buffer = std::make_shared<QByteArray>();
             QObject::connect(socket, &QTcpSocket::readyRead, socket,
-                [socket, buffer, &requested_paths, &corrupt_second_page, a, b, c, d, e, record]
+                [socket, buffer, &requests, &change_pinned_head, &corrupt_parent_hash,
+                 &corrupt_branch_id, project_id, a, b, c, d, e, branch_main,
+                 branch_feature, branch_alias, branch_history, record, head]
             {
                 buffer->append(socket->readAll());
                 if (!buffer->contains("\r\n\r\n")) return;
                 const QByteArray path = buffer->split(' ').value(1);
-                requested_paths.append(QString::fromLatin1(path));
+                requests.append(QString::fromLatin1(path));
                 QByteArray body;
                 if (path == "/dvmdb/v1/projects")
-                    body = R"({"projects":[{"id":"p1","name":"Waterworks"}]})";
-                else if (path.startsWith("/dvmdb/v1/projects/p1/revision-graph?limit=256"))
+                    body = QJsonDocument(QJsonObject{{QStringLiteral("projects"), QJsonArray{
+                        QJsonObject{{QStringLiteral("id"), project_id},
+                                    {QStringLiteral("name"), QStringLiteral("Waterworks")}}}}}).toJson();
+                else if (path.startsWith(QStringLiteral("/dvmdb/v1/projects/%1/revision-graph?limit=256")
+                                            .arg(project_id).toUtf8()))
                 {
-                    QJsonArray heads{
-                        QJsonObject{{QStringLiteral("branch"), QStringLiteral("main")},
-                                    {QStringLiteral("revision"), e}},
-                        QJsonObject{{QStringLiteral("branch"), QStringLiteral("feature")},
-                                    {QStringLiteral("revision"), d}},
-                        QJsonObject{{QStringLiteral("branch"), QStringLiteral("archive")},
-                                    {QStringLiteral("revision"), b}},
-                        QJsonObject{{QStringLiteral("branch"), QStringLiteral("alias")},
-                                    {QStringLiteral("revision"), e}}};
                     const bool second = path.contains("&cursor=page-2");
-                    if (second && corrupt_second_page)
-                        heads[0] = QJsonObject{{QStringLiteral("branch"), QStringLiteral("main")},
-                                               {QStringLiteral("revision"), c}};
+                    QJsonArray heads{head(QStringLiteral("main"), branch_main, e),
+                                     head(QStringLiteral("feature"), branch_feature, d),
+                                     head(QStringLiteral("alias"), branch_alias, e),
+                                     head(QStringLiteral("archive"), branch_history, b)};
+                    if (second && change_pinned_head)
+                        heads[0] = head(QStringLiteral("main"), branch_main, c);
+                    if (corrupt_branch_id)
+                    {
+                        QJsonObject invalid = heads.at(0).toObject();
+                        invalid.remove(QStringLiteral("branchId"));
+                        heads[0] = invalid;
+                    }
                     const QJsonArray revisions = second
                         ? QJsonArray{record(b, {a}), record(a, {})}
-                        : QJsonArray{record(e, {c, d}), record(c, {b}), record(d, {b})};
-                    body = QJsonDocument(QJsonObject{
-                        {QStringLiteral("heads"), heads},
+                        : QJsonArray{record(e, {c,d}, corrupt_parent_hash),
+                                     record(c, {b}), record(d, {b})};
+                    body = QJsonDocument(QJsonObject{{QStringLiteral("heads"), heads},
                         {QStringLiteral("revisions"), revisions},
                         {QStringLiteral("complete"), second},
                         {QStringLiteral("nextCursor"), second ? QJsonValue(QJsonValue::Null)
                             : QJsonValue(QStringLiteral("page-2"))}}).toJson();
                 }
-                else body = R"({"error":"unexpected route"})";
+                else body = R"({"error":"unknown route"})";
                 socket->write("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: "
                     + QByteArray::number(body.size()) + "\r\n\r\n" + body);
                 socket->disconnectFromHost();
@@ -99,6 +132,7 @@ int main(int argc, char **argv)
             QObject::connect(socket, &QTcpSocket::disconnected, socket, &QTcpSocket::deleteLater);
         }
     });
+
     ProjectServerProfile profile;
     profile.id = QStringLiteral("test");
     profile.connection_type = QStringLiteral("remote");
@@ -109,62 +143,63 @@ int main(int argc, char **argv)
     bool finished = false;
     SourceSnapshot received;
     QString failure;
-    reader.load(profile, [&](const SourceSnapshot &snapshot, const QString &error)
+    const auto load = [&]
     {
-        received = snapshot;
-        failure = error;
-        finished = true;
-    });
-    if (!require(waitUntil(app, [&] { return finished; }), "REST graph reader did not finish")) return 1;
+        finished = false;
+        reader.load(profile, [&](const SourceSnapshot &snapshot, const QString &error)
+        {
+            received = snapshot;
+            failure = error;
+            finished = true;
+        });
+        return waitUntil(app, [&] { return finished; });
+    };
+    if (!require(load(), "canonical REST reader timed out")) return 1;
     if (!require(failure.isEmpty() && received.projects.size() == 1,
-                 "REST catalogue failed")) return 1;
+                 "canonical graph refresh failed")) return 1;
     const SourceProject &project = received.projects.first();
-    if (!require(project.id == QStringLiteral("p1") && project.name == QStringLiteral("Waterworks")
-        && project.graph_complete && project.branches.size() == 4
-        && project.branches.first().name == QStringLiteral("main")
-        && project.branches.first().head == e
-        && project.branches.at(1).head == d && project.branches.at(2).head == b
-        && project.branches.at(3).head == e
-        && project.revisions.size() == 5 && project.revisions.first().parents == QStringList({c, d}),
-        "REST graph did not preserve all branches, merge parents or historical HEAD")) return 1;
-    if (!require(requested_paths.size() == 3
-        && requested_paths.at(1) == QStringLiteral("/dvmdb/v1/projects/p1/revision-graph?limit=256")
-        && requested_paths.at(2) == QStringLiteral("/dvmdb/v1/projects/p1/revision-graph?limit=256&cursor=page-2"),
-        "REST graph was not paginated via the pinned cursor")) return 1;
+    if (!require(project.graph_complete && project.id == project_id
+        && project.branches.size() == 4 && project.revisions.size() == 5
+        && project.branches.first().id == branch_main && project.branches.first().head == e
+        && project.branches.at(2).head == e && project.branches.at(2).id == branch_alias
+        && project.branches.at(3).head == b
+        && project.revisions.first().id == e
+        && project.revisions.first().parents == QStringList({c,d})
+        && project.revisions.first().parent_record_sha256 == QStringList({digests.value(c),digests.value(d)})
+        && project.revisions.first().record_sha256 == digests.value(e),
+        "UUIDv7 branch/merge identities or SHA record binding lost")) return 1;
+    if (!require(requests.size() == 3
+        && requests.at(1) == QStringLiteral("/dvmdb/v1/projects/%1/revision-graph?limit=256").arg(project_id)
+        && requests.at(2) == QStringLiteral("/dvmdb/v1/projects/%1/revision-graph?limit=256&cursor=page-2").arg(project_id),
+        "pinned graph pagination did not use the canonical route")) return 1;
 
-    corrupt_second_page = true;
-    finished = false;
-    reader.load(profile, [&](const SourceSnapshot &snapshot, const QString &error)
-    {
-        received = snapshot;
-        failure = error;
-        finished = true;
-    });
-    if (!require(waitUntil(app, [&] { return finished; }), "corrupt HEAD test did not finish")) return 1;
-    if (!require(!failure.isEmpty() && received.projects.isEmpty(),
-        "changed HEAD set was published as a complete graph")) return 1;
-    corrupt_second_page = false;
+    change_pinned_head = true;
+    if (!require(load() && !failure.isEmpty() && received.projects.isEmpty(),
+                 "graph accepted changed branch HEAD during pagination")) return 1;
+    change_pinned_head = false;
+    corrupt_parent_hash = true;
+    if (!require(load() && !failure.isEmpty() && received.projects.isEmpty(),
+                 "graph accepted mismatched parent record SHA")) return 1;
+    corrupt_parent_hash = false;
+    corrupt_branch_id = true;
+    if (!require(load() && !failure.isEmpty() && received.projects.isEmpty(),
+                 "graph accepted missing branch UUIDv7")) return 1;
+    corrupt_branch_id = false;
 
+    if (!require(DvmdbIdentity::isUuidV7(a)
+        && !DvmdbIdentity::isUuidV7(QStringLiteral("018f84c0-0000-4000-8000-000000000001"))
+        && DvmdbIdentity::revisionFormat(a) == DvmdbIdentity::RevisionFormat::UuidV7,
+        "UUIDv7 identity parser regression")) return 1;
     profile.auth_mode = QStringLiteral("API token");
-    finished = false;
-    reader.load(profile, [&](const SourceSnapshot &, const QString &error)
-    {
-        failure = error;
-        finished = true;
-    });
-    if (!require(finished && failure.contains(QStringLiteral("not implemented")),
-                 "unsupported REST auth was not rejected")) return 1;
-
+    if (!require(load() && failure.contains(QStringLiteral("not implemented")),
+                 "unsupported REST authentication was not rejected")) return 1;
     profile.auth_mode = QStringLiteral("None");
     bool cancelled_callback = false;
-    reader.load(profile, [&](const SourceSnapshot &, const QString &)
-    {
-        cancelled_callback = true;
-    });
+    reader.load(profile, [&](const SourceSnapshot &, const QString &) { cancelled_callback = true; });
     reader.cancel();
     QElapsedTimer elapsed;
     elapsed.start();
     while (elapsed.elapsed() < 150) app.processEvents(QEventLoop::AllEvents, 20);
-    if (!require(!cancelled_callback, "cancelled request delivered stale result")) return 1;
+    if (!require(!cancelled_callback, "cancelled graph read returned stale data")) return 1;
     return 0;
 }

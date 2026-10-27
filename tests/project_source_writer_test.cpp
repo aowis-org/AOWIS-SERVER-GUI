@@ -39,8 +39,10 @@ int main(int argc, char **argv)
     if (!require(server.listen(QHostAddress::LocalHost, 0), "cannot listen on loopback")) return 1;
     QStringList requested_paths;
     QList<QJsonObject> request_bodies;
-    const QString root_revision(64, QLatin1Char('a'));
-    const QString branch_revision(64, QLatin1Char('b'));
+    const QString root_revision = QStringLiteral("018f84c0-0000-7000-8000-000000000001");
+    const QString branch_revision = QStringLiteral("018f84c0-0000-7000-8000-000000000002");
+    const QString branch_identity = QStringLiteral("018f84c0-0000-7000-8000-000000000003");
+    const QString project_identity = QStringLiteral("018f84c0-0000-7000-8000-000000000004");
     QObject::connect(&server, &QTcpServer::newConnection, &server, [&]
     {
         while (server.hasPendingConnections())
@@ -48,7 +50,8 @@ int main(int argc, char **argv)
             QTcpSocket *socket = server.nextPendingConnection();
             const std::shared_ptr<QByteArray> buffer = std::make_shared<QByteArray>();
             QObject::connect(socket, &QTcpSocket::readyRead, socket,
-                [socket, buffer, &requested_paths, &request_bodies, branch_revision]
+                [socket, buffer, &requested_paths, &request_bodies, branch_revision,
+                 branch_identity, project_identity]
             {
                 buffer->append(socket->readAll());
                 const qsizetype marker = buffer->indexOf("\r\n\r\n");
@@ -67,12 +70,16 @@ int main(int argc, char **argv)
                 QByteArray payload;
                 int status = 201;
                 if (path == "/dvmdb/v1/projects")
-                    payload = R"({"id":"new-project","name":"Water Project"})";
-                else if (path == "/dvmdb/v1/projects/p1/branches"
+                    payload = QJsonDocument(QJsonObject{
+                        {QStringLiteral("id"), project_identity},
+                        {QStringLiteral("name"), QStringLiteral("Water Project")}}).toJson(QJsonDocument::Compact);
+                else if (path == QStringLiteral("/dvmdb/v1/projects/%1/branches")
+                    .arg(project_identity).toUtf8()
                     && json.object().value(QStringLiteral("name")) != QStringLiteral("duplicate"))
                     payload = QJsonDocument(QJsonObject{
                         {QStringLiteral("id"), branch_revision},
-                        {QStringLiteral("parents"), QJsonArray{}}}).toJson(QJsonDocument::Compact);
+                        {QStringLiteral("branch"), QStringLiteral("feature")},
+                        {QStringLiteral("branchId"), branch_identity}}).toJson(QJsonDocument::Compact);
                 else
                 {
                     status = 409;
@@ -105,14 +112,14 @@ int main(int argc, char **argv)
     });
     if (!require(writer.isBusy(), "writer must be busy during POST")) return 1;
     if (!require(waitUntil(app, [&] { return done; }), "project POST did not finish")) return 1;
-    if (!require(!writer.isBusy() && failure.isEmpty() && created == QStringLiteral("new-project"),
+    if (!require(!writer.isBusy() && failure.isEmpty() && created == project_identity,
                  "project POST did not return the persisted ID")) return 1;
     if (!require(requested_paths.size() == 1 && requested_paths.first() == QStringLiteral("/dvmdb/v1/projects")
                  && request_bodies.first().value(QStringLiteral("name")) == QStringLiteral("Water Project"),
                  "project POST did not match DVMDB contract")) return 1;
 
     done = false;
-    writer.createBranch(profile, QStringLiteral("p1"), QStringLiteral("feature"),
+    writer.createBranch(profile, project_identity, QStringLiteral("feature"),
                         QStringLiteral("main"), root_revision,
                         [&](const QString &id, const QString &error)
     {
@@ -123,14 +130,14 @@ int main(int argc, char **argv)
     if (!require(waitUntil(app, [&] { return done; }), "branch POST did not finish")) return 1;
     if (!require(failure.isEmpty() && created == QStringLiteral("feature")
         && requested_paths.size() == 2
-        && requested_paths.last() == QStringLiteral("/dvmdb/v1/projects/p1/branches")
+        && requested_paths.last() == QStringLiteral("/dvmdb/v1/projects/%1/branches").arg(project_identity)
         && request_bodies.last().value(QStringLiteral("name")) == QStringLiteral("feature")
         && request_bodies.last().value(QStringLiteral("fromBranch")) == QStringLiteral("main")
         && request_bodies.last().value(QStringLiteral("revision")) == root_revision,
         "branch-from-revision POST does not match DVMDB contract")) return 1;
 
     done = false;
-    writer.createBranch(profile, QStringLiteral("p1"), QStringLiteral("duplicate"),
+    writer.createBranch(profile, project_identity, QStringLiteral("duplicate"),
                         QStringLiteral("main"), {}, [&](const QString &id, const QString &error)
     {
         created = id;
@@ -141,6 +148,16 @@ int main(int argc, char **argv)
     if (!require(created.isEmpty() && failure.contains(QStringLiteral("HTTP 409"))
                  && failure.contains(QStringLiteral("duplicate branch")),
         "structured branch conflict was lost")) return 1;
+
+    const int before_rejected = requested_paths.size();
+    done = false;
+    writer.createBranch(profile, project_identity, QStringLiteral("badsha"),
+                        QStringLiteral("main"), QString(64, QLatin1Char('a')),
+                        [&](const QString &, const QString &error)
+    { failure = error; done = true; });
+    if (!require(done && failure.contains(QStringLiteral("UUIDv7"))
+        && requested_paths.size() == before_rejected,
+        "legacy SHA revision was sent to the canonical UUIDv7 writer")) return 1;
 
     profile.auth_mode = QStringLiteral("API token");
     done = false;

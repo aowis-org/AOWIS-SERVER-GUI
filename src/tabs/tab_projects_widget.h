@@ -36,6 +36,7 @@ struct ProjectPreviewRevision
     QStringList tags;
     QString author;
     QString created_at;
+    QString record_sha256;
 };
 
 struct ProjectPreviewBranch

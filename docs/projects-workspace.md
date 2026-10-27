@@ -14,7 +14,7 @@ for future checkout/save work, see the
 | Data source profile | Saved locally (native GUI INI or browser `localStorage`), with a stable ID, name, type, endpoint/path, descriptive metadata and visibility. |
 | Local embedded source | C++ DVMDB `ProjectService` in supported native Standalone builds; no HTTP and no remote health checks. |
 | Remote source | REST `/dvmdb/v1`, automatic health checks, async catalogue reads and periodic refresh. Authentication **not** implemented. |
-| Catalogue | Projects, consistent branch HEAD snapshots and a fully paginated two-parent revision DAG, normalized across native and REST. |
+| Catalogue | Projects and consistent, fully paginated two-parent revision DAGs: native and REST use UUIDv7 identities and canonical record SHA-256 integrity bindings. |
 | Real writes | Project create and branch create/fork only. Subsequent catalogue reload confirms persisted results. |
 | Preview | Explicit demo profiles and built-in example *placeholders* remain in-memory and cannot be mistaken for DVMDB revisions. |
 | Graph | Source-qualified nodes for all checked real databases. QWidget/QPainter revision graph; no second bgfx instance. |
@@ -89,11 +89,15 @@ database: settings are stored using Qt settings/JSON.
 - **Editable heads** shows the loaded revision objects referenced by
   branch HEADs. It does **not** grant historical model editing; the label
   describes branch heads, not a database write permission.
-- For real DVMDB, current labels are generated from the first 12 characters
-  of the immutable revision hash; the GUI does not yet fetch/store editable
-  revision titles. The source reader now traverses the paginated DVMDB P0
+- For real DVMDB, abbreviated labels use the final twelve hexadecimal digits
+  of revision UUIDv7s; full UUIDs remain the selection keys. The GUI does not
+  yet fetch/store editable revision titles. SHA-256 is displayed separately
+  as immutable record-integrity metadata. The source reader now traverses the paginated DVMDB P0
   revision graph **for the whole project**, including both merge parents and
-  shared ancestry. Oversized or invalid responses fail the refresh explicitly
+  shared ancestry. Embedded DVMDB uses `revisionGraphV2()` where supported to
+  display persistent branch and revision UUIDv7 identities, including the
+  canonical record SHA-256 in the revision inspector. The HTTP graph now uses
+  the same UUIDv7 and SHA integrity contract. Oversized or invalid responses fail the refresh explicitly
   instead of silently hiding older revisions.
 - Selecting a historical revision from the graph reveals it in **Full tree**
   when required.

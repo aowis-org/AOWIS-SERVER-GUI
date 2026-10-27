@@ -119,3 +119,16 @@ The repository contains GUI regression tests for project/branch REST
 creation, HTTP contract/error behavior, multi-source ID collisions and
 visibility persistence. Executing them in a build environment is still
 required; documentation itself is not proof of successful integration.
+
+## UUIDv7 canonical API cutover (integrated)
+
+The uploaded DVMDB native/HTTP snapshot now exposes canonical UUIDv7 project,
+branch and revision identities. GUI readers and project/branch creation writers
+use these APIs. The complete graph retains canonical SHA-256 record digests
+separately from immutable UUID identities, verifies parents/HEAD bindings,
+and preserves source/project scoping. Old SHA-addressed development stores
+are not compatible; recreate them under the new pre-release format.
+
+Remaining GUI work is P1 network checkout/edit/commit, comparison and merge
+workflows, not the revision identity cutover. See
+[the integration checkpoint](dvmdb-uuidv7-gui-readiness.md).

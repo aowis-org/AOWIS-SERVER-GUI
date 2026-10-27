@@ -22,12 +22,16 @@ struct SourceRevision
 {
     QString id;
     QStringList parents;
+    QString record_sha256; // SHA-256 of canonical immutable revision record.
+    QStringList parent_record_sha256; // Ordered integrity bindings for parent UUIDs.
 };
 
 struct SourceBranch
 {
     QString name;
+    QString id; // Real backend branch UUIDv7 when available; never synthesized.
     QString head;
+    QString record_sha256; // Expected canonical record digest of HEAD revision.
 };
 
 struct SourceProject

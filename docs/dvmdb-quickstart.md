@@ -129,8 +129,8 @@ local embedded source.
 The **Databases** checkboxes control which sources contribute to the
 **Projects & Branches** tree and the shared revision graph. Multiple real
 databases can be displayed together, even if they have projects with
-identical names or revision hashes; the GUI qualifies their internal IDs
-by source. Select the target database/project before creating anything:
+identical names or snapshot SHA-256 hashes; the GUI qualifies UUIDv7
+revision identities by source and project. Select the target database/project before creating anything:
 
 - Select an available **database**, then use **Create project** at the bottom
   of its inspector. Enter the project name in the inline form and confirm.

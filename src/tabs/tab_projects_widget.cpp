@@ -1,4 +1,5 @@
 #include "tabs/tab_projects_widget.h"
+#include "projects/dvmdb_identity.h"
 #include "tabs/project_graph_placement.h"
 
 #include "app/builtin_examples.h"
@@ -1315,7 +1316,11 @@ void ProjectsWidget::applySourceSnapshot(const QString &source_id, const SourceS
         for (const SourceBranch &source_branch : entry.branches)
         {
             ProjectPreviewBranch branch;
-            branch.id = project.id + QStringLiteral(":") + source_branch.name;
+            // Use a durable branch UUID when the backend supplies one.
+            // Legacy sources without branch identities retain a source-scoped
+            // name key. Never manufacture UUIDs in the GUI.
+            branch.id = project.id + QStringLiteral(":")
+                + (source_branch.id.isEmpty() ? source_branch.name : source_branch.id);
             branch.name = source_branch.name;
             branch.head = source_branch.head;
             project.branches.append(branch);
@@ -1325,7 +1330,8 @@ void ProjectsWidget::applySourceSnapshot(const QString &source_id, const SourceS
             ProjectPreviewRevision revision;
             revision.id = source_revision.id;
             revision.parents = source_revision.parents;
-            revision.title = tr("Revision %1").arg(revision.id.left(12));
+            revision.record_sha256 = source_revision.record_sha256;
+            revision.title = tr("Revision %1").arg(DvmdbIdentity::shortLabel(revision.id));
             project.revisions.append(revision);
         }
         this->projects.append(project);
@@ -1839,7 +1845,7 @@ void ProjectsWidget::updateInspectorTabs()
             for (const ProjectPreviewBranch &branch : project->branches)
             {
                 QListWidgetItem *item = new QListWidgetItem(
-                    tr("%1  ·  HEAD %2").arg(branch.name, branch.head.left(12)),
+                    tr("%1  ·  HEAD %2").arg(branch.name, DvmdbIdentity::shortLabel(branch.head)),
                     this->inspector_related_list);
                 item->setData(Qt::UserRole, keyFor(QStringLiteral("b"), branch.id));
             }
@@ -1870,8 +1876,8 @@ void ProjectsWidget::updateInspectorTabs()
                     {
                         QListWidgetItem *item = new QListWidgetItem(
                             revision.id == branch->head
-                                ? tr("%1  ·  HEAD").arg(revision.id.left(12))
-                                : revision.id.left(12), this->inspector_related_list);
+                                ? tr("%1  ·  HEAD").arg(DvmdbIdentity::shortLabel(revision.id))
+                                : DvmdbIdentity::shortLabel(revision.id), this->inspector_related_list);
                         item->setData(Qt::UserRole, keyFor(QStringLiteral("r"), revision.id));
                     }
             }
@@ -1885,7 +1891,7 @@ void ProjectsWidget::updateInspectorTabs()
             for (const QString &parent : revision->parents)
             {
                 QListWidgetItem *item = new QListWidgetItem(
-                    tr("Parent · %1").arg(parent.left(12)), this->inspector_related_list);
+                    tr("Parent · %1").arg(DvmdbIdentity::shortLabel(parent)), this->inspector_related_list);
                 item->setData(Qt::UserRole, keyFor(QStringLiteral("r"), parent));
             }
             if (const ProjectPreviewData *project = currentProject())
@@ -1936,11 +1942,11 @@ void ProjectsWidget::beginCreation(bool branch)
                 chosen = QStringLiteral("branch:") + selected->name;
         for (const ProjectPreviewBranch &entry : project->branches)
             this->creation_source->addItem(
-                tr("%1 · HEAD %2").arg(entry.name, entry.head.left(12)),
+                tr("%1 · HEAD %2").arg(entry.name, DvmdbIdentity::shortLabel(entry.head)),
                 QStringLiteral("branch:") + entry.name);
         for (const ProjectPreviewRevision &entry : project->revisions)
             this->creation_source->addItem(
-                tr("Revision %1").arg(entry.id.left(12)),
+                tr("Revision %1").arg(DvmdbIdentity::shortLabel(entry.id)),
                 QStringLiteral("revision:") + entry.id);
         if (chosen.isEmpty())
         {
@@ -2098,7 +2104,16 @@ void ProjectsWidget::updateInspector()
                     name = branch.name;
                     description = branch.description;
                     tags = branch.tags;
-                    metadata = tr("Head revision: %1\nBranch: %2").arg(branch.head, branch.name);
+                    metadata = tr("Head revision: %1\nBranch: %2\nRevision identity: %3")
+                        .arg(branch.head, branch.name,
+                             DvmdbIdentity::revisionFormatName(branch.head));
+                    if (entry.database_backed)
+                    {
+                        const QString prefix = entry.id + QStringLiteral(":");
+                        const QString suffix = branch.id.mid(prefix.size());
+                        if (DvmdbIdentity::isUuidV7(suffix))
+                            metadata += tr("\nBranch UUIDv7: %1").arg(suffix);
+                    }
                 }
     }
     else if (this->selection_kind == SelectionKind::Revision)
@@ -2117,10 +2132,12 @@ void ProjectsWidget::updateInspector()
                 QStringList heads;
                 for (const ProjectPreviewBranch &branch : project->branches)
                     if (branch.head == revision->id) heads.append(branch.name);
-                metadata = tr("Revision: %1\nHEAD of: %2\nParents: %3")
-                    .arg(revision->id,
+                metadata = tr("Revision: %1\nIdentity: %2\nHEAD of: %3\nParents: %4")
+                    .arg(revision->id, DvmdbIdentity::revisionFormatName(revision->id),
                          heads.isEmpty() ? tr("(none)") : heads.join(QStringLiteral(", ")),
                          revision->parents.isEmpty() ? tr("(root)") : revision->parents.join(QStringLiteral(", ")));
+                if (!revision->record_sha256.isEmpty())
+                    metadata += tr("\nCanonical record SHA-256: %1").arg(revision->record_sha256);
             }
             else
                 metadata = tr("Revision: %1\nBranch: %2\nParents: %3\nAuthor: %4\nCreated: %5")
