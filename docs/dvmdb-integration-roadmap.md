@@ -1,6 +1,6 @@
 # DVMDB integration — implementation status and next steps
 
-**Updated 2026-10-26.** This document describes code in this GUI checkout.
+**Updated 2026-10-27.** This document describes code in this GUI checkout.
 Do not confuse an implemented backend API, a wired GUI feature, and a
 proposed feature: they are separate milestones. See the
 [practical quickstart](dvmdb-quickstart.md) and
@@ -12,10 +12,10 @@ proposed feature: they are separate milestones. See the
 |---|---|---|
 | Database profile CRUD | **Implemented** | Stored locally in GUI configuration; profile deletion does **not** delete database data. The default embedded profile is protected. |
 | Embedded source in Standalone | **Implemented on supported native builds** | Uses DVMDB `ProjectService`, not a second database implementation or an HTTP server. |
-| REST catalogue reader | **Implemented** | HTTP `/dvmdb/v1` project/branch/history reads with response validation, deadlines and cancellation. |
+| REST catalogue reader | **Implemented** | HTTP `/dvmdb/v1` project and paginated full-DAG reads with pinned branch HEAD sets, validation, deadlines and cancellation. |
 | Automatic remote health and refresh | **Implemented** | ~5 s health probes, degraded/offline after failures, ~60 s catalogue refresh while healthy; offline caches read-only. |
 | Multi-source explorer | **Implemented** | Persistent visibility checkboxes; source-qualified project/revision IDs; same-named projects on different databases remain distinguishable. |
-| Revision history graph | **Partial** | Newest 100 first-parent revisions per branch, not exhaustive two-parent ancestry or server-side DAG paging. QWidget/QPainter, not a second bgfx device. |
+| Revision history graph | **P0 integrated** | All-parent graph pages for the entire project, with snapshot-consistent HEADs, duplicate/closure checks and explicit resource limits; QWidget/QPainter, not a second bgfx device. |
 | Project creation | **Implemented, native + REST** | Real server-side create, followed by catalogue refresh. |
 | Branch creation / fork from revision | **Implemented, native + REST** | Creates a new branch from the chosen supported base. No rename/delete. |
 | Network enumeration and checkout | **Not implemented in GUI** | Underlying DVMDB read API for known network IDs exists, but no server network-discovery endpoint. |
@@ -39,10 +39,10 @@ proposed feature: they are separate milestones. See the
 ### Stage 2 — Shared read-only catalogue
 
 - Native worker and asynchronous REST readers normalize projects, branches,
-  heads and limited revision history into the same GUI model.
+  pinned branch HEADs and the full revision DAG into the same GUI model.
 - Preview content remains distinct from real DVMDB content; real revision
   inspector data is not editable through the old preview controls.
-- HTTP responses have size/time/decode checks. First-parent history and
+- HTTP responses have size/time/decode checks. Graph pagination and
   uncaptured ancestors must not masquerade as a complete DAG.
 
 ### Stage 3a — Real project and branch creation
@@ -52,6 +52,18 @@ proposed feature: they are separate milestones. See the
 - Catalogue refresh after completion, no speculative local insertion.
 - An uncertain HTTP POST outcome triggers a read instead of a blind retry.
   Conflicts and source-switch races are handled without overriding data.
+
+### Stage 3c — Context-sensitive inspector workflows
+
+- Object identity remains visible above inspector tabs; contextual tabs
+  navigate connection properties, projects, branches, reachable revisions,
+  and revision ancestry without duplicating a graph or offering fake writes.
+- The three-button navigator action row is removed. Project/branch creation
+  uses inline forms in the appropriate inspector with explicit base revision,
+  duplicate-name checks and cancellation. Native/REST creation semantics and
+  authoritative refresh behavior remain unchanged.
+- The Network import action is located on the project inspector; import does
+  not imply a persisted model revision until P1 checkout/save is implemented.
 
 ### Stage 3b — Always-active sources and multi-source explorer
 
@@ -80,8 +92,8 @@ proposed feature: they are separate milestones. See the
 4. **Lifecycle contracts.** Project/branch rename, deletion/archival, metadata
    changes, validation and concurrency must be implemented by DVMDB first,
    then surfaced through the same inspector.
-5. **History/sync workflows.** Complete DAG traversal with bounded paging,
-   compare and merge preview, explicit bundle fetch/push/pull decisions,
+5. **History/sync workflows.** Build comparison and merge-preview UX on the
+   now-integrated full DAG, plus explicit bundle fetch/push/pull decisions,
    optional revision annotations, audit and permission-aware capabilities.
 
 Keep the native and REST backends behaviorally equivalent at the GUI

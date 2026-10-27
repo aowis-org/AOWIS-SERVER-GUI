@@ -1,6 +1,6 @@
 # Projects workspace — current behavior and boundaries
 
-**Updated 2026-10-26.** This is a reference for the *current* GUI. The
+**Updated 2026-10-27.** This is a reference for the *current* GUI. The
 workspace has real DVMDB catalogue integration **and** separately identified
 in-memory demo content. They must never be mistaken for each other.
 For a hands-on connection guide, see [DVMDB quickstart](dvmdb-quickstart.md);
@@ -14,7 +14,7 @@ for future checkout/save work, see the
 | Data source profile | Saved locally (native GUI INI or browser `localStorage`), with a stable ID, name, type, endpoint/path, descriptive metadata and visibility. |
 | Local embedded source | C++ DVMDB `ProjectService` in supported native Standalone builds; no HTTP and no remote health checks. |
 | Remote source | REST `/dvmdb/v1`, automatic health checks, async catalogue reads and periodic refresh. Authentication **not** implemented. |
-| Catalogue | Projects, branch names/heads and a bounded first-parent history page (100 revisions per branch), normalized across the two adapters. |
+| Catalogue | Projects, consistent branch HEAD snapshots and a fully paginated two-parent revision DAG, normalized across native and REST. |
 | Real writes | Project create and branch create/fork only. Subsequent catalogue reload confirms persisted results. |
 | Preview | Explicit demo profiles and built-in example *placeholders* remain in-memory and cannot be mistaken for DVMDB revisions. |
 | Graph | Source-qualified nodes for all checked real databases. QWidget/QPainter revision graph; no second bgfx instance. |
@@ -61,11 +61,19 @@ database: settings are stored using Qt settings/JSON.
 - Real projects are grouped by **database**, and branches appear beneath
   their project. Source-qualified IDs prevent a collision when two
   databases independently use the same project UUID or revision hash.
-- **+ Project** writes a project to the selected available DVMDB source.
-  **+ Branch** creates a branch in the selected project. Selecting a
-  historical revision before branching passes that revision as the fork
-  point, along with its origin branch. Project/branch creates reload the
-  catalogue; an uncertain HTTP POST outcome is *not* blindly retried.
+- The navigator has **no project/branch/import action row**. Selecting an
+  available database opens its inspector, where **Create project** starts an
+  inline draft. Selecting a project, branch or revision exposes **Create
+  branch** in that object's inspector.
+- The inline branch form offers explicit **start from** choices: a named
+  branch's HEAD or any loaded historical revision (chosen revisions resolve
+  a source branch through both-parent reachability). The default is `main`
+  for a project, the selected branch HEAD for a branch, and the *exact*
+  selected revision for a revision. The form displays the full resulting
+  HEAD hash, explains that branch creation **does not commit**, and validates
+  names before allowing Create. Cancel discards the draft; changing selection
+  with an entered name asks before discarding. Writes refresh the authoritative
+  catalogue; uncertain HTTP results are never blindly retried.
 - A persisted DVMDB project/branch name, description and tags are displayed
   read-only in the inspector: the server does **not** yet expose
   rename/delete and mutable annotation operations. A profile's own
@@ -83,10 +91,10 @@ database: settings are stored using Qt settings/JSON.
   describes branch heads, not a database write permission.
 - For real DVMDB, current labels are generated from the first 12 characters
   of the immutable revision hash; the GUI does not yet fetch/store editable
-  revision titles. The source reader loads up to the most recent 100
-  first-parent revisions **per branch**, so older ancestors and second-parent
-  lineage can be missing from the displayed graph. Do not interpret a
-  missing edge as proof that histories are unrelated.
+  revision titles. The source reader now traverses the paginated DVMDB P0
+  revision graph **for the whole project**, including both merge parents and
+  shared ancestry. Oversized or invalid responses fail the refresh explicitly
+  instead of silently hiding older revisions.
 - Selecting a historical revision from the graph reveals it in **Full tree**
   when required.
 
@@ -105,22 +113,36 @@ database: settings are stored using Qt settings/JSON.
   instance for a future GPU revision graph. A future renderer can share
   lifecycle correctly and retain this fallback.
 
-### Right: contextual inspector
+### Right: contextual tabbed inspector
 
-- The inspector is a closable, movable, floatable `QDockWidget`, nested
-  in the Projects workspace. Selecting a database/project/branch/revision
-  or deliberately starting creation opens it. Closing it does not destroy
-  a persisted database/profile; closing an **unsaved creation draft**
-  cancels that draft.
-- For a database profile, it edits **profile metadata**, endpoint or
-  embedded path and shows source status. Connection type is immutable.
-  **Refresh catalogue** belongs here, not in the narrow left sidebar.
-- For real DVMDB projects, branches and revisions, the inspector shows
-  immutable IDs/head/parents; field edits and Delete are unavailable.
-  This is intentional until backend contracts exist.
-- For explicitly selected **preview** objects only, editable titles,
-  tags, descriptions and deletions affect RAM, not native or REST data.
-  Preview labels and warnings distinguish that mode from real DVMDB.
+- The inspector is a closable, movable, floatable `QDockWidget` embedded in
+  the Projects workspace. Its selected **object identity is always above the
+  tabs**. A stable action footer applies to the selected object, not to a tab.
+- **Database:** `Overview` (editable local profile metadata), `Connection`
+  (local data directory / REST URL, status and Refresh catalogue) and
+  `Projects` if projects are loaded. Only database-profile metadata is
+  editable; there is no backend-side server revision node.
+- **Project:** `Overview` (identity and read-only persisted metadata) and
+  `Branches` if branches exist, listing each name with its current HEAD.
+  The project inspector provides **Create branch** and the existing
+  **Import network…** action. Import is not a DVMDB revision save yet.
+- **Branch:** `Overview` (name/HEAD) and `Revisions` for reachable history.
+  Selecting an item navigates to the same revision inspector/graph selection.
+- **Revision:** `Overview` (immutable ID, ordered parents, named HEAD refs)
+  and `Ancestry` when parents/HEAD references exist. Clicking a parent or
+  branch reference navigates to the corresponding object. HEAD is
+  branch-local, not necessarily a global leaf.
+- **Creation:** Create project/branch replaces the inspector's tab content
+  with an **inline, cancellable form**, rather than opening a `QInputDialog`
+  or adding a permanent Creation tab. A successful write follows the
+  existing authoritative refresh/selection flow. New *database profiles*
+  retain their existing unsaved inspector form on the Connection tab.
+- Real DVMDB projects/branches/revisions show immutable read-only metadata;
+  unsupported backend rename/delete/annotation controls are not offered.
+  Preview-only metadata and Delete remain local to RAM.
+- Selecting a graph/tree object shows the same inspector and does not refit
+  the camera. The inspector keeps its information tab when selecting another
+  object of the same kind, and switches to Overview for a different kind.
 
 ## Bundled Example Library and EPANET importer
 

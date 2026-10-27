@@ -64,15 +64,18 @@ struct FakeDvmdb
                     {
                         if (path == "/dvmdb/v1/projects")
                             data = R"({"projects":[{"id":"p1","name":"Shared name"}]})";
-                        else if (path == "/dvmdb/v1/projects/p1/branches")
-                            data = R"({"branches":["main"]})";
-                        else if (path == "/dvmdb/v1/projects/p1/branches/main/history?limit=101")
+                        else if (path == "/dvmdb/v1/projects/p1/revision-graph?limit=256")
                         {
                             const QJsonObject revision{
                                 {QStringLiteral("id"), this->hash},
                                 {QStringLiteral("parents"), QJsonArray{}}};
                             const QJsonObject response{
-                                {QStringLiteral("revisions"), QJsonArray{revision}}};
+                                {QStringLiteral("revisions"), QJsonArray{revision}},
+                                {QStringLiteral("heads"), QJsonArray{QJsonObject{
+                                    {QStringLiteral("branch"), QStringLiteral("main")},
+                                    {QStringLiteral("revision"), this->hash}}}},
+                                {QStringLiteral("complete"), true},
+                                {QStringLiteral("nextCursor"), QJsonValue(QJsonValue::Null)}};
                             data = QJsonDocument(response).toJson();
                         }
                     }

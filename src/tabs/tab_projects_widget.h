@@ -20,6 +20,8 @@ class QLabel;
 class QLineEdit;
 class QPushButton;
 class QStackedWidget;
+class QTabWidget;
+class QListWidget;
 class QTextEdit;
 class QTreeWidget;
 class QTreeWidgetItem;
@@ -86,6 +88,7 @@ protected:
 
 private:
     enum class SelectionKind { None, Server, Project, Branch, Revision, NewSource };
+    enum class CreationKind { None, Project, Branch };
     void seedPreview();
     void populateServerTree();
     void populateProjectTree();
@@ -117,7 +120,13 @@ private:
     void cancelNewSource();
     void deleteServer();
     void createProject();
-    void createBranch(const QString &source_revision = QString());
+    void createBranch();
+    void beginCreation(bool branch);
+    void cancelCreation();
+    void submitCreation();
+    void validateCreation();
+    void updateInspectorTabs();
+    void activateInspectorRelation(const QString &key);
     void deleteSelection();
     void browseExamples();
     void createProjectFromExample(const BuiltinExampleRevision &example);
@@ -140,6 +149,7 @@ private:
     QString selected_id;
     QTreeWidget *server_tree = nullptr;
     QLineEdit *server_endpoint_edit = nullptr;
+    QLineEdit *source_name_edit = nullptr;
     QComboBox *server_auth_combo = nullptr;
     QComboBox *source_kind_combo = nullptr;
     QLineEdit *local_path_edit = nullptr;
@@ -155,6 +165,26 @@ private:
     QDockWidget *inspector_dock = nullptr;
     QLabel *inspector_heading = nullptr;
     QLabel *inspector_subtitle = nullptr;
+    QStackedWidget *inspector_content_stack = nullptr;
+    QTabWidget *inspector_tabs = nullptr;
+    QWidget *inspector_overview_page = nullptr;
+    QWidget *inspector_connection_page = nullptr;
+    QWidget *inspector_related_page = nullptr;
+    QWidget *inspector_fields = nullptr;
+    QListWidget *inspector_related_list = nullptr;
+    QLineEdit *creation_name = nullptr;
+    QComboBox *creation_source = nullptr;
+    QLabel *creation_source_label = nullptr;
+    QLabel *creation_summary = nullptr;
+    QLabel *creation_error = nullptr;
+    QPushButton *creation_confirm_button = nullptr;
+    QPushButton *creation_cancel_button = nullptr;
+    QPushButton *inspector_create_project_button = nullptr;
+    QPushButton *inspector_import_button = nullptr;
+    CreationKind creation_kind = CreationKind::None;
+    QString creation_server_id;
+    QString creation_project_id;
+    SelectionKind inspector_tab_kind = SelectionKind::None;
     QLabel *metadata_info = nullptr;
     QLineEdit *name_edit = nullptr;
     QLineEdit *tags_edit = nullptr;

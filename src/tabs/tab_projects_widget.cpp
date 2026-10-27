@@ -27,7 +27,6 @@
 #include <QIcon>
 #include <QPainter>
 #include <QPixmap>
-#include <QInputDialog>
 #include <QSet>
 #include <QStandardItemModel>
 #include <QLabel>
@@ -40,6 +39,7 @@
 #include <QScrollArea>
 #include <QStyle>
 #include <QStackedWidget>
+#include <QTabWidget>
 #include <QSpacerItem>
 #include <QSignalBlocker>
 #include <QSplitter>
@@ -92,6 +92,35 @@ QTreeWidgetItem *newTreeChild(QTreeWidgetItem *parent, const QString &label, con
     item->setData(0, role_key, key);
     item->setToolTip(0, label);
     return item;
+}
+
+// Select an origin branch which contains the historical revision in the full
+// (both-parent) DAG. Prefer the user's current branch when it qualifies.
+QString sourceBranchForRevision(const ProjectPreviewData &project,
+                                const QString &revision_id, const QString &preferred)
+{
+    QHash<QString, QStringList> parents;
+    for (const ProjectPreviewRevision &revision : project.revisions)
+        parents.insert(revision.id, revision.parents);
+    const auto reachable = [&parents, &revision_id](const QString &head)
+    {
+        QStringList stack{head};
+        QSet<QString> visited;
+        while (!stack.isEmpty())
+        {
+            const QString id = stack.takeLast();
+            if (id == revision_id) return true;
+            if (visited.contains(id)) continue;
+            visited.insert(id);
+            for (const QString &parent : parents.value(id)) stack.append(parent);
+        }
+        return false;
+    };
+    for (const ProjectPreviewBranch &branch : project.branches)
+        if (branch.name == preferred && reachable(branch.head)) return branch.name;
+    for (const ProjectPreviewBranch &branch : project.branches)
+        if (reachable(branch.head)) return branch.name;
+    return {};
 }
 }
 
@@ -223,27 +252,7 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     GroupBoxCollapsible *projects_group = new GroupBoxCollapsible(tr("Projects && Branches"), left);
     projects_group->setObjectName(QStringLiteral("projectsCollapsibleGroup"));
     QVBoxLayout *projects_layout = new QVBoxLayout(projects_group);
-    // Place all project actions above the tree, in one compact row. Ignore
-    // button width hints so translations never force horizontal scrolling.
-    QHBoxLayout *project_actions = new QHBoxLayout();
-    project_actions->setSpacing(4);
-    QPushButton *create_project = compactButton(tr("+ Project"), tr("Create a project in the connected database"), projects_group);
-    create_project->setObjectName(QStringLiteral("projectsCreateProjectButton"));
-    this->create_branch_button = compactButton(tr("+ Branch"),
-        tr("Create a branch from the current head or selected revision"), projects_group);
-    this->create_branch_button->setObjectName(QStringLiteral("projectsCreateBranchButton"));
-    QPushButton *import_button = compactButton(tr("Import"),
-        tr("Import an EPANET network using the existing importer"), projects_group);
-    import_button->setObjectName(QStringLiteral("projectsImportButton"));
-    for (QPushButton *button : {create_project, this->create_branch_button, import_button})
-    {
-        button->setMinimumWidth(0);
-        button->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
-    }
-    project_actions->addWidget(create_project, 4);
-    project_actions->addWidget(this->create_branch_button, 4);
-    project_actions->addWidget(import_button, 3);
-    projects_layout->addLayout(project_actions);
+    // The navigator locates objects; object-specific actions belong to the inspector.
     this->project_tree = new QTreeWidget(projects_group);
     this->project_tree->setObjectName(QStringLiteral("projectsTree"));
     this->project_tree->setHeaderHidden(true);
@@ -467,21 +476,49 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     this->inspector_subtitle = new QLabel(right);
     this->inspector_subtitle->setWordWrap(true);
     right_layout->addWidget(this->inspector_subtitle);
-    QFormLayout *form = new QFormLayout();
+    this->inspector_content_stack = new QStackedWidget(right);
+    this->inspector_content_stack->setObjectName(QStringLiteral("projectsInspectorContentStack"));
+    this->inspector_tabs = new QTabWidget(this->inspector_content_stack);
+    this->inspector_tabs->setObjectName(QStringLiteral("projectsInspectorTabs"));
+    this->inspector_tabs->setDocumentMode(true);
+    this->inspector_content_stack->addWidget(this->inspector_tabs);
+    this->inspector_overview_page = new QWidget(this->inspector_tabs);
+    this->inspector_overview_page->setObjectName(QStringLiteral("projectsInspectorOverview"));
+    QVBoxLayout *overview_layout = new QVBoxLayout(this->inspector_overview_page);
+    overview_layout->setContentsMargins(0, 12, 0, 4);
+    this->inspector_fields = new QWidget(this->inspector_overview_page);
+    QFormLayout *form = new QFormLayout(this->inspector_fields);
     form->setRowWrapPolicy(QFormLayout::WrapAllRows);
     form->setLabelAlignment(Qt::AlignLeft);
     form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
-    this->name_edit = new QLineEdit(right);
+    this->name_edit = new QLineEdit(this->inspector_fields);
     this->name_edit->setObjectName(QStringLiteral("projectInspectorName"));
-    this->tags_edit = new QLineEdit(right);
+    this->tags_edit = new QLineEdit(this->inspector_fields);
     this->tags_edit->setObjectName(QStringLiteral("projectInspectorTags"));
     this->tags_edit->setPlaceholderText(tr("hydraulics, approved, scenario"));
-    this->description_edit = new QTextEdit(right);
+    this->description_edit = new QTextEdit(this->inspector_fields);
     this->description_edit->setObjectName(QStringLiteral("projectInspectorDescription"));
-    this->description_edit->setMinimumHeight(100);
-    this->description_edit->setMaximumHeight(190);
+    this->description_edit->setMinimumHeight(90);
+    this->description_edit->setMaximumHeight(170);
     form->addRow(tr("Name / title"), this->name_edit);
-    right_layout->addLayout(form);
+    form->addRow(tr("Tags"), this->tags_edit);
+    form->addRow(tr("Description"), this->description_edit);
+    overview_layout->addWidget(this->inspector_fields);
+    this->inspector_connection_page = new QWidget(this->inspector_tabs);
+    this->inspector_connection_page->setObjectName(QStringLiteral("projectsInspectorConnection"));
+    QVBoxLayout *connection_layout = new QVBoxLayout(this->inspector_connection_page);
+    connection_layout->setContentsMargins(0, 12, 0, 4);
+    this->source_name_edit = new QLineEdit(this->inspector_connection_page);
+    this->source_name_edit->setObjectName(QStringLiteral("projectsNewSourceName"));
+    this->source_name_edit->setPlaceholderText(tr("Database name"));
+    connection_layout->addWidget(this->source_name_edit);
+    this->inspector_related_page = new QWidget(this->inspector_tabs);
+    this->inspector_related_page->setObjectName(QStringLiteral("projectsInspectorRelated"));
+    QVBoxLayout *related_layout = new QVBoxLayout(this->inspector_related_page);
+    related_layout->setContentsMargins(0, 12, 0, 4);
+    this->inspector_related_list = new QListWidget(this->inspector_related_page);
+    this->inspector_related_list->setObjectName(QStringLiteral("projectsInspectorRelatedList"));
+    related_layout->addWidget(this->inspector_related_list);
     this->server_options = new QWidget(right);
     this->server_options->setObjectName(QStringLiteral("projectServerOptions"));
     QVBoxLayout *source_layout = new QVBoxLayout(this->server_options);
@@ -544,22 +581,45 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     local_warning->setWordWrap(true);
     local_form->addRow(local_warning);
     source_layout->addWidget(this->local_options);
-    right_layout->addWidget(this->server_options);
-    QFormLayout *other_fields = new QFormLayout();
-    other_fields->setRowWrapPolicy(QFormLayout::WrapAllRows);
-    other_fields->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
-    other_fields->addRow(tr("Tags"), this->tags_edit);
-    other_fields->addRow(tr("Description"), this->description_edit);
-    right_layout->addLayout(other_fields);
-    this->metadata_info = new QLabel(right);
+    connection_layout->addWidget(this->server_options);
+    connection_layout->addStretch(1);
+    this->metadata_info = new QLabel(this->inspector_overview_page);
     this->metadata_info->setObjectName(QStringLiteral("projectInspectorMetadata"));
     this->metadata_info->setWordWrap(true);
     this->metadata_info->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    right_layout->addWidget(this->metadata_info);
-    this->inspector_preview_note = new QLabel(right);
+    overview_layout->addWidget(this->metadata_info);
+    this->inspector_preview_note = new QLabel(this->inspector_overview_page);
     this->inspector_preview_note->setWordWrap(true);
     this->inspector_preview_note->setObjectName(QStringLiteral("inspectorPreviewNote"));
-    right_layout->addWidget(this->inspector_preview_note);
+    overview_layout->addWidget(this->inspector_preview_note);
+    overview_layout->addStretch(1);
+
+    QWidget *creation_page = new QWidget(this->inspector_content_stack);
+    creation_page->setObjectName(QStringLiteral("projectsInspectorCreationPage"));
+    QVBoxLayout *creation_layout = new QVBoxLayout(creation_page);
+    creation_layout->setContentsMargins(0, 12, 0, 4);
+    QFormLayout *creation_fields = new QFormLayout();
+    creation_fields->setRowWrapPolicy(QFormLayout::WrapAllRows);
+    this->creation_name = new QLineEdit(creation_page);
+    this->creation_name->setObjectName(QStringLiteral("projectsCreationName"));
+    this->creation_source = new QComboBox(creation_page);
+    this->creation_source->setObjectName(QStringLiteral("projectsCreationSource"));
+    creation_fields->addRow(tr("Name"), this->creation_name);
+    this->creation_source_label = new QLabel(tr("Start from"), creation_page);
+    creation_fields->addRow(this->creation_source_label, this->creation_source);
+    creation_layout->addLayout(creation_fields);
+    this->creation_summary = new QLabel(creation_page);
+    this->creation_summary->setObjectName(QStringLiteral("projectsCreationSummary"));
+    this->creation_summary->setWordWrap(true);
+    this->creation_summary->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    creation_layout->addWidget(this->creation_summary);
+    this->creation_error = new QLabel(creation_page);
+    this->creation_error->setObjectName(QStringLiteral("projectsCreationError"));
+    this->creation_error->setWordWrap(true);
+    creation_layout->addWidget(this->creation_error);
+    creation_layout->addStretch(1);
+    this->inspector_content_stack->addWidget(creation_page);
+    right_layout->addWidget(this->inspector_content_stack, 1);
     // Renaming is handled by the Name field. Destructive operations belong
     // in the inspector for the selected server/project/branch, not in trees.
     this->inspector_delete_button = compactButton(tr("Delete"),
@@ -569,13 +629,38 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     this->source_save_button->setObjectName(QStringLiteral("projectSourceCreateButton"));
     this->source_cancel_button = compactButton(tr("Cancel"), tr("Discard this unsaved database"), right);
     this->source_cancel_button->setObjectName(QStringLiteral("projectSourceCancelButton"));
-    QHBoxLayout *inspector_actions = new QHBoxLayout();
-    inspector_actions->addStretch(1);
-    inspector_actions->addWidget(this->source_cancel_button);
-    inspector_actions->addWidget(this->source_save_button);
-    inspector_actions->addWidget(this->inspector_delete_button);
+    this->inspector_create_project_button = compactButton(tr("Create project"),
+        tr("Create a project in this database"), right);
+    this->inspector_create_project_button->setObjectName(QStringLiteral("projectsInspectorCreateProject"));
+    this->create_branch_button = compactButton(tr("Create branch"),
+        tr("Create a named reference from an explicitly chosen revision"), right);
+    this->create_branch_button->setObjectName(QStringLiteral("projectsInspectorCreateBranch"));
+    this->inspector_import_button = compactButton(tr("Import network…"),
+        tr("Import a network into the selected project"), right);
+    this->inspector_import_button->setObjectName(QStringLiteral("projectsInspectorImport"));
+    this->creation_cancel_button = compactButton(tr("Cancel"),
+        tr("Discard the creation form"), right);
+    this->creation_cancel_button->setObjectName(QStringLiteral("projectsCreationCancel"));
+    this->creation_confirm_button = compactButton(tr("Create"),
+        tr("Create the selected object"), right);
+    this->creation_confirm_button->setObjectName(QStringLiteral("projectsCreationConfirm"));
+    QVBoxLayout *inspector_actions = new QVBoxLayout();
+    inspector_actions->setSpacing(5);
+    // Import is a separate project-scoped action so it never makes the
+    // narrow dock's Create/Cancel row overflow.
+    inspector_actions->addWidget(this->inspector_import_button);
+    QHBoxLayout *creation_actions = new QHBoxLayout();
+    creation_actions->setSpacing(5);
+    creation_actions->addStretch(1);
+    creation_actions->addWidget(this->inspector_create_project_button);
+    creation_actions->addWidget(this->create_branch_button);
+    creation_actions->addWidget(this->source_cancel_button);
+    creation_actions->addWidget(this->source_save_button);
+    creation_actions->addWidget(this->inspector_delete_button);
+    creation_actions->addWidget(this->creation_cancel_button);
+    creation_actions->addWidget(this->creation_confirm_button);
+    inspector_actions->addLayout(creation_actions);
     right_layout->addLayout(inspector_actions);
-    right_layout->addStretch(1);
     right_scroll->setWidget(right);
     this->inspector_dock = new QDockWidget(tr("Project Inspector"), dock_host);
     this->inspector_dock->setObjectName(QStringLiteral("projectsInspectorDock"));
@@ -596,6 +681,18 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     connect(this->source_refresh_button, &QPushButton::clicked, this, &ProjectsWidget::connectSource);
     connect(empty_add, &QPushButton::clicked, this, &ProjectsWidget::createServer);
     connect(this->source_save_button, &QPushButton::clicked, this, &ProjectsWidget::saveNewSource);
+    connect(this->source_name_edit, &QLineEdit::textChanged, this,
+            [this](const QString &name)
+    {
+        if (this->selection_kind == SelectionKind::NewSource)
+            this->name_edit->setText(name);
+    });
+    connect(this->name_edit, &QLineEdit::textEdited, this,
+            [this](const QString &name)
+    {
+        if (this->selection_kind == SelectionKind::NewSource)
+            this->source_name_edit->setText(name);
+    });
     connect(this->source_cancel_button, &QPushButton::clicked, this, &ProjectsWidget::cancelNewSource);
     connect(this->source_kind_combo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, [this](int) { updateSourceFields(); });
@@ -646,9 +743,30 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
             return;
         }
     });
-    connect(create_project, &QPushButton::clicked, this, &ProjectsWidget::createProject);
-    connect(this->create_branch_button, &QPushButton::clicked, this, [this] { createBranch(); });
-    connect(import_button, &QPushButton::clicked, this, &ProjectsWidget::importProjectRequested);
+    connect(this->inspector_create_project_button, &QPushButton::clicked,
+            this, [this] { beginCreation(false); });
+    connect(this->create_branch_button, &QPushButton::clicked,
+            this, [this] { beginCreation(true); });
+    connect(this->inspector_import_button, &QPushButton::clicked,
+            this, &ProjectsWidget::importProjectRequested);
+    connect(this->creation_cancel_button, &QPushButton::clicked,
+            this, &ProjectsWidget::cancelCreation);
+    connect(this->creation_confirm_button, &QPushButton::clicked,
+            this, &ProjectsWidget::submitCreation);
+    connect(this->creation_name, &QLineEdit::textChanged,
+            this, [this](const QString &) { validateCreation(); });
+    connect(this->creation_source, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, [this](int) { validateCreation(); });
+    connect(this->inspector_related_list, &QListWidget::itemClicked,
+            this, [this](QListWidgetItem *item)
+    {
+        if (item != nullptr) activateInspectorRelation(item->data(Qt::UserRole).toString());
+    });
+    connect(this->inspector_related_list, &QListWidget::itemActivated,
+            this, [this](QListWidgetItem *item)
+    {
+        if (item != nullptr) activateInspectorRelation(item->data(Qt::UserRole).toString());
+    });
     if (browse_examples_button != nullptr)
         connect(browse_examples_button, &QPushButton::clicked,
                 this, &ProjectsWidget::browseExamples);
@@ -793,9 +911,21 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
 
 bool ProjectsWidget::eventFilter(QObject *watched, QEvent *event)
 {
-    if (watched == this->inspector_dock && event->type() == QEvent::Close
-        && this->selection_kind == SelectionKind::NewSource)
-        cancelNewSource();
+    if (watched == this->inspector_dock && event->type() == QEvent::Close)
+    {
+        if (this->creation_kind != CreationKind::None)
+        {
+            if (this->source_writer->isBusy()) { event->ignore(); return true; }
+            if (!this->creation_name->text().trimmed().isEmpty()
+                && QMessageBox::question(this, tr("Discard creation draft?"),
+                    tr("Closing the inspector will discard the unfinished creation form."),
+                    QMessageBox::Discard | QMessageBox::Cancel, QMessageBox::Cancel)
+                    != QMessageBox::Discard)
+            { event->ignore(); return true; }
+            cancelCreation();
+        }
+        if (this->selection_kind == SelectionKind::NewSource) cancelNewSource();
+    }
     return QWidget::eventFilter(watched, event);
 }
 
@@ -1167,27 +1297,24 @@ void ProjectsWidget::applySourceSnapshot(const QString &source_id, const SourceS
         project.server_id = source_id;
         project.name = entry.name;
         project.database_backed = true;
-        QSet<QString> revisions_seen;
+        // P0 returns one immutable DAG per project, *independent* of branches.
+        // A revision may be reachable from several branch HEADs or from none
+        // except through a merge parent. Never assign it a fictitious owner.
         for (const SourceBranch &source_branch : entry.branches)
         {
             ProjectPreviewBranch branch;
             branch.id = project.id + QStringLiteral(":") + source_branch.name;
             branch.name = source_branch.name;
             branch.head = source_branch.head;
-            if (source_branch.history_limited)
-                branch.description = tr("Showing the latest 100 first-parent revisions only.");
             project.branches.append(branch);
-            for (const SourceRevision &source_revision : source_branch.history)
-            {
-                if (revisions_seen.contains(source_revision.id)) continue;
-                revisions_seen.insert(source_revision.id);
-                ProjectPreviewRevision revision;
-                revision.id = source_revision.id;
-                revision.parents = source_revision.parents;
-                revision.branch = branch.name;
-                revision.title = tr("Revision %1").arg(revision.id.left(12));
-                project.revisions.append(revision);
-            }
+        }
+        for (const SourceRevision &source_revision : entry.revisions)
+        {
+            ProjectPreviewRevision revision;
+            revision.id = source_revision.id;
+            revision.parents = source_revision.parents;
+            revision.title = tr("Revision %1").arg(revision.id.left(12));
+            project.revisions.append(revision);
         }
         this->projects.append(project);
     }
@@ -1438,7 +1565,7 @@ void ProjectsWidget::rebuildGraph()
                 node.id = preview ? revision.id : project.id + QStringLiteral("|") + revision.id;
                 node.title = revision.title;
                 node.branch = preview ? revision.branch
-                    : tr("%1 / %2 / %3").arg(source.name, project.name, revision.branch);
+                    : tr("%1 / %2").arg(source.name, project.name);
                 node.display_id = revision.id;
                 for (const QString &parent : revision.parents)
                     node.parents.append(preview ? parent : project.id + QStringLiteral("|") + parent);
@@ -1506,6 +1633,31 @@ void ProjectsWidget::selectTreeItem(QTreeWidget *tree, const QString &key)
 
 void ProjectsWidget::select(SelectionKind kind, const QString &id)
 {
+    if (this->creation_kind != CreationKind::None
+        && (kind != this->selection_kind || id != this->selected_id))
+    {
+        if (this->source_writer->isBusy()) return;
+        if (!this->creation_name->text().trimmed().isEmpty()
+            && QMessageBox::question(this, tr("Discard creation draft?"),
+                tr("Changing selection will discard the unfinished creation form."),
+                QMessageBox::Discard | QMessageBox::Cancel, QMessageBox::Cancel)
+                != QMessageBox::Discard)
+        {
+            this->updating_ui = true;
+            selectTreeItem(this->server_tree, keyFor(QStringLiteral("s"), this->server_id));
+            selectTreeItem(this->project_tree,
+                this->selection_kind == SelectionKind::Project
+                    ? keyFor(QStringLiteral("p"), this->selected_id)
+                    : this->selection_kind == SelectionKind::Branch
+                        ? keyFor(QStringLiteral("b"), this->selected_id) : QString());
+            selectTreeItem(this->revision_tree,
+                this->selection_kind == SelectionKind::Revision
+                    ? keyFor(QStringLiteral("r"), this->selected_id) : QString());
+            this->updating_ui = false;
+            return;
+        }
+        cancelCreation();
+    }
     if (this->source_writer->isBusy() && kind == SelectionKind::Server && id != this->server_id)
     {
         selectTreeItem(this->server_tree, keyFor(QStringLiteral("s"), this->server_id));
@@ -1593,8 +1745,12 @@ void ProjectsWidget::select(SelectionKind kind, const QString &id)
         for (const ProjectPreviewRevision &revision : project->revisions)
             if (revision.id == id)
             {
-                for (const ProjectPreviewBranch &branch : project->branches)
-                    if (branch.name == revision.branch) this->branch_id = branch.id;
+                // Preview revisions retain their synthetic branch ownership.
+                // Real database revisions do not: selection must not invent
+                // a source branch just because a revision is shared.
+                if (!project->database_backed)
+                    for (const ProjectPreviewBranch &branch : project->branches)
+                        if (branch.name == revision.branch) this->branch_id = branch.id;
                 found = true;
                 break;
             }
@@ -1635,6 +1791,239 @@ void ProjectsWidget::select(SelectionKind kind, const QString &id)
         this->inspector_dock->show();
     updateButtons();
     broadcastContext();
+}
+
+void ProjectsWidget::updateInspectorTabs()
+{
+    const int old_tab = this->inspector_tabs->currentIndex();
+    const bool same_kind = this->inspector_tab_kind == this->selection_kind;
+    this->inspector_tab_kind = this->selection_kind;
+    this->inspector_tabs->clear();
+    this->inspector_related_list->clear();
+    this->inspector_tabs->addTab(this->inspector_overview_page, tr("Overview"));
+
+    if (this->selection_kind == SelectionKind::Server
+        || this->selection_kind == SelectionKind::NewSource)
+        this->inspector_tabs->addTab(this->inspector_connection_page, tr("Connection"));
+
+    QString related_title;
+    if (this->selection_kind == SelectionKind::Server)
+    {
+        related_title = tr("Projects");
+        for (const ProjectPreviewData &project : this->projects)
+            if (project.server_id == this->server_id)
+            {
+                QListWidgetItem *item = new QListWidgetItem(project.name, this->inspector_related_list);
+                item->setData(Qt::UserRole, keyFor(QStringLiteral("p"), project.id));
+            }
+    }
+    else if (this->selection_kind == SelectionKind::Project)
+    {
+        related_title = tr("Branches");
+        if (const ProjectPreviewData *project = currentProject())
+            for (const ProjectPreviewBranch &branch : project->branches)
+            {
+                QListWidgetItem *item = new QListWidgetItem(
+                    tr("%1  ·  HEAD %2").arg(branch.name, branch.head.left(12)),
+                    this->inspector_related_list);
+                item->setData(Qt::UserRole, keyFor(QStringLiteral("b"), branch.id));
+            }
+    }
+    else if (this->selection_kind == SelectionKind::Branch)
+    {
+        related_title = tr("Revisions");
+        if (const ProjectPreviewData *project = currentProject())
+        {
+            const ProjectPreviewBranch *branch = currentBranch();
+            if (branch != nullptr)
+            {
+                QSet<QString> reachable;
+                QStringList remaining{branch->head};
+                QHash<QString, QStringList> parents;
+                for (const ProjectPreviewRevision &revision : project->revisions)
+                    parents.insert(revision.id, revision.parents);
+                while (!remaining.isEmpty())
+                {
+                    const QString id = remaining.takeLast();
+                    if (id.isEmpty() || reachable.contains(id)) continue;
+                    reachable.insert(id);
+                    for (const QString &parent : parents.value(id))
+                        remaining.append(parent);
+                }
+                for (const ProjectPreviewRevision &revision : project->revisions)
+                    if (reachable.contains(revision.id))
+                    {
+                        QListWidgetItem *item = new QListWidgetItem(
+                            revision.id == branch->head
+                                ? tr("%1  ·  HEAD").arg(revision.id.left(12))
+                                : revision.id.left(12), this->inspector_related_list);
+                        item->setData(Qt::UserRole, keyFor(QStringLiteral("r"), revision.id));
+                    }
+            }
+        }
+    }
+    else if (this->selection_kind == SelectionKind::Revision)
+    {
+        related_title = tr("Ancestry");
+        if (const ProjectPreviewRevision *revision = selectedRevision())
+        {
+            for (const QString &parent : revision->parents)
+            {
+                QListWidgetItem *item = new QListWidgetItem(
+                    tr("Parent · %1").arg(parent.left(12)), this->inspector_related_list);
+                item->setData(Qt::UserRole, keyFor(QStringLiteral("r"), parent));
+            }
+            if (const ProjectPreviewData *project = currentProject())
+                for (const ProjectPreviewBranch &branch : project->branches)
+                    if (branch.head == revision->id)
+                    {
+                        QListWidgetItem *item = new QListWidgetItem(
+                            tr("%1 · HEAD").arg(branch.name), this->inspector_related_list);
+                        item->setData(Qt::UserRole, keyFor(QStringLiteral("b"), branch.id));
+                    }
+        }
+    }
+    if (!related_title.isEmpty() && this->inspector_related_list->count() > 0)
+        this->inspector_tabs->addTab(this->inspector_related_page, related_title);
+    this->inspector_tabs->setCurrentIndex(this->selection_kind == SelectionKind::NewSource
+        ? 1 : same_kind
+            ? std::min(std::max(0, old_tab), this->inspector_tabs->count()-1) : 0);
+}
+
+void ProjectsWidget::activateInspectorRelation(const QString &key)
+{
+    if (key.startsWith(QStringLiteral("p:"))) select(SelectionKind::Project, key.mid(2));
+    else if (key.startsWith(QStringLiteral("b:"))) select(SelectionKind::Branch, key.mid(2));
+    else if (key.startsWith(QStringLiteral("r:"))) select(SelectionKind::Revision, key.mid(2));
+}
+
+void ProjectsWidget::beginCreation(bool branch)
+{
+    if (this->creation_kind != CreationKind::None || this->source_writer->isBusy()) return;
+    if (branch && currentProject() == nullptr) return;
+    if (!branch && (this->selection_kind != SelectionKind::Server || currentServer() == nullptr)) return;
+    if (!isPreviewSource() && !isSourceReady(this->server_id)) return;
+    this->creation_kind = branch ? CreationKind::Branch : CreationKind::Project;
+    this->creation_server_id = this->server_id;
+    this->creation_project_id = branch ? this->project_id : QString();
+    this->creation_name->clear();
+    this->creation_source->clear();
+    this->creation_source->setVisible(branch);
+    this->creation_source_label->setVisible(branch);
+    if (branch)
+    {
+        const ProjectPreviewData *project = currentProject();
+        QString chosen;
+        if (this->selection_kind == SelectionKind::Revision)
+            chosen = QStringLiteral("revision:") + this->selected_id;
+        else if (this->selection_kind == SelectionKind::Branch)
+            if (const ProjectPreviewBranch *selected = currentBranch())
+                chosen = QStringLiteral("branch:") + selected->name;
+        for (const ProjectPreviewBranch &entry : project->branches)
+            this->creation_source->addItem(
+                tr("%1 · HEAD %2").arg(entry.name, entry.head.left(12)),
+                QStringLiteral("branch:") + entry.name);
+        for (const ProjectPreviewRevision &entry : project->revisions)
+            this->creation_source->addItem(
+                tr("Revision %1").arg(entry.id.left(12)),
+                QStringLiteral("revision:") + entry.id);
+        if (chosen.isEmpty())
+        {
+            for (const ProjectPreviewBranch &entry : project->branches)
+                if (entry.name == QStringLiteral("main"))
+                {
+                    chosen = QStringLiteral("branch:main");
+                    break;
+                }
+        }
+        if (chosen.isEmpty() && !project->branches.isEmpty())
+            chosen = QStringLiteral("branch:") + project->branches.first().name;
+        if (this->creation_source->count() == 0)
+            this->creation_source->addItem(tr("Initial empty revision"), QStringLiteral("empty"));
+        const int index = this->creation_source->findData(chosen);
+        if (index >= 0) this->creation_source->setCurrentIndex(index);
+    }
+    this->inspector_heading->setText(branch ? tr("Create branch") : tr("Create project"));
+    this->inspector_subtitle->setText(branch
+        ? tr("Project: %1").arg(currentProject()->name)
+        : tr("Database: %1").arg(currentServer()->name));
+    this->inspector_subtitle->show();
+    this->inspector_content_stack->setCurrentIndex(1);
+    validateCreation();
+    updateButtons();
+    this->creation_name->setFocus();
+}
+
+void ProjectsWidget::validateCreation()
+{
+    if (this->creation_kind == CreationKind::None) return;
+    const QString name = this->creation_name->text().trimmed();
+    QString error;
+    if (name.isEmpty()) error = tr("Enter a name.");
+    if (this->creation_kind == CreationKind::Project)
+    {
+        for (const ProjectPreviewData &entry : this->projects)
+            if (entry.server_id == this->creation_server_id
+                && entry.name.compare(name, Qt::CaseInsensitive) == 0)
+                error = tr("A project with this name already exists.");
+        this->creation_summary->setText(tr("Creates an empty project with an initial main branch. ")
+            + tr("No network data or additional revision will be created."));
+    }
+    else
+    {
+        const ProjectPreviewData *project = currentProject();
+        if (project == nullptr || project->id != this->creation_project_id)
+            error = tr("The source project is no longer selected.");
+        if (project != nullptr)
+        {
+            for (const ProjectPreviewBranch &entry : project->branches)
+                if (entry.name.compare(name, Qt::CaseInsensitive) == 0)
+                    error = tr("A branch with this name already exists.");
+        }
+        QString revision;
+        const QString origin = this->creation_source->currentData().toString();
+        if (origin.startsWith(QStringLiteral("branch:")) && project != nullptr)
+        {
+            for (const ProjectPreviewBranch &entry : project->branches)
+                if (entry.name == origin.mid(7)) revision = entry.head;
+        }
+        else if (origin.startsWith(QStringLiteral("revision:")))
+        {
+            revision = origin.mid(9);
+            if (project != nullptr && project->database_backed
+                && sourceBranchForRevision(*project, revision, QString()).isEmpty())
+                error = tr("The selected revision cannot be reached from a branch HEAD.");
+        }
+        else if (origin != QStringLiteral("empty")) error = tr("Choose a starting revision.");
+        this->creation_summary->setText(tr("Initial HEAD: %1\n").arg(
+                revision.isEmpty() ? tr("empty revision") : revision)
+            + tr("Creating a branch adds a reference only; it does not create a revision."));
+    }
+    this->creation_error->setText(error);
+    updateButtons();
+}
+
+void ProjectsWidget::cancelCreation()
+{
+    if (this->creation_kind == CreationKind::None || this->source_writer->isBusy()) return;
+    this->creation_kind = CreationKind::None;
+    this->creation_project_id.clear();
+    this->creation_server_id.clear();
+    this->creation_name->clear();
+    updateInspector();
+    updateButtons();
+}
+
+void ProjectsWidget::submitCreation()
+{
+    if (this->creation_kind == CreationKind::None || this->source_writer->isBusy()) return;
+    validateCreation();
+    if (!this->creation_error->text().isEmpty()) return;
+    if (this->creation_server_id != this->server_id
+        || (this->creation_kind == CreationKind::Branch
+            && this->creation_project_id != this->project_id)) return;
+    if (this->creation_kind == CreationKind::Project) createProject();
+    else createBranch();
 }
 
 void ProjectsWidget::updateInspector()
@@ -1708,10 +2097,21 @@ void ProjectsWidget::updateInspector()
             subtitle = project != nullptr && project->database_backed
                 ? tr("Immutable DVMDB revision (read-only; metadata editing unavailable).")
                 : tr("Historical model state is immutable; these are preview annotations only.");
-            metadata = tr("Revision: %1\nBranch: %2\nParents: %3\nAuthor: %4\nCreated: %5")
-                .arg(revision->id, revision->branch,
-                     revision->parents.isEmpty() ? tr("(root)") : revision->parents.join(QStringLiteral(", ")),
-                     revision->author, revision->created_at);
+            if (project != nullptr && project->database_backed)
+            {
+                QStringList heads;
+                for (const ProjectPreviewBranch &branch : project->branches)
+                    if (branch.head == revision->id) heads.append(branch.name);
+                metadata = tr("Revision: %1\nHEAD of: %2\nParents: %3")
+                    .arg(revision->id,
+                         heads.isEmpty() ? tr("(none)") : heads.join(QStringLiteral(", ")),
+                         revision->parents.isEmpty() ? tr("(root)") : revision->parents.join(QStringLiteral(", ")));
+            }
+            else
+                metadata = tr("Revision: %1\nBranch: %2\nParents: %3\nAuthor: %4\nCreated: %5")
+                    .arg(revision->id, revision->branch,
+                         revision->parents.isEmpty() ? tr("(root)") : revision->parents.join(QStringLiteral(", ")),
+                         revision->author, revision->created_at);
         }
     }
     else
@@ -1731,10 +2131,22 @@ void ProjectsWidget::updateInspector()
         this->server_auth_combo->setCurrentIndex(index < 0 ? 0 : index);
     }
     updateSourceFields();
+    if (this->creation_kind == CreationKind::Project)
+    {
+        heading = tr("Create project");
+        subtitle = tr("Database: %1").arg(currentServer() == nullptr ? QString() : currentServer()->name);
+    }
+    else if (this->creation_kind == CreationKind::Branch)
+    {
+        heading = tr("Create branch");
+        subtitle = tr("Project: %1").arg(project == nullptr ? QString() : project->name);
+    }
     this->inspector_heading->setText(heading);
     this->inspector_subtitle->setText(subtitle);
     this->inspector_subtitle->setVisible(!subtitle.isEmpty());
     this->name_edit->setText(name);
+    this->source_name_edit->setText(name);
+    this->source_name_edit->setVisible(new_source);
     this->tags_edit->setText(tags.join(QStringLiteral(", ")));
     this->description_edit->setPlainText(description);
     this->metadata_info->setText(metadata);
@@ -1745,6 +2157,8 @@ void ProjectsWidget::updateInspector()
     this->name_edit->setEnabled(editable && !real_data);
     this->tags_edit->setEnabled(editable && !real_data);
     this->description_edit->setEnabled(editable && !real_data);
+    this->inspector_fields->setVisible(!real_data && this->selection_kind != SelectionKind::None);
+    updateInspectorTabs();
     const bool deletable_server = this->selection_kind == SelectionKind::Server
         && currentServer() != nullptr;
     const bool deletable_project = this->selection_kind == SelectionKind::Project
@@ -1758,24 +2172,41 @@ void ProjectsWidget::updateInspector()
         : deletable_project ? tr("Delete project…") : tr("Delete branch…"));
     this->source_save_button->setVisible(new_source);
     this->source_cancel_button->setVisible(new_source);
+    this->inspector_content_stack->setCurrentIndex(
+        this->creation_kind == CreationKind::None ? 0 : 1);
     this->updating_ui = false;
     updateConnectionStatus();
 }
 
 void ProjectsWidget::updateButtons()
 {
-    const bool ready = isSourceReady(this->server_id)
+    const bool ready = (isPreviewSource() || isSourceReady(this->server_id))
         && !this->source_writer->isBusy();
-    if (QPushButton *create_project = findChild<QPushButton *>(QStringLiteral("projectsCreateProjectButton")))
-        create_project->setEnabled(!this->source_writer->isBusy()
-            && this->selection_kind != SelectionKind::NewSource
-            && (isPreviewSource() || ready));
-    this->create_branch_button->setEnabled(!this->source_writer->isBusy()
-        && currentProject() != nullptr && this->selection_kind != SelectionKind::NewSource
-        && (isPreviewSource() || (ready && currentProject()->database_backed)));
-    // Keep the action label short and stable so the three-button row never
-    // changes width when selecting a historical revision. createBranch()
-    // already uses the selected revision as the branch base when applicable.
+    const bool editing = this->creation_kind != CreationKind::None;
+    const bool new_source = this->selection_kind == SelectionKind::NewSource;
+    this->inspector_create_project_button->setVisible(!editing && !new_source
+        && this->selection_kind == SelectionKind::Server);
+    this->inspector_create_project_button->setEnabled(ready);
+    this->create_branch_button->setVisible(!editing && !new_source
+        && (this->selection_kind == SelectionKind::Project
+            || this->selection_kind == SelectionKind::Branch
+            || this->selection_kind == SelectionKind::Revision));
+    this->create_branch_button->setEnabled(ready && currentProject() != nullptr);
+    this->inspector_import_button->setVisible(!editing && !new_source
+        && this->selection_kind == SelectionKind::Project);
+    this->inspector_import_button->setEnabled(!this->source_writer->isBusy());
+    const bool deletable_source = this->selection_kind == SelectionKind::Server
+        && currentServer() != nullptr && this->server_id != QStringLiteral("local-default");
+    const bool deletable_preview = isPreviewSource()
+        && (this->selection_kind == SelectionKind::Project
+            || this->selection_kind == SelectionKind::Branch);
+    this->inspector_delete_button->setVisible(!editing
+        && (deletable_source || deletable_preview));
+    this->creation_cancel_button->setVisible(editing);
+    this->creation_cancel_button->setEnabled(!this->source_writer->isBusy());
+    this->creation_confirm_button->setVisible(editing);
+    this->creation_confirm_button->setEnabled(editing && !this->source_writer->isBusy()
+        && this->creation_error->text().isEmpty());
 }
 
 void ProjectsWidget::broadcastContext()
@@ -2002,6 +2433,7 @@ void ProjectsWidget::finishSourceWrite(const QString &created_id, const QString 
         connectSource();
         return;
     }
+    cancelCreation();
     this->select_after_write_project = this->server_id + QStringLiteral("|")
         + (project_id.isEmpty() ? created_id : project_id);
     this->select_after_write_branch = branch_name;
@@ -2013,11 +2445,8 @@ void ProjectsWidget::createProject()
     if (this->source_writer->isBusy() || this->selection_kind == SelectionKind::NewSource) return;
     const bool preview = isPreviewSource();
     if (!preview && !isSourceReady(this->server_id)) return;
-    bool accepted = false;
-    const QString name = QInputDialog::getText(this,
-        preview ? tr("New project (preview)") : tr("New DVMDB project"),
-        tr("Project name"), QLineEdit::Normal, {}, &accepted).trimmed();
-    if (!accepted || name.isEmpty()) return;
+    const QString name = this->creation_name->text().trimmed();
+    if (this->creation_kind != CreationKind::Project || name.isEmpty()) return;
     for (const ProjectPreviewData &project : this->projects)
         if (project.server_id == this->server_id && project.name.compare(name, Qt::CaseInsensitive) == 0)
         {
@@ -2044,20 +2473,18 @@ void ProjectsWidget::createProject()
     const QString id = project.id;
     this->projects.append(project);
     populateProjectTree();
+    cancelCreation();
     select(SelectionKind::Project, id);
 }
 
-void ProjectsWidget::createBranch(const QString &source_revision)
+void ProjectsWidget::createBranch()
 {
     ProjectPreviewData *project = currentProject();
     if (this->source_writer->isBusy() || project == nullptr) return;
     const bool preview = isPreviewSource();
     if (!preview && (!project->database_backed || !isSourceReady(this->server_id))) return;
-    bool accepted = false;
-    const QString name = QInputDialog::getText(this,
-        preview ? tr("New branch (preview)") : tr("New DVMDB branch"),
-        tr("Branch name"), QLineEdit::Normal, {}, &accepted).trimmed();
-    if (!accepted || name.isEmpty()) return;
+    const QString name = this->creation_name->text().trimmed();
+    if (this->creation_kind != CreationKind::Branch || name.isEmpty()) return;
     for (const ProjectPreviewBranch &branch : project->branches)
         if (branch.name.compare(name, Qt::CaseInsensitive) == 0)
         {
@@ -2070,31 +2497,21 @@ void ProjectsWidget::createBranch(const QString &source_revision)
         if (server == nullptr) return;
         QString from_branch;
         QString from_revision;
-        // Preserve an explicitly selected historical base. DVMDB requires the
-        // origin branch even when a specific revision hash is supplied.
-        if (this->selection_kind == SelectionKind::Revision)
+        const QString origin = this->creation_source->currentData().toString();
+        if (origin.startsWith(QStringLiteral("branch:")))
+            from_branch = origin.mid(7);
+        else if (origin.startsWith(QStringLiteral("revision:")))
         {
-            if (const ProjectPreviewRevision *revision = selectedRevision())
+            from_revision = origin.mid(9);
+            from_branch = sourceBranchForRevision(*project, from_revision, QString());
+            if (from_branch.isEmpty())
             {
-                from_branch = revision->branch;
-                from_revision = revision->id;
+                this->creation_error->setText(tr("The selected revision is not reachable from any branch."));
+                updateButtons();
+                return;
             }
         }
-        else if (!source_revision.isEmpty())
-        {
-            for (const ProjectPreviewRevision &revision : project->revisions)
-                if (revision.id == source_revision)
-                {
-                    from_branch = revision.branch;
-                    from_revision = revision.id;
-                    break;
-                }
-        }
-        if (from_branch.isEmpty())
-        {
-            if (const ProjectPreviewBranch *current = currentBranch())
-                from_branch = current->name;
-        }
+        else if (!project->branches.isEmpty()) return;
         const QString project_id = project->backend_id;
         this->source_writer->createBranch(*server, project_id, name, from_branch, from_revision,
             [this, project_id, name](const QString &id, const QString &error)
@@ -2108,16 +2525,20 @@ void ProjectsWidget::createBranch(const QString &source_revision)
     ProjectPreviewBranch branch;
     branch.id = makeId(QStringLiteral("b-"));
     branch.name = name;
-    branch.head = source_revision;
-    if (branch.head.isEmpty() && this->selection_kind == SelectionKind::Revision)
-        branch.head = this->selected_id;
-    if (branch.head.isEmpty())
-        if (ProjectPreviewBranch *active = currentBranch()) branch.head = active->head;
+    const QString origin = this->creation_source->currentData().toString();
+    if (origin.startsWith(QStringLiteral("branch:")))
+    {
+        for (const ProjectPreviewBranch &candidate : project->branches)
+            if (candidate.name == origin.mid(7)) branch.head = candidate.head;
+    }
+    else if (origin.startsWith(QStringLiteral("revision:")))
+        branch.head = origin.mid(9);
     const QString id = branch.id;
     project->branches.append(branch);
     populateProjectTree();
     populateRevisionTree();
     rebuildGraph();
+    cancelCreation();
     select(SelectionKind::Branch, id);
 }
 

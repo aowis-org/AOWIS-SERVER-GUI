@@ -2,18 +2,22 @@
 
 #include "config/project_server_profile_storage.h"
 
+#include <QHash>
 #include <QList>
 #include <QNetworkAccessManager>
 #include <QPointer>
+#include <QSet>
 #include <QString>
 #include <QStringList>
 
+#include <atomic>
 #include <functional>
+#include <memory>
 
 class QNetworkReply;
 
-// Read-only shared result model. Both backends expose the same immutable IDs
-// and parent hashes; first-parent history does not represent the whole DAG.
+// Immutable revision objects are owned by a project, not by a branch. A
+// branch is a named HEAD reference, possibly sharing a revision with others.
 struct SourceRevision
 {
     QString id;
@@ -24,8 +28,6 @@ struct SourceBranch
 {
     QString name;
     QString head;
-    QList<SourceRevision> history;
-    bool history_limited = false;
 };
 
 struct SourceProject
@@ -33,6 +35,9 @@ struct SourceProject
     QString id;
     QString name;
     QList<SourceBranch> branches;
+    QList<SourceRevision> revisions;
+    // Successful loads are complete. In-progress pages are never published.
+    bool graph_complete = false;
 };
 
 struct SourceSnapshot
@@ -40,8 +45,9 @@ struct SourceSnapshot
     QList<SourceProject> projects;
 };
 
-// One in-flight load at a time. Cancel and replacement invalidate older native
-// workers and abort REST replies; results are delivered on the GUI thread.
+// A single active generation: cancelling/refreshing aborts REST replies and
+// requests a cooperative stop of the native worker between graph pages.
+// Results are delivered on the GUI thread only after a complete snapshot.
 class ProjectSourceReader final : public QObject
 {
 public:
@@ -52,7 +58,7 @@ public:
     void cancel();
 
 private:
-    enum class Step { Projects, Branches, History };
+    enum class Step { Projects, Graph };
     void nextRestRequest(quint64 generation);
     void complete(quint64 generation, const QString &error = QString());
     bool processRestDocument(const QByteArray &json, QString &error);
@@ -64,7 +70,11 @@ private:
     SourceSnapshot snapshot;
     Step step = Step::Projects;
     int project_index = 0;
-    int branch_index = 0;
     int total_branches = 0;
+    int total_revisions = 0;
+    QString next_cursor;
+    QSet<QString> used_cursors;
+    QHash<QString, int> revisions_seen;
+    std::shared_ptr<std::atomic_bool> native_cancel;
     quint64 generation = 0;
 };

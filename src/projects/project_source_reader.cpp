@@ -12,6 +12,7 @@
 
 #include <exception>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 
 #ifdef AOWIS_STANDALONE_DVMDB_ENABLED
@@ -21,15 +22,26 @@
 
 namespace
 {
-constexpr int history_page_size = 100;
+constexpr int graph_page_size = 256;
 constexpr int maximum_projects = 100;
-constexpr int maximum_branches = 30;
-constexpr int maximum_total_branches = 150;
+constexpr int maximum_branches = 150;
+constexpr int maximum_revisions_per_project = 25000;
+constexpr int maximum_total_revisions = 60000;
 constexpr int maximum_json_bytes = 4 * 1024 * 1024;
+constexpr int maximum_cursor_bytes = 180000;
 
 QString segment(const QString &part)
 {
     return QString::fromLatin1(part.toUtf8().toPercentEncoding());
+}
+
+bool validHash(const QString &value)
+{
+    if (value.size() != 64) return false;
+    for (const QChar c : value)
+        if (!((c >= QLatin1Char('0') && c <= QLatin1Char('9'))
+            || (c >= QLatin1Char('a') && c <= QLatin1Char('f')))) return false;
+    return true;
 }
 
 bool parseRevision(const QJsonValue &value, SourceRevision &revision)
@@ -37,53 +49,117 @@ bool parseRevision(const QJsonValue &value, SourceRevision &revision)
     if (!value.isObject()) return false;
     const QJsonObject object = value.toObject();
     revision.id = object.value(QStringLiteral("id")).toString();
-    if (revision.id.size() != 64 || !object.value(QStringLiteral("parents")).isArray()) return false;
+    if (!validHash(revision.id) || !object.value(QStringLiteral("parents")).isArray()) return false;
     for (const QJsonValue &parent : object.value(QStringLiteral("parents")).toArray())
     {
-        if (!parent.isString() || parent.toString().size() != 64) return false;
+        if (!parent.isString() || !validHash(parent.toString())) return false;
         revision.parents.append(parent.toString());
     }
-    return revision.parents.size() <= 2;
+    return revision.parents.size() <= 2 && !revision.parents.contains(revision.id);
+}
+
+// A graph is published only if every captured branch HEAD and every parent
+// reference is actually present. A partial graph cannot masquerade as complete.
+bool validateCompleteGraph(const SourceProject &project)
+{
+    QSet<QString> ids;
+    for (const SourceRevision &revision : project.revisions) ids.insert(revision.id);
+    for (const SourceBranch &branch : project.branches)
+        if (!ids.contains(branch.head)) return false;
+    QHash<QString, int> remaining_parents;
+    QHash<QString, QStringList> children;
+    QStringList roots;
+    for (const SourceRevision &revision : project.revisions)
+    {
+        remaining_parents.insert(revision.id, revision.parents.size());
+        if (revision.parents.isEmpty()) roots.append(revision.id);
+        for (const QString &parent : revision.parents)
+        {
+            if (!ids.contains(parent)) return false;
+            children[parent].append(revision.id);
+        }
+    }
+    // A malformed REST payload could contain a closed ancestry cycle. The
+    // graph is valid only if every vertex is reachable in a topological pass.
+    int consumed = 0;
+    while (!roots.isEmpty())
+    {
+        const QString id = roots.takeLast();
+        ++consumed;
+        for (const QString &child : children.value(id))
+        {
+            const int count = remaining_parents.value(child) - 1;
+            remaining_parents.insert(child, count);
+            if (count == 0) roots.append(child);
+        }
+    }
+    return consumed == project.revisions.size();
 }
 
 #ifdef AOWIS_STANDALONE_DVMDB_ENABLED
-SourceSnapshot loadNative(const ProjectServerProfile &profile)
+SourceSnapshot loadNative(const ProjectServerProfile &profile,
+                          const std::shared_ptr<std::atomic_bool> &cancelled)
 {
     SourceSnapshot snapshot;
-    const std::filesystem::path root(profile.local_path.toStdString());
-    aowis::dvmdb::ProjectService service(root);
+    aowis::dvmdb::ProjectService service(std::filesystem::path(profile.local_path.toStdString()));
     const std::vector<aowis::dvmdb::ProjectInfo> projects = service.listProjects();
     if (projects.size() > maximum_projects) throw std::runtime_error("Too many projects to display");
-    std::size_t branch_count = 0;
+    int branch_count = 0;
+    int revision_count = 0;
     for (const aowis::dvmdb::ProjectInfo &info : projects)
     {
+        if (cancelled->load()) return {};
         SourceProject project;
         project.id = QString::fromStdString(info.id);
         project.name = QString::fromStdString(info.name);
-        const std::vector<std::string> branches = service.listBranches(info.id);
-        branch_count += branches.size();
-        if (branches.size() > maximum_branches || branch_count > maximum_total_branches)
-            throw std::runtime_error("Too many branches to display");
-        for (const std::string &branch_name : branches)
+        std::optional<aowis::dvmdb::RevisionGraphCursor> cursor;
+        QSet<QString> seen;
+        std::vector<aowis::dvmdb::RevisionGraphHead> pinned_heads;
+        do
         {
-            SourceBranch branch;
-            branch.name = QString::fromStdString(branch_name);
-            // One additional element detects omitted older revisions.
-            const std::vector<aowis::dvmdb::Revision> history = service.history(
-                info.id, branch_name, history_page_size + 1);
-            branch.history_limited = history.size() > history_page_size;
-            for (std::size_t i = 0; i < history.size() && i < history_page_size; ++i)
+            if (cancelled->load()) return {};
+            const aowis::dvmdb::RevisionGraphPage page = service.revisionGraph(
+                info.id, graph_page_size, cursor);
+            if (!cursor)
             {
-                const aowis::dvmdb::Revision &entry = history[i];
+                pinned_heads = page.heads;
+                branch_count += int(pinned_heads.size());
+                if (branch_count > maximum_branches)
+                    throw std::runtime_error("Too many branches to display");
+                for (const aowis::dvmdb::RevisionGraphHead &head : pinned_heads)
+                    project.branches.append({QString::fromStdString(head.name),
+                        QString::fromStdString(aowis::dvmdb::toHex(head.revision))});
+            }
+            else if (page.heads.size() != pinned_heads.size())
+                throw std::runtime_error("DVMDB graph HEAD set changed between pages");
+            else
+                for (std::size_t i = 0; i < pinned_heads.size(); ++i)
+                    if (page.heads[i].name != pinned_heads[i].name
+                        || page.heads[i].revision != pinned_heads[i].revision)
+                        throw std::runtime_error("DVMDB graph HEAD set changed between pages");
+            for (const aowis::dvmdb::Revision &entry : page.revisions)
+            {
+                const QString hash = QString::fromStdString(aowis::dvmdb::toHex(entry.id));
+                if (seen.contains(hash))
+                    throw std::runtime_error("Duplicate DVMDB graph revision across pages");
+                seen.insert(hash);
                 SourceRevision revision;
-                revision.id = QString::fromStdString(aowis::dvmdb::toHex(entry.id));
+                revision.id = hash;
                 for (const aowis::dvmdb::Hash &parent : entry.parents)
                     revision.parents.append(QString::fromStdString(aowis::dvmdb::toHex(parent)));
-                branch.history.append(revision);
+                project.revisions.append(revision);
+                ++revision_count;
+                if (project.revisions.size() > maximum_revisions_per_project
+                    || revision_count > maximum_total_revisions)
+                    throw std::runtime_error("Revision graph exceeds the GUI's safe display limit");
             }
-            if (!branch.history.isEmpty()) branch.head = branch.history.first().id;
-            project.branches.append(branch);
-        }
+            if (page.next && (page.revisions.empty() || page.next->skip <= (cursor ? cursor->skip : 0)))
+                throw std::runtime_error("DVMDB graph pagination failed to progress");
+            cursor = page.next;
+        } while (cursor);
+        project.graph_complete = validateCompleteGraph(project);
+        if (!project.graph_complete)
+            throw std::runtime_error("DVMDB returned an incomplete revision graph");
         snapshot.projects.append(project);
     }
     return snapshot;
@@ -100,6 +176,8 @@ void ProjectSourceReader::cancel()
 {
     ++this->generation;
     this->completion = {};
+    if (this->native_cancel) this->native_cancel->store(true);
+    this->native_cancel.reset();
     if (this->reply)
     {
         QNetworkReply *previous = this->reply;
@@ -117,24 +195,29 @@ void ProjectSourceReader::load(const ProjectServerProfile &profile, Completion c
     this->snapshot = {};
     this->step = Step::Projects;
     this->project_index = 0;
-    this->branch_index = 0;
     this->total_branches = 0;
+    this->total_revisions = 0;
+    this->next_cursor.clear();
+    this->used_cursors.clear();
+    this->revisions_seen.clear();
     const quint64 requested = this->generation;
     if (profile.connection_type == QStringLiteral("local"))
     {
 #ifdef AOWIS_STANDALONE_DVMDB_ENABLED
-        // Native filesystem operations can block; never run them in the UI thread.
         struct Result { SourceSnapshot snapshot; QString error; };
         const std::shared_ptr<Result> result = std::make_shared<Result>();
-        QThread *thread = QThread::create([profile, result]
+        const std::shared_ptr<std::atomic_bool> cancelled = std::make_shared<std::atomic_bool>(false);
+        this->native_cancel = cancelled;
+        QThread *thread = QThread::create([profile, result, cancelled]
         {
-            try { result->snapshot = loadNative(profile); }
+            try { result->snapshot = loadNative(profile, cancelled); }
             catch (const std::exception &error) { result->error = QString::fromUtf8(error.what()); }
             catch (...) { result->error = QStringLiteral("Unknown embedded DVMDB error"); }
         });
         connect(thread, &QThread::finished, this, [this, result, requested]
         {
             if (requested != this->generation) return;
+            this->native_cancel.reset();
             this->snapshot = result->snapshot;
             complete(requested, result->error);
         });
@@ -150,7 +233,6 @@ void ProjectSourceReader::load(const ProjectServerProfile &profile, Completion c
         complete(requested, tr("Unsupported database connection type."));
         return;
     }
-    // The current DVMDB HTTP service does not implement authentication.
     if (profile.auth_mode != QStringLiteral("None") && !profile.auth_mode.isEmpty())
     {
         complete(requested, tr("DVMDB REST authentication is not implemented; select 'None' to connect."));
@@ -169,31 +251,19 @@ void ProjectSourceReader::load(const ProjectServerProfile &profile, Completion c
 void ProjectSourceReader::nextRestRequest(quint64 requested)
 {
     if (requested != this->generation) return;
-    while (this->step == Step::Branches && this->project_index >= this->snapshot.projects.size())
+    if (this->step == Step::Graph && this->project_index >= this->snapshot.projects.size())
     {
         complete(requested);
         return;
     }
     QString path = QStringLiteral("/projects");
-    if (this->step != Step::Projects)
+    if (this->step == Step::Graph)
     {
-        SourceProject &project = this->snapshot.projects[this->project_index];
-        path += QStringLiteral("/") + segment(project.id) + QStringLiteral("/branches");
-        if (this->step == Step::History)
-        {
-            if (this->branch_index >= project.branches.size())
-            {
-                ++this->project_index;
-                this->branch_index = 0;
-                this->step = Step::Branches;
-                nextRestRequest(requested);
-                return;
-            }
-            path += QStringLiteral("/") + segment(project.branches[this->branch_index].name)
-                 + QStringLiteral("/history?limit=101");
-        }
+        path += QStringLiteral("/") + segment(this->snapshot.projects[this->project_index].id)
+            + QStringLiteral("/revision-graph?limit=%1").arg(graph_page_size);
+        if (!this->next_cursor.isEmpty())
+            path += QStringLiteral("&cursor=") + segment(this->next_cursor);
     }
-    // Endpoints can be host roots or an explicit /dvmdb/v1 API base path.
     QString root = this->profile.endpoint.trimmed();
     while (root.endsWith(QLatin1Char('/'))) root.chop(1);
     if (!root.endsWith(QStringLiteral("/dvmdb/v1"))) root += QStringLiteral("/dvmdb/v1");
@@ -204,7 +274,6 @@ void ProjectSourceReader::nextRestRequest(quint64 requested)
         QNetworkRequest::ManualRedirectPolicy);
     this->reply = this->manager.get(request);
     QNetworkReply *pending = this->reply;
-    // Absolute deadline as well as Qt's inactivity-based transfer timeout.
     const QPointer<QNetworkReply> deadline_reply(pending);
     QTimer::singleShot(15000, this, [this, requested, deadline_reply]
     {
@@ -212,17 +281,17 @@ void ProjectSourceReader::nextRestRequest(quint64 requested)
     });
     connect(pending, &QNetworkReply::finished, this, [this, requested, pending]
     {
-        if (this->reply == pending) this->reply.clear();
+        if (requested != this->generation) { pending->deleteLater(); return; }
+        this->reply.clear();
         pending->deleteLater();
-        if (requested != this->generation) return;
         if (pending->error() != QNetworkReply::NoError)
         {
-            complete(requested, pending->errorString());
+            complete(requested, tr("DVMDB request failed: %1").arg(pending->errorString()));
             return;
         }
         if (pending->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt() != 200)
         {
-            complete(requested, tr("Unexpected HTTP response (%1).")
+            complete(requested, tr("DVMDB request returned HTTP %1")
                 .arg(pending->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt()));
             return;
         }
@@ -237,7 +306,8 @@ void ProjectSourceReader::nextRestRequest(quint64 requested)
             complete(requested, error);
             return;
         }
-        nextRestRequest(requested);
+        // Avoid deep recursive callbacks for large paginated histories.
+        QTimer::singleShot(0, this, [this, requested] { nextRestRequest(requested); });
     });
 }
 
@@ -251,26 +321,12 @@ bool ProjectSourceReader::processRestDocument(const QByteArray &json, QString &e
         return false;
     }
     const QJsonObject object = document.object();
-    QString key;
-    if (this->step == Step::Projects) key = QStringLiteral("projects");
-    else if (this->step == Step::Branches) key = QStringLiteral("branches");
-    else key = QStringLiteral("revisions");
-    if (!object.value(key).isArray())
-    {
-        error = tr("DVMDB response is missing '%1'.").arg(key);
-        return false;
-    }
-    const QJsonArray array = object.value(key).toArray();
-    if ((this->step == Step::Projects && array.size() > maximum_projects)
-        || (this->step == Step::Branches && array.size() > maximum_branches)
-        || (this->step == Step::History && array.size() > history_page_size + 1))
-    {
-        error = tr("DVMDB result exceeds the display limit.");
-        return false;
-    }
     if (this->step == Step::Projects)
     {
-        for (const QJsonValue &value : array)
+        const QJsonValue projects = object.value(QStringLiteral("projects"));
+        if (!projects.isArray() || projects.toArray().size() > maximum_projects)
+        { error = tr("Invalid or oversized DVMDB project list."); return false; }
+        for (const QJsonValue &value : projects.toArray())
         {
             if (!value.isObject()) { error = tr("Invalid project record."); return false; }
             const QJsonObject item = value.toObject();
@@ -281,37 +337,81 @@ bool ProjectSourceReader::processRestDocument(const QByteArray &json, QString &e
             { error = tr("Invalid project identity."); return false; }
             this->snapshot.projects.append(project);
         }
-        this->step = Step::Branches;
+        this->step = Step::Graph;
+        return true;
     }
-    else if (this->step == Step::Branches)
+    const QJsonValue heads = object.value(QStringLiteral("heads"));
+    const QJsonValue revisions = object.value(QStringLiteral("revisions"));
+    const QJsonValue complete = object.value(QStringLiteral("complete"));
+    const QJsonValue cursor = object.value(QStringLiteral("nextCursor"));
+    if (!heads.isArray() || !revisions.isArray() || !complete.isBool()
+        || revisions.toArray().size() > graph_page_size || heads.toArray().size() > maximum_branches
+        || (cursor.isString() && cursor.toString().toUtf8().size() > maximum_cursor_bytes)
+        || (!cursor.isString() && !cursor.isNull()))
+    { error = tr("Invalid DVMDB revision graph page."); return false; }
+
+    SourceProject &project = this->snapshot.projects[this->project_index];
+    QList<SourceBranch> page_heads;
+    QSet<QString> names;
+    for (const QJsonValue &value : heads.toArray())
     {
-        SourceProject &project = this->snapshot.projects[this->project_index];
-        this->total_branches += array.size();
-        if (this->total_branches > maximum_total_branches)
+        if (!value.isObject()) { error = tr("Invalid DVMDB graph HEAD."); return false; }
+        const QJsonObject head = value.toObject();
+        SourceBranch branch;
+        branch.name = head.value(QStringLiteral("branch")).toString();
+        branch.head = head.value(QStringLiteral("revision")).toString();
+        if (branch.name.isEmpty() || !validHash(branch.head) || names.contains(branch.name))
+        { error = tr("Invalid or repeated DVMDB branch HEAD."); return false; }
+        names.insert(branch.name);
+        page_heads.append(branch);
+    }
+    if (this->next_cursor.isEmpty())
+    {
+        this->total_branches += page_heads.size();
+        if (this->total_branches > maximum_branches)
         { error = tr("Too many branches to display."); return false; }
-        for (const QJsonValue &value : array)
-        {
-            if (!value.isString() || value.toString().isEmpty())
-            { error = tr("Invalid branch name."); return false; }
-            SourceBranch branch;
-            branch.name = value.toString();
-            project.branches.append(branch);
-        }
-        this->step = Step::History;
+        project.branches = page_heads;
     }
     else
     {
-        SourceBranch &branch = this->snapshot.projects[this->project_index].branches[this->branch_index];
-        branch.history_limited = array.size() > history_page_size;
-        for (int i = 0; i < array.size() && i < history_page_size; ++i)
-        {
-            SourceRevision revision;
-            if (!parseRevision(array.at(i), revision))
-            { error = tr("Invalid revision record."); return false; }
-            branch.history.append(revision);
-        }
-        if (!branch.history.isEmpty()) branch.head = branch.history.first().id;
-        ++this->branch_index;
+        if (page_heads.size() != project.branches.size())
+        { error = tr("DVMDB graph HEADs changed during pagination."); return false; }
+        for (int index = 0; index < page_heads.size(); ++index)
+            if (page_heads[index].name != project.branches[index].name
+                || page_heads[index].head != project.branches[index].head)
+            { error = tr("DVMDB graph HEADs changed during pagination."); return false; }
+    }
+    if (revisions.toArray().isEmpty() && !complete.toBool())
+    { error = tr("DVMDB returned an empty intermediate graph page."); return false; }
+    for (const QJsonValue &value : revisions.toArray())
+    {
+        SourceRevision revision;
+        if (!parseRevision(value, revision) || this->revisions_seen.contains(revision.id))
+        { error = tr("Invalid or repeated DVMDB graph revision."); return false; }
+        this->revisions_seen.insert(revision.id, project.revisions.size());
+        project.revisions.append(revision);
+        ++this->total_revisions;
+        if (project.revisions.size() > maximum_revisions_per_project
+            || this->total_revisions > maximum_total_revisions)
+        { error = tr("Revision graph exceeds the GUI's safe display limit."); return false; }
+    }
+    if (complete.toBool())
+    {
+        if (!cursor.isNull() || !validateCompleteGraph(project))
+        { error = tr("DVMDB returned an incomplete revision graph."); return false; }
+        project.graph_complete = true;
+        ++this->project_index;
+        this->next_cursor.clear();
+        this->used_cursors.clear();
+        this->revisions_seen.clear();
+    }
+    else
+    {
+        const QString next = cursor.toString();
+        if (next.isEmpty() || this->used_cursors.contains(next))
+        { error = tr("DVMDB revision graph cursor did not advance."); return false; }
+        this->used_cursors.insert(next);
+        this->next_cursor = next;
     }
     return true;
 }
@@ -321,5 +421,5 @@ void ProjectSourceReader::complete(quint64 requested, const QString &error)
     if (requested != this->generation) return;
     Completion done = std::move(this->completion);
     this->completion = {};
-    if (done) done(this->snapshot, error);
+    if (done) done(error.isEmpty() ? this->snapshot : SourceSnapshot{}, error);
 }

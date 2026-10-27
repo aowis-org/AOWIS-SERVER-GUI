@@ -4,8 +4,7 @@
 `AOWIS-SERVER-DVMDB/docs/version-control-semantics.md`
 when that repository is checked out alongside the GUI. The DVMDB document is
 the product-level contract; this document specifies the currently implemented
-GUI presentation. It does **not** imply a complete all-parent DVMDB graph API
-has shipped.
+GUI presentation and the P0 full-DAG source reader.
 
 ## Visible hierarchy
 
@@ -32,11 +31,14 @@ non-leaf revision (R1 in a history continued by another branch). Historical
 revisions have no fictitious “current branch” badge. Selecting a revision in
 the graph or sidebar never moves a HEAD.
 
-An unloaded HEAD in a partial catalogue produces **no fake revision**. The
-project card indicates how many branch tips are not loaded. The sidebar may
-still inspect those branches. A truly complete graph requires the planned
-snapshot-consistent native and REST full-DAG reader, including second parents
-and paging/frontier state; the current first-parent history API is not that.
+The GUI now loads the native `ProjectService::revisionGraph()` or remote
+`GET /dvmdb/v1/projects/{id}/revision-graph` and follows the pinned cursor
+until `complete=true`. It validates every referenced HEAD and ancestor before
+publishing the project graph. Truncated or invalid pages fail the refresh
+explicitly; the existing catalogue remains visible as a stale cache. There
+are no fake revision cards or hidden partial parent edges in a successful load.
+To protect the interactive GUI, an oversized graph fails with an explicit
+limit error (25,000 revisions per project / 60,000 per source).
 
 ## Layout engine and rendering
 
@@ -104,7 +106,8 @@ its own tests in `tests/compound_dag_layout_test.cpp`. Execute:
 ./compile_linux_tests.sh
 ```
 
-The current GUI builds from bounded first-parent history pages. Its renderer
-must not claim to know unseen merge ancestry until the DVMDB full-graph API
-has been implemented and integrated. The graph is not itself a network
-checkout or mutable working copy.
+`tests/project_source_reader_test.cpp` checks full-DAG REST pagination, pinned
+HEAD consistency, merge parents and cancellation; `tests/projects_multi_source_test.cpp`
+uses the graph endpoint for its two independent database sources. Native
+reads use the same source model through `ProjectService::revisionGraph()`.
+The graph is not itself a network checkout or mutable working copy.

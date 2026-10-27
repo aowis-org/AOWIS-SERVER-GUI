@@ -132,16 +132,26 @@ databases can be displayed together, even if they have projects with
 identical names or revision hashes; the GUI qualifies their internal IDs
 by source. Select the target database/project before creating anything:
 
-- **+ Project** creates a *real* DVMDB project in the selected available source.
-- **+ Branch** creates a real branch in the selected project; a selected
-  historical revision can serve as its fork point.
+- Select an available **database**, then use **Create project** at the bottom
+  of its inspector. Enter the project name in the inline form and confirm.
+- Select a **project, branch or revision**, then use **Create branch** in its
+  inspector. The inline form shows the exact starting revision and offers
+  both branch-HEAD and historical-revision origins. For a project it defaults
+  to `main` HEAD; for a branch to that branch's HEAD; for a revision to that
+  exact immutable revision. Creating the branch does not create a commit.
+- The inspector's tabs expose relevant details and relationships: database
+  Connection/Projects, project Branches, branch Revisions, revision Ancestry.
+  Creation is a temporary inspector editor, not a modal dialog.
 - Writes are followed by a new catalogue read. They are not optimistic
   fake entries. An ambiguous POST timeout does not automatically trigger a
   second write: inspect the refreshed catalogue before retrying.
 - **Refresh catalogue** is on the selected database's inspector.
 
-Currently the GUI reads **up to 100 first-parent revisions per branch**.
-This is *not* a full or fully paginated merge DAG. DVMDB project/branch
+The GUI reads the **full revision DAG reachable from all branch HEADs**
+through DVMDB P0's paginated graph API, including both parents of merges.
+Native and REST readers use the same project-scoped revision model. Invalid
+or excessively large graphs produce explicit refresh errors instead of
+silently truncated history. DVMDB project/branch
 rename/delete, network listing/checkout, edited-model Save, and revision
 annotation writes are **not** available in this GUI milestone. The engine
 already has lower-level hydraulic read/write APIs; they are **not yet wired
@@ -157,10 +167,10 @@ persistence. See [Projects workspace](projects-workspace.md) for details.
 | Server starts, but old projects are missing | Check the printed storage root. CLI/INI override, the checkout-local legacy root and the per-user root may contain different catalogues. |
 | GUI shows *Checking…* or *Connection unstable* | Give the asynchronous checks time to complete; confirm URL, port, and `/dvmdb/v1/projects` JSON rather than relying on a browser landing page. |
 | REST profile rejected or never becomes available | Use `http://` or `https://` with a host, no embedded credentials/query/fragment, and **None** authentication. The current server itself only serves plain HTTP. |
-| Project list or graph looks incomplete | Check the database visibility checkbox, offline state, configured source, and the 100-first-parent-revision display limit. |
+| Project list or graph looks incomplete | Check the database visibility checkbox, offline state, configured source, and any explicit graph-size or failed-pagination error. |
 | No *Local database* option | Embedded DVMDB is available only when the Standalone application is compiled with native DVMDB support. |
 | An existing catalogue is locked | Stop the other process using that root. Do not delete an active lock or make a concurrent filesystem copy. |
-| `+ Project` or `+ Branch` unavailable | Select an available, writable database/project, not a stale offline snapshot; check if another write is in progress. |
+| Inspector Create project/branch unavailable | Select an available database or an appropriate project, branch or revision; check for an ongoing write or stale offline source. |
 
 ## 6. Security and implementation boundaries
 
@@ -171,8 +181,7 @@ development/loopback networks; do not publish it to the Internet. If a reverse
 proxy terminates TLS, that does not magically add DVMDB authorization.
 
 The GUI's automatic source monitoring does not synchronize independent
-databases. Visibility does not transfer branches or models. Full history
-paging, compare, checkout/save with expected-HEAD protection, lifecycle
+databases. Visibility does not transfer branches or models. Compare, checkout/save with expected-HEAD protection, lifecycle
 rename/delete and bundle push/pull remain future integration work. The actual
 HTTP operations are defined by the DVMDB repo's
 `docs/dvmdb-http-api.yaml`; do not infer endpoints from planned UI features.

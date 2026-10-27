@@ -21,6 +21,7 @@
 #include <QMessageBox>
 #include <QSplitter>
 #include <QStackedWidget>
+#include <QTabWidget>
 #include <QTextEdit>
 #include <QTemporaryDir>
 #include <QTimer>
@@ -119,6 +120,13 @@ int main(int argc, char **argv)
         QLineEdit *path = embedded_profiles.findChild<QLineEdit *>(
             QStringLiteral("projectLocalDvmdbPath"));
         QWidget *local_options = path != nullptr ? path->parentWidget() : nullptr;
+        QTabWidget *embedded_tabs = embedded_profiles.findChild<QTabWidget *>(
+            QStringLiteral("projectsInspectorTabs"));
+        if (!require(embedded_tabs != nullptr && embedded_tabs->count() >= 2
+                         && embedded_tabs->tabText(1) == QStringLiteral("Connection"),
+                     "database inspector is missing its Connection tab")) return 1;
+        embedded_tabs->setCurrentIndex(1);
+        app.processEvents();
         QLineEdit *endpoint = embedded_profiles.findChild<QLineEdit *>(
             QStringLiteral("projectServerEndpoint"));
         if (!require(kind != nullptr && kind->currentData().toString() == QStringLiteral("local")
@@ -172,11 +180,17 @@ int main(int argc, char **argv)
     QToolButton *add_server = projects.findChild<QToolButton *>(
         QStringLiteral("serversCreateButton"));
     QPushButton *add_project = projects.findChild<QPushButton *>(
-        QStringLiteral("projectsCreateProjectButton"));
+        QStringLiteral("projectsInspectorCreateProject"));
+    QPushButton *add_branch = projects.findChild<QPushButton *>(
+        QStringLiteral("projectsInspectorCreateBranch"));
+    QTabWidget *inspector_tabs = projects.findChild<QTabWidget *>(
+        QStringLiteral("projectsInspectorTabs"));
     if (!require(delete_in_inspector != nullptr && add_server != nullptr
-                     && add_project != nullptr && delete_in_inspector->isVisible()
+                     && add_project != nullptr && add_branch != nullptr
+                     && inspector_tabs != nullptr && inspector_tabs->count() >= 1
+                     && delete_in_inspector->isVisible()
                      && delete_in_inspector->text() == QStringLiteral("Delete branch…"),
-                 "server/project creation or branch deletion in the inspector is missing"))
+                 "context-sensitive inspector tabs or actions are missing"))
         return 1;
     if (!require(projects.findChild<QPushButton *>(QStringLiteral("serversRenameButton")) == nullptr
                      && projects.findChild<QPushButton *>(QStringLiteral("serversDeleteButton")) == nullptr,
@@ -255,6 +269,10 @@ int main(int argc, char **argv)
     dock->close();
     servers->setCurrentItem(servers->topLevelItem(1));
     app.processEvents();
+    if (!require(inspector_tabs->tabText(1) == QStringLiteral("Connection"),
+                 "server inspector is missing the Connection tab")) return 1;
+    inspector_tabs->setCurrentIndex(1);
+    app.processEvents();
     if (!require(dock->isVisible() && name->text() == QStringLiteral("Remote preview")
                      && server_options->isVisible() && endpoint->text().startsWith(QStringLiteral("https://")),
                  "remote server selection did not show its preview inspector"))
@@ -263,6 +281,32 @@ int main(int argc, char **argv)
                      && delete_in_inspector->text() == QStringLiteral("Delete database…"),
                  "selecting a server did not offer deletion in the inspector"))
         return 1;
+    if (!require(add_project->isVisible() && add_project->isEnabled()
+                     && !add_branch->isVisible(),
+                 "database inspector did not offer only its relevant creation action"))
+        return 1;
+    add_project->click();
+    app.processEvents();
+    QStackedWidget *project_draft_stack = projects.findChild<QStackedWidget *>(
+        QStringLiteral("projectsInspectorContentStack"));
+    QLineEdit *project_draft_name = projects.findChild<QLineEdit *>(
+        QStringLiteral("projectsCreationName"));
+    QPushButton *project_draft_confirm = projects.findChild<QPushButton *>(
+        QStringLiteral("projectsCreationConfirm"));
+    QPushButton *project_draft_cancel = projects.findChild<QPushButton *>(
+        QStringLiteral("projectsCreationCancel"));
+    if (!require(project_draft_stack != nullptr && project_draft_stack->currentIndex() == 1
+                     && project_draft_name != nullptr && project_draft_confirm != nullptr
+                     && project_draft_cancel != nullptr && !project_draft_confirm->isEnabled(),
+                 "project creation did not open a validated inline inspector form")) return 1;
+    project_draft_name->setText(QStringLiteral("unused-draft"));
+    app.processEvents();
+    if (!require(project_draft_confirm->isEnabled(),
+                 "valid project name did not enable the inline Create action")) return 1;
+    project_draft_cancel->click();
+    app.processEvents();
+    if (!require(project_draft_stack->currentIndex() == 0 && add_project->isVisible(),
+                 "cancelled project draft did not restore the database inspector")) return 1;
     // Inspector renaming replaces the redundant Rename buttons in the trees.
     name->setText(QStringLiteral("Renamed remote preview"));
     QMetaObject::invokeMethod(name, "editingFinished", Qt::DirectConnection);
@@ -458,14 +502,43 @@ int main(int argc, char **argv)
                      && name->text() == QStringLiteral("Network baseline"),
                  "Graph selection of history should reveal the Full tree"))
         return 1;
-    // Selecting history must change the branch-creation *source*, not inflate
-    // its button label and potentially break the compact three-action row.
+    // A historical revision initiates an inline branch draft at the exact
+    // selected revision, without creating an extra revision or opening a dialog.
     QPushButton *revision_branch_action = projects.findChild<QPushButton *>(
-        QStringLiteral("projectsCreateBranchButton"));
-    if (!require(revision_branch_action != nullptr
-                     && revision_branch_action->text() == QStringLiteral("+ Branch"),
-                 "historical revision selection expanded the + Branch button label"))
-        return 1;
+        QStringLiteral("projectsInspectorCreateBranch"));
+    QStackedWidget *inspector_content = projects.findChild<QStackedWidget *>(
+        QStringLiteral("projectsInspectorContentStack"));
+    QComboBox *creation_source = projects.findChild<QComboBox *>(
+        QStringLiteral("projectsCreationSource"));
+    QLineEdit *creation_name = projects.findChild<QLineEdit *>(
+        QStringLiteral("projectsCreationName"));
+    QLabel *creation_summary = projects.findChild<QLabel *>(
+        QStringLiteral("projectsCreationSummary"));
+    QPushButton *creation_confirm = projects.findChild<QPushButton *>(
+        QStringLiteral("projectsCreationConfirm"));
+    QPushButton *creation_cancel = projects.findChild<QPushButton *>(
+        QStringLiteral("projectsCreationCancel"));
+    if (!require(revision_branch_action != nullptr && revision_branch_action->isVisible()
+                     && creation_source != nullptr && creation_name != nullptr
+                     && creation_summary != nullptr && creation_confirm != nullptr
+                     && creation_cancel != nullptr && inspector_content != nullptr,
+                 "revision branch workflow is missing from inspector")) return 1;
+    revision_branch_action->click();
+    app.processEvents();
+    if (!require(inspector_content->currentIndex() == 1
+                     && creation_source->currentData().toString() == QStringLiteral("revision:") + baseline_id
+                     && creation_summary->text().contains(baseline_id)
+                     && !creation_confirm->isEnabled(),
+                 "branch creation did not default to the exact selected historical revision")) return 1;
+    creation_name->setText(QStringLiteral("from-inspector"));
+    app.processEvents();
+    if (!require(creation_confirm->isEnabled(),
+                 "valid unique branch draft cannot be submitted")) return 1;
+    creation_cancel->click();
+    app.processEvents();
+    if (!require(inspector_content->currentIndex() == 0
+                     && revision_branch_action->isVisible(),
+                 "cancel did not restore the selected revision inspector")) return 1;
     QPushButton *orientation_toggle = projects.findChild<QPushButton *>(
         QStringLiteral("projectsGraphOrientationToggle"));
     if (!require(orientation_toggle != nullptr && orientation_toggle->isCheckable()
@@ -506,55 +579,26 @@ int main(int argc, char **argv)
     if (!require(server_section->isVisible() && server_section->y() < project_section->y(),
                  "Servers section must appear above Projects & Branches"))
         return 1;
-    // Projects contain only project/branch records. The example library is a
-    // separate entry point, independent of the selected server profile.
-    // All three project actions must share one row ABOVE the project tree,
-    // without altering the scroll area's normal horizontal scrollbar policy.
+    // The navigator has no create/import button row. Its only job is navigation.
     QScrollArea *sidebar = projects.findChild<QScrollArea *>(
         QStringLiteral("projectsSidebarScrollArea"));
-    QPushButton *branch_action = projects.findChild<QPushButton *>(
-        QStringLiteral("projectsCreateBranchButton"));
-    QPushButton *import_action = projects.findChild<QPushButton *>(
-        QStringLiteral("projectsImportButton"));
     QPushButton *browse_action = projects.findChild<QPushButton *>(
         QStringLiteral("projectsBrowseExamplesButton"));
-    if (!require(sidebar != nullptr && branch_action != nullptr
-                     && import_action != nullptr && browse_action != nullptr,
-                 "sidebar action row or Example Library entry is missing"))
-        return 1;
-    if (!require(branch_action->text() == QStringLiteral("+ Branch")
-                     && import_action->text() == QStringLiteral("Import")
-                     && browse_action->text().contains(QStringLiteral("examples")),
-                 "sidebar action labels are incorrect"))
-        return 1;
-    const auto actions_fit = [&]()
+    if (!require(sidebar != nullptr && browse_action != nullptr
+                     && projects.findChild<QPushButton *>(QStringLiteral("projectsCreateProjectButton")) == nullptr
+                     && projects.findChild<QPushButton *>(QStringLiteral("projectsCreateBranchButton")) == nullptr
+                     && projects.findChild<QPushButton *>(QStringLiteral("projectsImportButton")) == nullptr,
+                 "obsolete navigator creation toolbar remains")) return 1;
+    const auto sidebar_fits = [&]()
     {
-        const QRect project = add_project->geometry();
-        const QRect branch = branch_action->geometry();
-        const QRect import = import_action->geometry();
-        const QPoint project_left = add_project->mapTo(sidebar->viewport(), QPoint(0, 0));
-        const QPoint import_right = import_action->mapTo(
-            sidebar->viewport(), QPoint(import_action->width() - 1, 0));
-        const QPoint browse_right = browse_action->mapTo(
-            sidebar->viewport(), QPoint(browse_action->width() - 1, 0));
-        return project.y() == branch.y() && branch.y() == import.y()
-            && project.right() < branch.left() && branch.right() < import.left()
-            && project.width() > 0 && branch.width() > 0 && import.width() > 0
-            && project.bottom() < project_tree->geometry().top()
-            && browse_action->geometry().y() >= 0
-            && project_left.x() >= 0 && import_right.x() < sidebar->viewport()->width()
-            && browse_right.x() < sidebar->viewport()->width()
-            && sidebar->horizontalScrollBarPolicy() == Qt::ScrollBarAsNeeded
+        return sidebar->horizontalScrollBarPolicy() == Qt::ScrollBarAsNeeded
             && sidebar->horizontalScrollBar()->maximum() == 0
             && !sidebar->horizontalScrollBar()->isVisible();
     };
-    if (!require(actions_fit(), "the three project buttons must fit above the tree on one row"))
-        return 1;
-    // Simulate the minimum-width pane, regardless of the current user splitter size.
+    if (!require(sidebar_fits(), "navigator overflows horizontally")) return 1;
     splitter->setSizes(QList<int>{240, 900});
     app.processEvents();
-    if (!require(actions_fit(), "narrow sidebar overflows or breaks up the three-button row"))
-        return 1;
+    if (!require(sidebar_fits(), "narrow navigator overflows horizontally")) return 1;
     splitter->setSizes(QList<int>{295, 720});
     app.processEvents();
 
@@ -946,6 +990,9 @@ int main(int argc, char **argv)
     // The compact + opens the inspector; only Create persists a full profile.
     add_server->click();
     app.processEvents();
+    if (!require(inspector_tabs->tabText(inspector_tabs->currentIndex())
+                     == QStringLiteral("Connection"),
+                 "new database must open its Connection tab")) return 1;
     QPushButton *create_source = projects.findChild<QPushButton *>(
         QStringLiteral("projectSourceCreateButton"));
     QPushButton *cancel_source = projects.findChild<QPushButton *>(
@@ -957,7 +1004,11 @@ int main(int argc, char **argv)
                      && loadProjectServerProfiles().size() == 2,
                  "opening the creation inspector should not save a name-only profile"))
         return 1;
-    name->setText(QStringLiteral("Added server"));
+    QLineEdit *source_name = projects.findChild<QLineEdit *>(
+        QStringLiteral("projectsNewSourceName"));
+    if (!require(source_name != nullptr && source_name->isVisible(),
+                 "new database name is not editable on the Connection tab")) return 1;
+    source_name->setText(QStringLiteral("Added server"));
     endpoint->setText(QStringLiteral("https://added.example.invalid"));
     create_source->click();
     app.processEvents();
