@@ -1,4 +1,5 @@
 #include "tabs/project_revision_graph.h"
+#include "tabs/project_revision_card_geometry.h"
 
 #include "config/gui_configuration.h"
 #include "config/shortcut_registry.h"
@@ -25,8 +26,6 @@
 
 namespace
 {
-constexpr double node_width = 224.0;
-constexpr double node_height = 84.0;
 constexpr double project_node_height = 68.0;
 constexpr double server_node_width = 252.0;
 constexpr double server_node_height = 76.0;
@@ -407,8 +406,8 @@ void ProjectRevisionGraph::expandOmission(int index)
 
 QRectF ProjectRevisionGraph::omissionRect(const Omission &omission) const
 {
-    return QRectF(omission.position.x() - node_width / 2.0,
-                  omission.position.y() - 29.0, node_width, 58.0);
+    return QRectF(omission.position.x() - ProjectRevisionCardGeometry::width / 2.0,
+                  omission.position.y() - 29.0, ProjectRevisionCardGeometry::width, 58.0);
 }
 
 const ProjectRevisionGraph::Omission *ProjectRevisionGraph::hitOmission(const QPointF &point) const
@@ -545,20 +544,19 @@ void ProjectRevisionGraph::setSelection(const QString &revision_id)
 
 QRectF ProjectRevisionGraph::nodeRect(const ProjectGraphNode &node) const
 {
+    if (node.kind == ProjectGraphNode::Kind::Revision)
+        return ProjectRevisionCardGeometry::bounds(node.position, node.heads.size());
     const double width = node.kind == ProjectGraphNode::Kind::Server
-        ? server_node_width : node_width;
+        ? server_node_width : ProjectRevisionCardGeometry::width;
     const double height = node.kind == ProjectGraphNode::Kind::Server
-        ? server_node_height : node.kind == ProjectGraphNode::Kind::Project
-            ? project_node_height : node_height + node.heads.size() * 24.0;
+        ? server_node_height : project_node_height;
     return QRectF(node.position.x() - width / 2.0,
                   node.position.y() - height / 2.0, width, height);
 }
 
 QRectF ProjectRevisionGraph::branchLabelRect(const ProjectGraphNode &node, int index) const
 {
-    const QRectF card = nodeRect(node);
-    return QRectF(card.left() + 14.0, card.top() + 68.0 + 24.0 * index,
-                  card.width() - 28.0, 20.0);
+    return ProjectRevisionCardGeometry::headRect(nodeRect(node), index);
 }
 
 QPointF ProjectRevisionGraph::mapToGraph(const QPointF &point) const
@@ -955,15 +953,25 @@ void ProjectRevisionGraph::paintEvent(QPaintEvent *event)
             painter.drawRoundedRect(QRectF(box.left(), box.top() + 10, 5, box.height() - 20), 2, 2);
         }
 
+        // The first two lines are anchored to the TOP of the card. Using
+        // box.adjusted(..., negative bottom inset) moved the title downward
+        // whenever HEAD references increased the card height, causing the
+        // title, hash and badges to paint on top of one another.
+        const QRectF title_box = ProjectRevisionCardGeometry::titleRect(box);
+        const QRectF id_box = ProjectRevisionCardGeometry::revisionIdRect(box);
+        const QString short_id = (node.display_id.isEmpty()
+            ? node.id : node.display_id).left(12);
+        const QString title = ProjectRevisionCardGeometry::distinctTitle(node.title, short_id);
         painter.setPen(ink);
         painter.setFont(title_font);
-        painter.drawText(box.adjusted(16, 10, -12, -48),
-                         Qt::AlignLeft | Qt::AlignVCenter,
-                         painter.fontMetrics().elidedText(node.title, Qt::ElideRight, 194));
+        painter.drawText(title_box, Qt::AlignLeft | Qt::AlignVCenter,
+                         painter.fontMetrics().elidedText(title, Qt::ElideRight,
+                                                          int(title_box.width())));
         painter.setFont(small_font);
         painter.setPen(muted);
-        painter.drawText(box.adjusted(16, 38, -12, -26), Qt::AlignLeft,
-                         (node.display_id.isEmpty() ? node.id : node.display_id).left(12));
+        painter.drawText(id_box, Qt::AlignLeft | Qt::AlignVCenter,
+                         painter.fontMetrics().elidedText(short_id, Qt::ElideRight,
+                                                          int(id_box.width())));
 
         // Branch refs belong to immutable revisions. Render each HEAD ref
         // inside the revision card, independently clickable and selectable.

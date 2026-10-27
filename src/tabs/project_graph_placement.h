@@ -1,6 +1,7 @@
 #pragma once
 
 #include "tabs/project_revision_graph.h"
+#include "tabs/project_revision_card_geometry.h"
 #include "graph/compound_dag_layout.h"
 
 #include <QHash>
@@ -21,7 +22,7 @@
 // create ancestry edges: it only positions the real nodes supplied by the GUI.
 namespace ProjectGraphPlacement
 {
-constexpr double card_width = 224.0;
+constexpr double card_width = ProjectRevisionCardGeometry::width;
 constexpr double revision_pitch_x = 250.0;
 constexpr double revision_pitch_y = 155.0;
 constexpr double project_gap_x = 48.0;
@@ -86,7 +87,7 @@ inline void layoutRevisions(ProjectBlock &block, const QVector<ProjectGraphNode>
     {
         const int rank = ranked.ranks[std::size_t(i)];
         const ProjectGraphNode &node = nodes.at(block.revision_indices.at(i));
-        const double height = 84.0 + node.heads.size() * 24.0;
+        const double height = ProjectRevisionCardGeometry::height(node.heads.size());
         layer_height[rank] = std::max(layer_height.value(rank, 84.0), height);
         maximum_rank = std::max(maximum_rank, rank);
     }

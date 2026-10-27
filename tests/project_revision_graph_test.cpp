@@ -1,5 +1,6 @@
 #include "tabs/project_revision_graph.h"
 #include "tabs/project_graph_placement.h"
+#include "tabs/project_revision_card_geometry.h"
 #include "config/shortcut_registry.h"
 
 #include <QApplication>
@@ -76,6 +77,41 @@ int main(int argc, char **argv)
         return 1;
     qputenv("XDG_DATA_HOME", temporary_configuration.path().toUtf8());
     QApplication app(argc, argv);
+
+    // Multi-HEAD cards must keep the two-line revision header fixed while
+    // growing only the HEAD badge area. The previous painter positioned the
+    // title relative to the card BOTTOM, making it overlap the revision ID
+    // and badges as soon as several branch refs pointed to the same revision.
+    for (int head_count = 0; head_count <= 8; ++head_count)
+    {
+        const QRectF card = ProjectRevisionCardGeometry::bounds(QPointF(0, 0), head_count);
+        const QRectF title = ProjectRevisionCardGeometry::titleRect(card);
+        const QRectF id = ProjectRevisionCardGeometry::revisionIdRect(card);
+        if (!require(title.top() - card.top() == 10.0
+                         && id.top() - card.top() == 38.0,
+                     "revision header shifted when HEAD badge count changed")) return 1;
+        if (!require(title.bottom() < id.top(),
+                     "revision title overlaps its revision hash")) return 1;
+        if (!require(id.bottom() < card.bottom(),
+                     "revision hash is outside its card")) return 1;
+        for (int i = 0; i < head_count; ++i)
+        {
+            const QRectF head = ProjectRevisionCardGeometry::headRect(card, i);
+            if (!require(id.bottom() < head.top() && head.bottom() < card.bottom(),
+                         "HEAD badge overlaps the revision header or card edge")) return 1;
+            if (i > 0 && !require(
+                    ProjectRevisionCardGeometry::headRect(card, i - 1).bottom() < head.top(),
+                    "HEAD badges overlap each other")) return 1;
+        }
+    }
+    if (!require(ProjectRevisionCardGeometry::distinctTitle(
+                     QStringLiteral("Revision 1615096adbe2"),
+                     QStringLiteral("1615096adbe2")) == QStringLiteral("Revision")
+                 && ProjectRevisionCardGeometry::distinctTitle(
+                     QStringLiteral("Named commit"),
+                     QStringLiteral("1615096adbe2")) == QStringLiteral("Named commit"),
+                 "revision card displays a duplicated hash or drops descriptive titles")) return 1;
+
     ProjectRevisionGraph graph;
     graph.resize(800, 500);
     graph.show();

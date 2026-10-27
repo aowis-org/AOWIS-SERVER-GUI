@@ -49,6 +49,8 @@ and paging/frontier state; the current first-parent history API is not that.
 - Branch HEAD labels occupy rows inside their referenced revision card.
   Card height and inter-rank separation expand for several labels; even
   multiple branches sharing one HEAD create no extra ancestry nodes/lanes.
+  The title and abbreviated revision hash occupy fixed top-anchored rows,
+  regardless of badge count; the same hash is not repeated in both rows.
 - `src/tabs/project_revision_graph.cpp` renders those positions using
   `QWidget/QPainter`, **not** a second bgfx device. The map owns process-global
   bgfx. The renderer draws chronological ancestry and structural
@@ -75,8 +77,8 @@ top-down/bottom-up without rotating text or changing ancestry semantics.
 ## Testing and limitations
 
 `tests/project_revision_graph_test.cpp` covers one chain, non-leaf HEAD,
-shared HEAD references, badge selection, growing card heights, forks/merges,
-project corridor isolation and bounded camera. The Qt-independent DAG kernel
+shared HEAD references, badge selection, non-overlapping header/badge geometry,
+growing card heights, forks/merges, project corridor isolation and bounded camera. The Qt-independent DAG kernel
 is tested in `tests/compound_dag_layout_test.cpp`. Execute:
 
 ```bash
