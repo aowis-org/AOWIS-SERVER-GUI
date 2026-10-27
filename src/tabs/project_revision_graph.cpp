@@ -258,6 +258,11 @@ void ProjectRevisionGraph::rebuildDisplayNodes()
             }
         }
 
+        // The full-DAG layered routes refer to the uncompressed scene.
+        // Folded views reroute visible ancestry using their own geometry.
+        for (ProjectGraphNode &node : this->nodes)
+            node.parent_routes.clear();
+
         // Compress hidden levels while respecting variable card heights:
         // several branch HEAD labels may make a revision taller than 155px.
         QVector<double> levels;
@@ -327,7 +332,12 @@ void ProjectRevisionGraph::rebuildDisplayNodes()
         max_y = qMax(max_y, omission.position.y());
     }
     for (ProjectGraphNode &node : this->nodes)
+    {
         node.position.setY(min_y + max_y - node.position.y());
+        for (auto route = node.parent_routes.begin(); route != node.parent_routes.end(); ++route)
+            for (QPointF &control : route.value())
+                control.setY(min_y + max_y - control.y());
+    }
     for (Omission &omission : this->omissions)
         omission.position.setY(min_y + max_y - omission.position.y());
 }
@@ -433,6 +443,7 @@ void ProjectRevisionGraph::setNodes(const QVector<ProjectGraphNode> &nodes)
             if (old_node.id != new_node.id || old_node.position != new_node.position
                 || old_node.parents != new_node.parents
                 || old_node.heads != new_node.heads
+                || old_node.parent_routes != new_node.parent_routes
                 || old_node.kind != new_node.kind
                 || old_node.container_id != new_node.container_id
                 || old_node.project_group_id != new_node.project_group_id)
@@ -875,7 +886,17 @@ void ProjectRevisionGraph::paintEvent(QPaintEvent *event)
             const QPointF begin = parent->position + QPointF(0, sign * nodeRect(*parent).height() / 2.0);
             const QPointF end = node.position - QPointF(0, sign * nodeRect(node).height() / 2.0);
             QPainterPath path(begin);
-            if (std::abs(begin.x() - end.x()) < 0.01)
+            const QVector<QPointF> route = node.parent_routes.value(parent_id);
+            if (route.size() >= 4 && (route.size() - 1) % 3 == 0)
+            {
+                // The same layered-DAG engine that positioned the variable-size
+                // cards also routed this edge around other revision cards.
+                path = QPainterPath(route.first());
+                for (int point = 1; point + 2 < route.size(); point += 3)
+                    path.cubicTo(route.at(point), route.at(point + 1),
+                                 route.at(point + 2));
+            }
+            else if (std::abs(begin.x() - end.x()) < 0.01)
                 path.lineTo(end);
             else
                 path.cubicTo(begin + QPointF(0, sign * 42.0),

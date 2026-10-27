@@ -40,24 +40,41 @@ and paging/frontier state; the current first-parent history API is not that.
 
 ## Layout engine and rendering
 
-- `src/graph/compound_dag_layout.h` is the Qt-independent, deterministic
-  C++17 ranked-DAG layout. It positions **revisions**, not branch labels.
-  Revision ancestry determines rank, oldest at the top, newer below.
-- `src/tabs/project_graph_placement.h` packs a whole project DAG into one
-  corridor, then all projects of a server side by side and all server cards on
-  the **same top row**. Single-line ancestry remains on the project centerline.
-- Branch HEAD labels occupy rows inside their referenced revision card.
-  Card height and inter-rank separation expand for several labels; even
-  multiple branches sharing one HEAD create no extra ancestry nodes/lanes.
-  The title and abbreviated revision hash occupy fixed top-anchored rows,
-  regardless of badge count; the same hash is not repeated in both rows.
-- `src/tabs/project_revision_graph.cpp` renders those positions using
-  `QWidget/QPainter`, **not** a second bgfx device. The map owns process-global
-  bgfx. The renderer draws chronological ancestry and structural
-  server/project edges separately, using straight lines for aligned nodes.
-- Barycentric crossing-reduction sweeps stabilize fork/merge placement,
-  without promising globally minimal crossings. Different projects and
-  database sources qualify their revision IDs separately.
+**`src/graph/layered_dag_layout.h` is the production revision-DAG
+layout engine.** It is a self-contained C++17 implementation of a
+Sugiyama-style layered graph layout (not a copy of Graphviz source). Its
+stages are: deterministic topological longest-path ranking; insertion of
+virtual vertices for long edges; repeated barycentric sweeps to reduce
+crossings; constrained coordinate relaxation using isotonic regression to
+prevent variable-sized cards from overlapping; and cubic Bézier route
+construction through the allocated long-edge lanes. Input vertex IDs are
+sorted for stable placement across backend responses. The engine rejects
+malformed cyclic ancestry rather than claiming to lay out a valid DAG.
+
+There is **no runtime Graphviz dependency**, no external executable, no
+`QProcess` and no added third-party library. The graph remains rendered by
+`QWidget/QPainter` using the native layout's edge paths, and remains
+independent of the map's process-global bgfx context. The legacy
+`src/graph/compound_dag_layout.h` continues to serve its independent
+ranked-layout users/tests; it is not the production project history path.
+The obsolete `graphviz_dot_layout.h` adapter is an inert compatibility header
+for worktrees that already received the earlier experimental patch.
+
+- `src/tabs/project_graph_placement.h` independently places each project's
+  real revision DAG, measures its full bounds **including spline lanes**, and
+  reserves that entire width before placing the next project. It then packs
+  complete server groups side by side; **every server card stays on the same
+  top row**. This fixes an older hard-coded block width that could let wide
+  revision DAGs overlap adjacent projects.
+- Actual branch HEADs are decorations **inside** their immutable revision
+  cards, not artificial ancestry vertices. HEAD rows contribute to the node
+  heights passed to the native layout engine. Shared and non-leaf HEADs remain supported.
+- The renderer retains routed ancestry edges in Full tree mode. Folded
+  history changes visible coordinates, so its omission markers and their
+  connections are routed separately rather than reusing now-invalid splines.
+  Server/project ownership connections are distinct from revision ancestry.
+- Every project is positioned in its own source-scoped identity namespace;
+  equal hashes from different projects are not silently merged.
 
 ## Interaction and camera
 
@@ -78,8 +95,10 @@ top-down/bottom-up without rotating text or changing ancestry semantics.
 
 `tests/project_revision_graph_test.cpp` covers one chain, non-leaf HEAD,
 shared HEAD references, badge selection, non-overlapping header/badge geometry,
-growing card heights, forks/merges, project corridor isolation and bounded camera. The Qt-independent DAG kernel
-is tested in `tests/compound_dag_layout_test.cpp`. Execute:
+growing card heights, forks/merges, routed native-DAG edges, measured project
+corridor isolation, deterministic reordering and bounded camera. The native Qt-free layout engine is tested in
+`tests/layered_dag_layout_test.cpp`; the earlier ranked-DAG kernel keeps
+its own tests in `tests/compound_dag_layout_test.cpp`. Execute:
 
 ```bash
 ./compile_linux_tests.sh

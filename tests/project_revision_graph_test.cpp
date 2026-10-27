@@ -785,6 +785,112 @@ int main(int argc, char **argv)
         if (!require(entry.position == expected.value(entry.id),
                      "fetch order changed deterministic graph placement")) return 1;
 
+    // Built-in layered-DAG placement with measured node heights and routed edges.
+    // A forked/merged project must reserve its complete rectangular corridor,
+    // including the spline lanes for multi-parent joins and the taller
+    // revision cards with several branch HEAD references.
+    QVector<ProjectGraphNode> dag_compound;
+    ProjectGraphNode graph_server = server_card;
+    graph_server.id = QStringLiteral("group:server:native-dag-regression");
+    dag_compound.append(graph_server);
+    const QStringList project_names = {QStringLiteral("forked"),
+                                       QStringLiteral("neighbour")};
+    for (const QString &name : project_names)
+    {
+        ProjectGraphNode owner = project_card;
+        owner.id = QStringLiteral("group:project:native-dag-%1").arg(name);
+        owner.container_id = graph_server.id;
+        dag_compound.append(owner);
+        const int revision_count = name == QStringLiteral("forked") ? 7 : 2;
+        for (int i = 0; i < revision_count; ++i)
+        {
+            ProjectGraphNode rev = revision_card;
+            rev.id = QStringLiteral("native-dag:%1:%2").arg(name).arg(i);
+            rev.project_group_id = owner.id;
+            rev.container_id.clear();
+            rev.parents.clear();
+            rev.heads.clear();
+            if (name == QStringLiteral("forked"))
+            {
+                // R0 -> R1 -> R2 -> R4 -> R6; and R1 -> R3 -> R5 -> R6.
+                // R4's second child also creates a long-rank connection.
+                const QVector<QVector<int>> ancestors = {
+                    {}, {0}, {1}, {1}, {2}, {3, 2}, {4, 5}};
+                for (int parent : ancestors.at(i))
+                    rev.parents.append(QStringLiteral("native-dag:forked:%1").arg(parent));
+                if (i == 2)
+                    rev.heads.append({QStringLiteral("native-dag:historic"), QStringLiteral("old-tip")});
+                if (i == 6)
+                    rev.heads = {{QStringLiteral("native-dag:main"), QStringLiteral("main")},
+                                 {QStringLiteral("native-dag:release"), QStringLiteral("release")},
+                                 {QStringLiteral("native-dag:another"), QStringLiteral("experiment")},
+                                 {QStringLiteral("native-dag:extra"), QStringLiteral("topic")}};
+            }
+            else
+            {
+                if (i > 0) rev.parents.append(QStringLiteral("native-dag:neighbour:0"));
+                if (i == 1)
+                    rev.heads.append({QStringLiteral("native-dag:neighbour-head"), QStringLiteral("main")});
+            }
+            dag_compound.append(rev);
+        }
+    }
+    ProjectGraphPlacement::place(dag_compound);
+    QHash<QString, ProjectGraphNode> by_dag_id;
+    for (const ProjectGraphNode &node : dag_compound)
+        by_dag_id.insert(node.id, node);
+    for (int i = 0; i < dag_compound.size(); ++i)
+    {
+        const ProjectGraphNode &node = dag_compound.at(i);
+        const QRectF card = node.kind == ProjectGraphNode::Kind::Revision
+            ? ProjectRevisionCardGeometry::bounds(node.position, node.heads.size())
+            : QRectF(node.position.x() - (node.kind == ProjectGraphNode::Kind::Server ? 126.0 : 112.0),
+                     node.position.y() - (node.kind == ProjectGraphNode::Kind::Server ? 38.0 : 34.0),
+                     node.kind == ProjectGraphNode::Kind::Server ? 252.0 : 224.0,
+                     node.kind == ProjectGraphNode::Kind::Server ? 76.0 : 68.0);
+        for (const QString &parent_id : node.parents)
+        {
+            const ProjectGraphNode parent = by_dag_id.value(parent_id);
+            if (!require(parent.position.y() > node.position.y(),
+                         "layered DAG positioned a child above its ancestor")) return 1;
+        }
+        for (int j = i + 1; j < dag_compound.size(); ++j)
+        {
+            const ProjectGraphNode &other = dag_compound.at(j);
+            const QRectF other_card = other.kind == ProjectGraphNode::Kind::Revision
+                ? ProjectRevisionCardGeometry::bounds(other.position, other.heads.size())
+                : QRectF(other.position.x() - (other.kind == ProjectGraphNode::Kind::Server ? 126.0 : 112.0),
+                         other.position.y() - (other.kind == ProjectGraphNode::Kind::Server ? 38.0 : 34.0),
+                         other.kind == ProjectGraphNode::Kind::Server ? 252.0 : 224.0,
+                         other.kind == ProjectGraphNode::Kind::Server ? 76.0 : 68.0);
+            if (!require(!card.intersects(other_card),
+                         "measured DAG node cards overlap across projects or ranks")) return 1;
+        }
+    }
+    {
+        for (const ProjectGraphNode &node : dag_compound)
+        {
+            if (node.kind != ProjectGraphNode::Kind::Revision)
+                continue;
+            if (!require(node.parent_routes.size() == node.parents.size(),
+                         "Native layout did not return a cubic route for each parent edge")) return 1;
+            for (const QString &parent_id : node.parents)
+            {
+                const QVector<QPointF> curve = node.parent_routes.value(parent_id);
+                if (!require(curve.size() >= 4 && (curve.size() - 1) % 3 == 0,
+                             "Native layout provided an invalid Bezier route")) return 1;
+                for (const QPointF &point : curve)
+                    if (!require(std::isfinite(point.x()) && std::isfinite(point.y()),
+                                 "Native layout returned non-finite spline coordinates")) return 1;
+            }
+        }
+    }
+    std::reverse(dag_compound.begin() + 1, dag_compound.end());
+    ProjectGraphPlacement::place(dag_compound);
+    for (const ProjectGraphNode &node : dag_compound)
+        if (!require(node.position == by_dag_id.value(node.id).position,
+                     "Native layered layout changed after reordering the catalogue")) return 1;
+
     // Camera ownership contract: the initial empty canvas may be framed,
     // followed by the first server skeleton and the first real catalogue.
     // Every later selection, rebuild, graph click and mode change preserves

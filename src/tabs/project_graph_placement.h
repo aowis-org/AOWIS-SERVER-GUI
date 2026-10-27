@@ -2,7 +2,7 @@
 
 #include "tabs/project_revision_graph.h"
 #include "tabs/project_revision_card_geometry.h"
-#include "graph/compound_dag_layout.h"
+#include "graph/layered_dag_layout.h"
 
 #include <QHash>
 #include <QPointF>
@@ -23,8 +23,6 @@
 namespace ProjectGraphPlacement
 {
 constexpr double card_width = ProjectRevisionCardGeometry::width;
-constexpr double revision_pitch_x = 250.0;
-constexpr double revision_pitch_y = 155.0;
 constexpr double project_gap_x = 48.0;
 constexpr double database_gap_x = 84.0;
 constexpr double project_header_y = 142.0;
@@ -35,6 +33,7 @@ struct ProjectBlock
     int node_index = -1;
     QVector<int> revision_indices;
     QVector<QPointF> revision_positions;
+    QVector<QHash<QString, QVector<QPointF>>> revision_routes;
     double width = card_width;
     double ancestry_center_x = card_width / 2.0;
 };
@@ -52,55 +51,56 @@ inline void layoutRevisions(ProjectBlock &block, const QVector<ProjectGraphNode>
     // Layout revision history in chronological ancestry order. The persistent
     // 'parents' array already expresses oldest -> newest DAG dependencies;
     // it MUST NOT be reversed merely because a branch points at HEAD.
-    std::vector<AowisGraphLayout::Vertex> vertices;
+    std::vector<AowisGraphLayout::LayeredVertex> vertices;
     vertices.reserve(std::size_t(block.revision_indices.size()));
-    QHash<QString, int> revision_by_id;
-    for (int i = 0; i < block.revision_indices.size(); ++i)
-        revision_by_id.insert(nodes.at(block.revision_indices.at(i)).id, i);
     for (int index : block.revision_indices)
     {
         const ProjectGraphNode &revision = nodes.at(index);
-        AowisGraphLayout::Vertex vertex;
+        AowisGraphLayout::LayeredVertex vertex;
         vertex.id = revision.id.toStdString();
         for (const QString &parent : revision.parents)
-            if (revision_by_id.contains(parent))
-                vertex.parents.push_back(parent.toStdString());
+            vertex.parents.push_back(parent.toStdString());
+        vertex.width = card_width;
+        vertex.height = ProjectRevisionCardGeometry::height(revision.heads.size());
         vertices.push_back(vertex);
     }
 
-    const AowisGraphLayout::RankedDag ranked =
-        AowisGraphLayout::layoutRankedDag(vertices, card_width, revision_pitch_x,
-                                         revision_pitch_y);
-    const double ancestry_width = std::max(card_width, ranked.width);
-    block.ancestry_center_x = ancestry_width / 2.0;
+    // Built-in, Qt-free Sugiyama layout: ranks, dummy routing lanes, crossing
+    // reduction, non-overlapping measured cards, and routed Bezier edges.
+    const AowisGraphLayout::LayeredDag dag =
+        AowisGraphLayout::layoutLayeredDag(vertices);
     block.revision_positions.resize(block.revision_indices.size());
-    for (int i = 0; i < block.revision_indices.size(); ++i)
-        block.revision_positions[i] = QPointF(ranked.positions[std::size_t(i)].x,
-            first_graph_layer_y + ranked.positions[std::size_t(i)].y);
+    block.revision_routes.resize(block.revision_indices.size());
+    if (!dag.valid)
+    {
+        // A corrupt cyclic revision graph is not a DAG; refuse to invent
+        // parent chronology. Keep cards accessible in a safe linear layout.
+        for (int i = 0; i < block.revision_indices.size(); ++i)
+            block.revision_positions[i] = QPointF(card_width / 2.0,
+                first_graph_layer_y + 140.0 * i);
+        block.width = card_width;
+        block.ancestry_center_x = card_width / 2.0;
+        return;
+    }
 
-    // The extra height belongs to the immutable revision card itself: HEAD
-    // badges are not independent layout vertices or side-lane cards. Grow the
-    // rank separation if a revision carries several branch references.
-    QHash<int, double> layer_height;
-    int maximum_rank = 0;
+    block.width = std::max(card_width, dag.width);
+    block.ancestry_center_x = block.width / 2.0;
+    const double horizontal_offset = (block.width - dag.width) / 2.0;
     for (int i = 0; i < block.revision_indices.size(); ++i)
     {
-        const int rank = ranked.ranks[std::size_t(i)];
-        const ProjectGraphNode &node = nodes.at(block.revision_indices.at(i));
-        const double height = ProjectRevisionCardGeometry::height(node.heads.size());
-        layer_height[rank] = std::max(layer_height.value(rank, 84.0), height);
-        maximum_rank = std::max(maximum_rank, rank);
+        const std::pair<double, double> point = dag.positions.at(std::size_t(i));
+        block.revision_positions[i] = QPointF(horizontal_offset + point.first,
+            first_graph_layer_y + point.second);
+        for (const AowisGraphLayout::LayeredRoute &edge : dag.parent_routes.at(std::size_t(i)))
+        {
+            QVector<QPointF> curve;
+            curve.reserve(int(edge.cubic.size()));
+            for (const std::pair<double, double> &control : edge.cubic)
+                curve.append(QPointF(horizontal_offset + control.first,
+                    first_graph_layer_y + control.second));
+            block.revision_routes[i].insert(QString::fromStdString(edge.parent), curve);
+        }
     }
-    QVector<double> layer_center(maximum_rank + 1, 0.0);
-    for (int rank = 1; rank <= maximum_rank; ++rank)
-        layer_center[rank] = layer_center[rank - 1]
-            + std::max(revision_pitch_y, (layer_height.value(rank - 1, 84.0)
-              + layer_height.value(rank, 84.0)) / 2.0 + 44.0);
-    const double first_rank_y = std::max(first_graph_layer_y,
-        project_header_y + (68.0 + layer_height.value(0, 84.0)) / 2.0 + 44.0);
-    for (int i = 0; i < block.revision_indices.size(); ++i)
-        block.revision_positions[i].setY(first_rank_y
-            + layer_center.at(ranked.ranks[std::size_t(i)]));
 }
 
 inline void place(QVector<ProjectGraphNode> &nodes, double /*viewport_aspect*/ = 1.7)
@@ -194,6 +194,8 @@ inline void place(QVector<ProjectGraphNode> &nodes, double /*viewport_aspect*/ =
         for (int pi = 0; pi < database.projects.size(); ++pi)
         {
             const double x = database.project_offsets.at(pi).x()
+                + (database.projects.size() == 1
+                    ? (database.width - database.projects.at(pi).width) / 2.0 : 0.0)
                 + database.projects.at(pi).ancestry_center_x;
             if (pi == 0) left_project_x = x;
             right_project_x = x;
@@ -214,8 +216,20 @@ inline void place(QVector<ProjectGraphNode> &nodes, double /*viewport_aspect*/ =
             for (int ri = 0; ri < project.revision_indices.size(); ++ri)
             {
                 const QPointF position = project.revision_positions.at(ri);
-                nodes[project.revision_indices.at(ri)].position = QPointF(
-                    project_x + position.x(), -position.y());
+                ProjectGraphNode &revision = nodes[project.revision_indices.at(ri)];
+                revision.position = QPointF(project_x + position.x(), -position.y());
+                revision.parent_routes.clear();
+                if (ri < project.revision_routes.size())
+                {
+                    const QHash<QString, QVector<QPointF>> &routes = project.revision_routes.at(ri);
+                    for (auto edge = routes.constBegin(); edge != routes.constEnd(); ++edge)
+                    {
+                        QVector<QPointF> shifted;
+                        for (const QPointF &point : edge.value())
+                            shifted.append(QPointF(project_x + point.x(), -point.y()));
+                        revision.parent_routes.insert(edge.key(), shifted);
+                    }
+                }
             }
         }
         group_x += database.width + database_gap_x;

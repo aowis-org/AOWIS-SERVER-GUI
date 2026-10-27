@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QElapsedTimer>
+#include <QHash>
 #include <QPoint>
 #include <QSet>
 #include <QPointF>
@@ -40,6 +41,9 @@ struct ProjectGraphNode
     QString container_id;
     QString project_group_id;
     QVector<ProjectGraphBranchHead> heads; // Branch refs attached to this revision, NOT DAG nodes.
+    // Layered-DAG cubic routes keyed by immutable parent revision ID.
+    // Coordinates are the same canonical graph-space units as position.
+    QHash<QString, QVector<QPointF>> parent_routes;
 };
 
 class QFocusEvent;

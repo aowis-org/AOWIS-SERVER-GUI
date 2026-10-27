@@ -633,6 +633,16 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
     add_test(NAME aowis-compound-dag-layout COMMAND aowis-compound-dag-layout-tests)
     set_tests_properties(aowis-compound-dag-layout PROPERTIES LABELS "aowis")
 
+    # Built-in layered DAG: independent C++17 engine, no Graphviz/Qt required.
+    add_executable(aowis-layered-dag-layout-tests
+        tests/layered_dag_layout_test.cpp
+        src/graph/layered_dag_layout.h)
+    target_include_directories(aowis-layered-dag-layout-tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_features(aowis-layered-dag-layout-tests PRIVATE cxx_std_17)
+    add_test(NAME aowis-layered-dag-layout COMMAND aowis-layered-dag-layout-tests)
+    set_tests_properties(aowis-layered-dag-layout PROPERTIES LABELS "aowis")
+
     # Projects DAG navigation uses a QWidget fallback (no bgfx instance needed).
     add_executable(aowis-project-revision-graph-tests
         tests/project_revision_graph_test.cpp
@@ -1382,6 +1392,7 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
     add_custom_target(aowis-tests
         DEPENDS
             aowis-compound-dag-layout-tests
+            aowis-layered-dag-layout-tests
             aowis-project-revision-graph-tests
             aowis-projects-inspector-dock-tests
             aowis-project-source-reader-tests
