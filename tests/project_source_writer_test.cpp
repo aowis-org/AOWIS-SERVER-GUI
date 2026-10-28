@@ -78,7 +78,7 @@ int main(int argc, char **argv)
                     && json.object().value(QStringLiteral("name")) != QStringLiteral("duplicate"))
                     payload = QJsonDocument(QJsonObject{
                         {QStringLiteral("id"), branch_revision},
-                        {QStringLiteral("branch"), QStringLiteral("feature")},
+                        {QStringLiteral("branch"), json.object().value(QStringLiteral("name"))},
                         {QStringLiteral("branchId"), branch_identity}}).toJson(QJsonDocument::Compact);
                 else
                 {
@@ -138,6 +138,26 @@ int main(int argc, char **argv)
         && request_bodies.last().value(QStringLiteral("revision")) == root_revision,
         "branch-from-revision POST does not match DVMDB contract")) return 1;
 
+    // VC-02: historical forks must preserve their exact revision UUID and
+    // arbitrary UTF-8 branch labels, including spaces, over the REST boundary.
+    const QString historical_name = QString::fromUtf8("Prüfung Süd 2026");
+    done = false;
+    writer.createBranch(profile, project_identity, historical_name,
+                        QStringLiteral("main"), root_revision,
+                        [&](const QString &id, const QString &error)
+    {
+        created = id;
+        failure = error;
+        done = true;
+    });
+    if (!require(waitUntil(app, [&] { return done; }), "historical UTF-8 branch POST did not finish")) return 1;
+    if (!require(failure.isEmpty() && created == historical_name
+                 && requested_paths.size() == 3
+                 && request_bodies.last().value(QStringLiteral("name")) == historical_name
+                 && request_bodies.last().value(QStringLiteral("fromBranch")) == QStringLiteral("main")
+                 && request_bodies.last().value(QStringLiteral("revision")) == root_revision,
+                 "historical fork lost its exact revision or UTF-8 branch name")) return 1;
+
     done = false;
     writer.createBranch(profile, project_identity, QStringLiteral("duplicate"),
                         QStringLiteral("main"), {}, [&](const QString &id, const QString &error)
@@ -182,7 +202,7 @@ int main(int argc, char **argv)
         done = true;
     });
     if (!require(done && !writer.isBusy() && failure.contains(QStringLiteral("not implemented"))
-                 && requested_paths.size() == 3,
+                 && requested_paths.size() == 4,
         "unsupported authentication was not rejected before POST")) return 1;
     return 0;
 }
