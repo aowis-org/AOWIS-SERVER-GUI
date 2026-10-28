@@ -553,9 +553,12 @@ int main(int argc, char **argv)
     app.processEvents();
     if (!require(inspector_content->currentIndex() == 1
                      && creation_source->currentData().toString() == QStringLiteral("revision:") + baseline_id
-                     && creation_summary->text().contains(baseline_id)
+                     && creation_summary->text().contains(
+                         QStringLiteral("Fork revision UUID: ") + baseline_id)
+                     && creation_summary->text().contains(QStringLiteral("Source branch: main"))
+                     && creation_summary->text().contains(QStringLiteral("Source branch UUID: "))
                      && !creation_confirm->isEnabled(),
-                 "branch creation did not default to the exact selected historical revision")) return 1;
+                 "historical fork did not retain its exact revision and source provenance")) return 1;
     creation_name->setText(QStringLiteral("from-inspector"));
     app.processEvents();
     if (!require(creation_confirm->isEnabled(),
