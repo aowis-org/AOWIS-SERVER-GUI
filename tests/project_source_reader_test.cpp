@@ -224,6 +224,30 @@ int main(int argc, char **argv)
         && received.projects.first().branches.first().record_sha256.isEmpty()
         && received.projects.first().revisions.isEmpty(),
         "unborn project with null HEAD was not accepted")) return 1;
+    // An unborn graph must stay empty across refreshes, including when a
+    // previous load of the same project contained committed revisions.
+    const auto verify_unborn_reload = [&]()
+    {
+        if (!load() || !failure.isEmpty() || received.projects.size() != 1)
+            return false;
+        const SourceProject &empty = received.projects.first();
+        return empty.graph_complete && empty.id == project_id
+            && empty.branches.size() == 1
+            && empty.branches.first().id == branch_main
+            && empty.branches.first().head.isEmpty()
+            && empty.branches.first().record_sha256.isEmpty()
+            && empty.revisions.isEmpty();
+    };
+    if (!require(verify_unborn_reload() && verify_unborn_reload(),
+                 "refresh of unborn project produced a revision or changed HEAD")) return 1;
+    unborn_project = false;
+    if (!require(load() && failure.isEmpty() && received.projects.size() == 1
+        && received.projects.first().revisions.size() == 5
+        && received.projects.first().branches.first().head == e,
+        "committed graph did not replace previously loaded unborn graph")) return 1;
+    unborn_project = true;
+    if (!require(verify_unborn_reload(),
+                 "switching back to unborn project retained committed revision data")) return 1;
     invalid_unborn_digest = true;
     if (!require(load() && !failure.isEmpty() && received.projects.isEmpty(),
         "unborn branch accepted a non-null record digest")) return 1;
