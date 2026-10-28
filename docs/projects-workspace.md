@@ -12,9 +12,9 @@ objects** with different lifecycles and actions.
 |---|---|
 | Database navigator | List saved embedded/REST source profiles and their availability and visibility |
 | Project / branch navigator | Navigate projects and branches within the selected visible databases |
-| History canvas | Show project/branch lanes and immutable committed revision ancestry |
+| History canvas | Show one Git-style immutable commit DAG with branch HEAD labels |
 | Right inspector | Show selected identity, context-specific information tabs and permitted actions |
-| Model editor | Edit one private working copy; never edit a persisted committed revision |
+| Model editor | Edit one private working copy in the user's configured personal DVMDB; never edit a committed revision |
 
 The database selector remains visible even when a source has no projects.
 Unchecking a database filters it from the canvas and project tree; it is not
@@ -24,6 +24,16 @@ source-qualified so equal human-readable names never collide.
 The inspector uses the shared `Sizes::SidebarRightWidth` sizing convention,
 not a half-window layout. Optional tab pages are hidden when inactive, and
 selection of another object changes the inspector without a modal duplicate.
+
+## Working repository versus published database sources
+
+Each user has one configured **personal working DVMDB** for durable drafts,
+local commits and tracking of shared branches. Standalone uses its built-in
+native DVMDB; basic desktop and web clients require an explicit private
+HTTP DVMDB repository. A visible/selected shared project source is **not**
+the working repository. The GUI must distinguish Save draft, Commit locally,
+and Publish/Push to shared HEAD. See
+[working-repository configuration](working-repository-configuration.md).
 
 ## Creation and opening
 
@@ -44,8 +54,9 @@ must explicitly commit to create the first immutable revision.
 
 ### Branch
 
-`Create branch` requires an explicit **committed source revision** or an
-explicit unborn-branch policy. If a source branch is selected, display its
+`Create branch` requires an explicit **committed source revision**.
+An unborn `main` must receive its first successful commit before any branch
+can be created from it. If a source branch is selected, display its
 committed HEAD and retain both `originBranchId` and exact `forkRevisionId`.
 The form must not silently pick a remembered branch or a different root.
 
@@ -71,14 +82,19 @@ editing historical content requires an explicit checkout/fork workflow.
 
 ### Commit
 
-`Commit` submits the whole validated model state or a deterministic change
-set, with exact `expectedHeadRevisionId` from the working-copy base, target
-branch UUID and an idempotency key. An explicitly `null` expected HEAD
-means the first commit of an unborn branch. Success creates one immutable
-revision UUIDv7 and advances exactly the chosen branch HEAD.
+`Commit locally` submits the whole validated model state or a deterministic
+change set to the user's **personal DVMDB**, with exact expected **local**
+branch HEAD/null, target local branch and an idempotency key. Success creates
+one immutable revision UUIDv7 and advances only its local branch HEAD.
 
-If the server HEAD has advanced since checkout, show **Conflict: branch
-advanced**; retain the user's private changes. Offer compare/reconcile,
+`Publish` transmits verified immutable commits to the shared project
+repository and conditionally advances the **shared** branch HEAD. An
+explicitly null expected remote HEAD is required on first publication.
+A successful local commit is never undone by rejected or timed-out Publish.
+
+If the local HEAD changed before Commit or the shared HEAD changed before
+Publish, show which **local or shared branch advanced**, preserving both
+private drafts and all successful local commits. Offer compare/reconcile,
 rebase or explicit merge resolution. Never automatically reset another
 user's work, force-publish, or blindly retry a timed-out write. A HEAD
 mismatch is an optimistic-concurrency collision and might or might not be
@@ -107,7 +123,8 @@ full revision UUID, ordered parent IDs and SHA-256 verification metadata.
 
 ## Graph and terminology
 
-The canvas draws **branch-oriented histories of committed revisions**; see
+The canvas draws a **Git-style single committed revision DAG with branch
+labels and optional visual lanes**, not branch-owned duplicate histories; see
 [graph rules](project-graph-layout.md). It must not draw a branch as a
 revision leaf, treat an editable working copy as a committed revision, or
 connect the same branch with both a HEAD edge and a creation-origin edge.
@@ -120,8 +137,10 @@ User-facing labels:
 - **HEAD:** latest **committed** revision of that branch, or `No commits yet`.
 - **Revision / Commit:** immutable finalized whole-model snapshot.
 - **Working copy:** editable state owned by the user/session, not a revision.
-- **Commit:** explicitly finalize working-copy changes and attempt the
-  atomic expected-HEAD publication.
+- **Save draft:** persist uncommitted edits in the personal working DVMDB.
+- **Commit:** create one immutable commit and advance a **local** branch HEAD.
+- **Publish:** conditionally advance the shared repository's branch HEAD
+  after verified history transfer.
 - **Branch from here:** create a branch from this committed snapshot, without
   creating another snapshot.
 
@@ -143,7 +162,8 @@ recoverable and persisted catalogues visibly stale, not silently writable.
 
 - Empty newly created project displays `main` but no revision card.
 - User A and user B independently check out and edit `main` at R7.
-- A commits R8; B's stale commit is rejected without losing changes.
+- A commits locally and publishes R8; B may commit locally from R7, but
+  B's stale Publish is rejected without losing local commits or drafts.
 - Creating a feature branch from R7 keeps that exact fork point and does
   not create a new revision.
 - Committing independently to `main` and `feature` creates the actual fork
