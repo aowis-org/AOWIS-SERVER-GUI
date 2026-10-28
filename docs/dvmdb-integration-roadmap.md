@@ -45,24 +45,28 @@ writable shared HEAD, two ancestry parents for a branch reference, or a
 branch card as a fake committed revision. UUIDv7 is identity; SHA-256 is
 integrity. Names can include spaces and supported UTF-8.
 
-## B. Unresolved narrow contracts — decision gates
+## B. Approved implementation decisions — DG-01 through DG-06
 
-These are the **only design questions that must be resolved in the relevant
-implementation milestone**. Defaults below are proposals, not pre-approved
-format/API changes. Resolve the matching DG-xx in DVMDB's roadmap before
-implementing an incompatible client assumption.
+**These decisions are closed and coordinated with DVMDB's roadmap.** Future
+threads should implement and verify them, not choose alternative semantics.
+Exact persistent/wire encodings and operational tuning belong in their
+milestones. Do not invent unsupported behavior while the backend is still
+being implemented.
 
-| Gate | Before GUI milestone | What must be fixed |
+| Gate | Before GUI milestone | Required GUI behavior |
 |---|---|---|
-| **DG-01: identity/tracking** | VC-03, VC-06 | Separate repository identity from project UUID and branch UUID; persist an explicit mapping from one private local branch ref to one remote repository/project/branch ref. Proposed: local and remote refs have distinct UUIDs, immutable commits retain UUIDs. GUI must never match by branch display name alone. |
-| **DG-02: draft/session concurrency** | VC-04 | How one user's multiple GUI sessions reopen or edit drafts. Proposed: each session creates its own draft UUID by default, with version-checked Save when deliberately reopening the same draft; recovery and retention must be explicit. |
-| **DG-03: uncertain writes** | VC-05, VC-07 | Operation UUID, request digest, durable status lookup, payload-mismatch rejection and retry/retention rules. GUI must not generate a fresh Commit or Publish request after a timeout without querying status. |
-| **DG-04: current repository compatibility** | VC-01, VC-11 | What to do with snapshots whose project creation already generated R0; proposed: explicit verified conversion/backup or fail-closed fresh initialization. Never relabel or silently delete an existing committed UUID. |
-| **DG-05: reconciliation UX scope** | VC-08 | Initial supported resolution: explicit fetch, fast-forward and interactive three-way merge; no unapproved automatic rebase, force push or last-writer-wins. Full hydraulic validation still required. |
-| **DG-06: first remote branch mapping** | VC-06, VC-07 | How to explicitly create/map shared refs during first Publish (including expected remote `null`), without guessing a target from project/branch labels. |
+| **DG-01: repository-qualified branch refs** | VC-03, VC-06 | The same logical project/branch retains its UUIDv7 across repositories; each repository has an independent HEAD under `(repositoryId, projectId, branchId)`. Display local HEAD and shared/tracking HEAD separately. New logical branches get new UUIDv7s, preserved on first remote provisioning. Match by UUID plus repository, never by label alone. |
+| **DG-02: draft/session concurrency** | VC-04 | Create a distinct UUIDv7 working copy per session by default. On deliberate reopen, acquire exclusive expiring writer lease, fencing token and persisted generation; each Save supplies all three. Show read-only/lease-expired/takeover states, and never discard a saved draft on crash. |
+| **DG-03: uncertain Commit/Publish** | VC-05, VC-07 | Generate and persist a UUIDv7 operation ID and payload digest for each action; on timeout/disconnect, query its authoritative pending/succeeded/rejected status and retry only with identical ID/payload. Never silently issue a second Commit/Publish. |
+| **DG-04: existing repositories** | VC-01, VC-11 | Preserve old committed R0 and all original UUIDs in existing projects; new projects alone begin unborn. Show migrated/unsupported status explicitly; never secretly delete historical commits, rewrite refs or reset projects to look unborn. |
+| **DG-05: initial reconciliation** | VC-08 | Offer explicit Fetch, fast-forward and three-way merge of committed history. Provide manual conflict choices, persisted unresolved merge draft and whole hydraulic-model validation. No automatic rebase, force Push, silent conflict resolution or automatic Publish in initial UI. |
+| **DG-06: first remote branch** | VC-06, VC-07 | Require explicit shared-repository/project target. Provision locally created branch remotely under the **same UUIDv7** with idempotency and collision checks. Treat missing branch separately from existing branch with null HEAD; first Publish from null uses an explicit expected-null precondition. |
 
-Security/permissions (VC-12) is a separately tracked design phase. A
-configured personal HTTP URL is **not proof of ownership**.
+**Operational parameters:** lease duration, draft quotas/recovery windows,
+operation-status retention, conflict-report payloads and exact endpoint/config
+names must be documented and tested in the appropriate milestone. The agreed
+lifecycle is not open for renegotiation. VC-12 authentication/permissions
+remain deferred; private HTTP editing requires deployment isolation.
 
 ## C. Milestone order and concrete GUI work
 
@@ -85,7 +89,8 @@ configured personal HTTP URL is **not proof of ownership**.
    assuming an earlier patch has already been applied.
 
 **Exit:** source file/API matrix and DVMDB/GUI build prerequisites listed;
-DG-04 direction selected; no UI operation built on unverified backend shapes.
+the approved DG-04 migration policy is applied; no UI operation is built
+on unverified backend shapes.
 
 ### VC-01 — Unborn projects and null HEAD display
 
@@ -381,6 +386,19 @@ clear unsupported/read-only state, not a substitute request to a shared repo.
 12. All variants expose data-consistent state after recovery, replication,
     compaction and backend upgrades; no old empty-root assumptions leak in.
 13. Public/other-user writable exposure remains disallowed until VC-12.
+14. Cloned logical branch UUID remains identical in personal and shared
+    repositories while their HEADs differ; selecting a shared branch never
+    silently targets the private HEAD of another repository.
+15. Reopening one draft in multiple sessions exposes read-only and writer
+    lease/fencing states; stale generation Save is rejected after takeover.
+16. Lost Commit/Publish response is recovered by original operation UUID,
+    with pending/succeeded/rejected display and no duplicate write.
+17. Existing committed initial R0 remains visible after upgrade; only
+    newly created projects show unborn `main`.
+18. New local branch is provisioned explicitly at the shared repository
+    with its own stable branch UUID; absence is distinct from null HEAD.
+19. Initial conflict workflow is explicit validated three-way merge, not
+    automatic rebase, force-push or silent resolution.
 
 ## F. Thread handoff and status discipline
 
@@ -391,8 +409,10 @@ was previously delivered. Use one named milestone or independently testable
 substep per patch.
 
 1. Review the exact source and relevant API/test fixtures in both archives.
-2. Check DG-xx gates; resolve schema/wire/storage decisions in both docs
-   before implementation. Keep a written outcome and acceptance criterion.
+2. Follow the **approved** DG-01–DG-06 decisions. Specify any necessary
+   wire/storage representations and operational parameters consistently in
+   both docs before implementation; record acceptance evidence, not a new
+   competing architectural default.
 3. Implement backend storage and native/REST semantics first; then GUI
    reader/writer, editor/inspector and graph changes with real integration
    tests. Do not mix unrelated UI redesign into a backend lifecycle patch.
@@ -407,6 +427,7 @@ substep per patch.
    **only with matching test evidence**. Avoid claiming features work from
    documentation alone.
 
-**Next recommended task:** VC-00 and DG-04 inventory, followed by VC-01
-unborn project/nullable committed HEADs in DVMDB and the GUI's empty
-history display. Review branch tracking DG-01 before VC-03 schema work.
+**Next recommended task:** VC-00 inventory using the approved DG-04
+migration policy, followed by VC-01 unborn project/nullable HEAD support.
+Implement the approved DG-01 repository-qualified branch tracking at VC-03;
+no further identity-policy decision is needed.

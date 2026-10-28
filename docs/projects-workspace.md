@@ -95,7 +95,7 @@ A successful local commit is never undone by rejected or timed-out Publish.
 If the local HEAD changed before Commit or the shared HEAD changed before
 Publish, show which **local or shared branch advanced**, preserving both
 private drafts and all successful local commits. Offer compare/reconcile,
-rebase or explicit merge resolution. Never automatically reset another
+explicit fast-forward or three-way merge resolution. Never automatically reset another
 user's work, force-publish, or blindly retry a timed-out write. A HEAD
 mismatch is an optimistic-concurrency collision and might or might not be
 an overlapping model-data conflict. Validate the complete hydraulic network

@@ -27,9 +27,12 @@ without giving it custody of their private draft data.
 
 One configured working repo belongs to one intended user and can serve
 multiple of their sessions, projects and devices (subject to later identity
-and authorization rules). Each session normally creates or reopens its
-**own working-copy UUID**, not the shared committed HEAD or another user's
-copy. The GUI must show which working repository currently holds the draft.
+and authorization rules). Each session creates its **own working-copy UUID**
+by default. Reopening one existing draft requires an exclusive expiring
+writer lease, fencing token and expected saved-state generation on every
+Save; read-only sessions may inspect the draft, and a stale writer never
+saves over recovered work. The GUI must show the current working repository,
+draft identity, lease/recovery status and saved-state generation.
 
 ## Proposed configuration fields
 
@@ -62,9 +65,19 @@ in an approved secure provider once authentication is implemented.
    draft dirty state across navigation and connection changes.
 4. Distinguish **Save draft**, **Commit locally** and **Publish to shared**.
    Show local HEAD, remote-tracking HEAD and current shared HEAD explicitly.
+   The same logical branch UUIDv7 may appear at both endpoints, but those
+   HEAD refs are independently mutable and identified by repository UUID.
+   Store/verify remote targets rather than matching human-readable names.
 5. Publication failure retains committed local revisions and the editable
    draft. Fetch/reconcile operations need user confirmation before changing
-   local branch history or working-copy bases.
+   local branch history or working-copy bases. Commit and Publish each use a
+   persisted UUIDv7 operation ID and payload digest. After a timeout, query
+   authoritative status and never submit a fresh write as an implicit retry.
+6. A newly created local branch must retain its UUIDv7 on explicitly chosen
+   remote provisioning. An absent remote branch differs from an existing
+   unborn branch with HEAD `null`; first Publish from `null` checks the exact
+   expected value. Existing committed R0 remains in existing projects,
+   while new projects start unborn.
 
 The private HTTP service being configured does **not** prove that only the
 intended user can access it. Until the security phase, this must be enforced
@@ -81,5 +94,12 @@ service and call it a personal working repository.
   save drafts and locally commit without changing shared R7.
 - `Publish` checks the shared HEAD and rejects stale history, leaving the
   private commit and working copy recoverable.
-- Working-copy IDs and local/remote tracking refs are never conflated with
-  shared branch UUIDs or displayed as ancestry vertices.
+- Working-copy IDs and remote-tracking metadata are not branch/revision
+  ancestry vertices; the logical branch UUID is stable across clone and
+  Publish, while local and shared HEAD values can differ.
+- The same draft reopened by two sessions is writable by only the current
+  fenced lease holder with the expected generation; a stale save is rejected.
+- A completed Publish with a lost HTTP response is recovered by querying
+  its original operation UUID, without duplicating the remote ref update.
+- Three-way merge conflicts remain in private working-copy state and require
+  explicit user action; no automatic rebase, force Push or last-writer-wins.
