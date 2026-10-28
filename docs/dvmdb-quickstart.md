@@ -1,187 +1,89 @@
-# Connect the Projects workspace to DVMDB
+# Connect AOWIS Projects to DVMDB
 
-This is the **implemented** GUI ↔ DVMDB setup, as of 2026-10-26.
-It applies to the real data-source integration, not the older in-memory
-preview. For future capabilities, see
-[the integration roadmap](dvmdb-integration-roadmap.md).
+This guide describes the intended GUI workflow under the
+[Projects workspace contract](projects-workspace.md) and
+[DVMDB version-control specification](../../AOWIS-SERVER-DVMDB/docs/version-control-semantics.md).
+Use a DVMDB server and GUI build supporting that contract; do not assume an
+older binary's data lifecycle matches it.
 
-## 1. Start a DVMDB HTTP server (for remote/REST access)
+## 1. Choose a database source
 
-In the **AOWIS-SERVER-DVMDB checkout**, run:
+Open **Projects → Databases** and add a source using its `+` action, or
+choose **Add database** on an empty workspace. Create an embedded/local
+source in a supported native Standalone build, or a remote DVMDB REST
+source by entering its endpoint. Validate connectivity and refresh the
+project catalogue. A visibility checkbox controls which sources appear in
+the navigator and canvas; it does not delete or disconnect a database.
 
-```bash
-./compile_linux.sh
-```
+The inspector identifies the selected database and exposes its connection
+settings, availability and projects. A checked, empty database still gets
+a server/source card on the graph canvas.
 
-The script configures/builds the Release server and **executes it in the
-foreground** when the build succeeds. It does not require you to pass a
-database directory for an existing development checkout. Default listener:
-`127.0.0.1:8755`. To stop it, press Ctrl+C in that terminal. To compile only:
+## 2. Create a project
 
-```bash
-./compile_linux.sh --build-only
-```
+Select an available database, choose **Create project** in the inspector,
+enter its name and confirm. The created project receives a UUIDv7 and a
+new UUIDv7 branch named **main**.
 
-In a second terminal, check the *real* HTTP endpoint:
+**No revision has been committed yet.** Its main branch has an **unborn
+HEAD** (`null`). The navigator shows the project and `main`; the graph
+shows `No commits yet`, not a synthetic R0 card.
 
-```bash
-curl -fsS http://127.0.0.1:8755/dvmdb/v1/health
-curl -fsS http://127.0.0.1:8755/dvmdb/v1/ready
-curl -fsS http://127.0.0.1:8755/dvmdb/v1/projects
-```
+## 3. Start editing privately
 
-Expected shapes:
+Choose **Checkout / Create working copy** for `main`. A working copy is
+private to the user/session, has its own UUIDv7, and starts from the empty
+model state. Editing this model does not modify the repository's committed
+HEAD or anyone else's working copy.
 
-```json
-{"status":"ok"}
-```
+When a branch already has commits, checkout pins a precise base committed
+revision UUIDv7. The inspector distinguishes **current branch HEAD** from
+**my working-copy base** and **my unsaved changes**.
 
-```json
-{"status":"ready"}
-```
+## 4. Make the first commit
 
-```json
-{"projects":[]}
-```
+Select **Commit** from the working-copy editor, inspect model validation,
+and enter any required commit metadata. The GUI submits the candidate
+model with `expectedHeadRevisionId: null`. On success DVMDB publishes
+immutable revision R0 (UUIDv7) and moves `main` HEAD to R0.
 
-The third response is illustrative for a new, empty database; populated
-databases return project objects in the array. `health` means a listener is
-answering; `ready` checks the catalogue. `curl` failing with connection
-refused means no listener is reachable at that address, regardless of whether
-the build completed.
+Every later commit creates another immutable UUIDv7 revision, with its
+committed parent bound by the canonical SHA-256 integrity record.
 
-### Check which data directory the server opened
+## 5. Create a branch
 
-The HTTP server prints its actual storage root on startup. Without an
-explicit root it chooses, in order:
+Select a branch or immutable historical revision. **Create branch** shows
+the committed starting revision, branch name and source. The new branch
+gets a new branch UUIDv7 and records the source branch UUIDv7 plus the
+exact fork revision UUIDv7. Its initial committed HEAD points to the
+already existing revision. **No extra revision is created.**
 
-1. An existing `./aowis-dvmdb-data` relative to the server process working
-   directory (the build/start script runs from the DVMDB checkout).
-2. Otherwise, `$XDG_DATA_HOME/aowis-dvmdb`, normally
-   `~/.local/share/aowis-dvmdb`.
+If your working copy has uncommitted changes, explicitly **commit first**
+(or choose to branch from its last committed base without those edits).
+No other editor's working copy is automatically finalized. Branch names
+support valid UTF-8 and spaces.
 
-An explicit `--data-root` wins over `[storage] root=` in the INI, and both
-win over automatic selection. The example `deploy/aowis-server-dvmdb.ini`
-explicitly selects `/var/lib/aowis-dvmdb`: do not use it as if it were
-the no-configuration development default.
+## 6. Concurrent work and conflicts
 
-An empty project list may mean an empty catalogue **or a different selected
-root**. Compare the printed root with the expected files before making new
-projects. Startup does not move or merge data roots. Never delete an active
-`catalogue.lock`. For controlled relocation, follow DVMDB
-`docs/operations.md` (offline whole-root backup/restore).
+Multiple users can work against the same committed branch HEAD using their
+**own** private working copies. Suppose both start at R7. The first commit
+creates R8 and advances the branch. The second, still based on R7, fails
+its expected-HEAD check. DVMDB does **not** overwrite R8 or discard the
+second editor's model. The GUI offers compare/reconcile and a new commit
+against an updated base. The full hydraulic model is revalidated before
+publication.
 
-## 2. Configure the GUI
+## 7. History, inspection and synchronization
 
-Open **Projects → Databases**. With no sources configured, the workspace is
-empty and the inspector is closed. Click the small **+** beside *Databases*
-(or **Add database** in the empty state).
+The project canvas groups immutable committed revision history by branch
+lanes. Actual independent commits cause visible forks and merge commits
+have two parent edges. The branch inspector records creation source/fork
+metadata without drawing an extra ancestry line. Working copies are
+editor/session objects, never immutable revision cards.
 
-For the HTTP daemon:
+Native and REST sources must expose the same UUIDv7 identities, immutable
+SHA-256 records, branch-head/null states and conflict behavior. Replication
+preserves all those values without inventing new branch origins.
 
-- Choose **Remote database (REST)**.
-- Give it a recognizable name, e.g. `Development DVMDB`.
-- Enter `http://127.0.0.1:8755` as the URL; the GUI also accepts an URL
-  ending in `/dvmdb/v1` without appending the prefix twice.
-- Set authentication mode to **None**.
-- Select **Create**. **Cancel** or closing this new-source inspector creates
-  no profile.
-
-The profile is stored locally in the native GUI INI; browser builds use
-browser `localStorage`. Profiles persist between restarts. For a
-fresh desktop setup on Linux, the GUI config is usually at
-`~/.local/share/aowis-server-gui/aowis-server-gui.ini`.
-
-**There is no Connect/Disconnect button.** Each configured database starts
-automatically. Select its database row to inspect settings, status and
-**Refresh catalogue**. Remote health is checked about every **5 seconds**:
-one failed probe reports degradation; two consecutive failures report
-offline; recovery is automatic. The catalogue refreshes about every
-**60 seconds** while healthy and reloads on recovery. A health request
-checks `/dvmdb/v1/projects` and requires an actual DVMDB-shaped response,
-not merely HTTP 200. The Map Server health monitor uses the same
-bounded-check infrastructure, but it is a separate service.
-
-If the server goes offline, previously loaded entries can remain visible as
-**stale, read-only catalogue data**. The UI must not present these as an
-available writable database. The row checkbox controls whether a source
-appears in the explorer and graph; **unchecking does not disconnect** it.
-Visibility preferences persist.
-
-## 3. Embedded native DVMDB (Standalone)
-
-A supported Linux **AOWIS-SERVER-Standalone** build with native DVMDB enabled
-automatically provisions a protected **Local database** profile. It uses
-`$XDG_DATA_HOME/aowis-standalone-dvmdb` (normally
-`~/.local/share/aowis-standalone-dvmdb`) and reads it through the C++ library.
-There is **no HTTP daemon, URL or liveness ping** involved. The root is
-created/opened when the native adapter starts; first-use provisioning of the
-profile itself is not a claim that it contains any projects.
-
-The standalone root is **not the same default root** as the HTTP daemon's
-`aowis-dvmdb`. Keep those stores separate. Do not point a standalone
-embedded source at a directory simultaneously opened by the daemon.
-GUI-only and WebAssembly builds without the native backend cannot open a
-local embedded source.
-
-## 4. Browse and create
-
-The **Databases** checkboxes control which sources contribute to the
-**Projects & Branches** tree and the shared revision graph. Multiple real
-databases can be displayed together, even if they have projects with
-identical names or snapshot SHA-256 hashes; the GUI qualifies UUIDv7
-revision identities by source and project. Select the target database/project before creating anything:
-
-- Select an available **database**, then use **Create project** at the bottom
-  of its inspector. Enter the project name in the inline form and confirm.
-- Select a **project, branch or revision**, then use **Create branch** in its
-  inspector. The inline form shows the exact starting revision and offers
-  both branch-HEAD and historical-revision origins. For a project it defaults
-  to `main` HEAD; for a branch to that branch's HEAD; for a revision to that
-  exact immutable revision. Creating the branch does not create a commit.
-- The inspector's tabs expose relevant details and relationships: database
-  Connection/Projects, project Branches, branch Revisions, revision Ancestry.
-  Creation is a temporary inspector editor, not a modal dialog.
-- Writes are followed by a new catalogue read. They are not optimistic
-  fake entries. An ambiguous POST timeout does not automatically trigger a
-  second write: inspect the refreshed catalogue before retrying.
-- **Refresh catalogue** is on the selected database's inspector.
-
-The GUI reads the **full revision DAG reachable from all branch HEADs**
-through DVMDB P0's paginated graph API, including both parents of merges.
-Native and REST readers use the same project-scoped revision model. Invalid
-or excessively large graphs produce explicit refresh errors instead of
-silently truncated history. DVMDB project/branch
-rename/delete, network listing/checkout, edited-model Save, and revision
-annotation writes are **not** available in this GUI milestone. The engine
-already has lower-level hydraulic read/write APIs; they are **not yet wired
-to a safe GUI working-copy/expected-HEAD session**. In-memory demo
-objects and the Example Library remain clearly separate from real DVMDB
-persistence. See [Projects workspace](projects-workspace.md) for details.
-
-## 5. Troubleshooting
-
-| Observation | Check |
-|---|---|
-| DVMDB build succeeded, but GUI shows *Unavailable* | Is `./compile_linux.sh` still running? Does `curl -fsS http://127.0.0.1:8755/dvmdb/v1/ready` work in a separate terminal? |
-| Server starts, but old projects are missing | Check the printed storage root. CLI/INI override, the checkout-local legacy root and the per-user root may contain different catalogues. |
-| GUI shows *Checking…* or *Connection unstable* | Give the asynchronous checks time to complete; confirm URL, port, and `/dvmdb/v1/projects` JSON rather than relying on a browser landing page. |
-| REST profile rejected or never becomes available | Use `http://` or `https://` with a host, no embedded credentials/query/fragment, and **None** authentication. The current server itself only serves plain HTTP. |
-| Project list or graph looks incomplete | Check the database visibility checkbox, offline state, configured source, and any explicit graph-size or failed-pagination error. |
-| No *Local database* option | Embedded DVMDB is available only when the Standalone application is compiled with native DVMDB support. |
-| An existing catalogue is locked | Stop the other process using that root. Do not delete an active lock or make a concurrent filesystem copy. |
-| Inspector Create project/branch unavailable | Select an available database or an appropriate project, branch or revision; check for an ongoing write or stale offline source. |
-
-## 6. Security and implementation boundaries
-
-The **current DVMDB HTTP server has no authentication, authorization or TLS**.
-A configured GUI authentication *label* is not authentication, and entering
-credentials does not secure the server. Keep the HTTP listener on trusted
-development/loopback networks; do not publish it to the Internet. If a reverse
-proxy terminates TLS, that does not magically add DVMDB authorization.
-
-The GUI's automatic source monitoring does not synchronize independent
-databases. Visibility does not transfer branches or models. Compare, checkout/save with expected-HEAD protection, lifecycle
-rename/delete and bundle push/pull remain future integration work. The actual
-HTTP operations are defined by the DVMDB repo's
-`docs/dvmdb-http-api.yaml`; do not infer endpoints from planned UI features.
+For implementation gates and acceptance tests, see the
+[integration roadmap](dvmdb-integration-roadmap.md).

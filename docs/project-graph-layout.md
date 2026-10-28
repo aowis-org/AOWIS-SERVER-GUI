@@ -1,113 +1,114 @@
-# Project graph: revision DAG, branch HEAD labels and camera
+# Projects graph — branch lanes and committed revision history
 
-**Implementation snapshot: 2026-10-27.** The Projects graph follows DVMDB's
-`AOWIS-SERVER-DVMDB/docs/version-control-semantics.md`
-when that repository is checked out alongside the GUI. The DVMDB document is
-the product-level contract; this document specifies the currently implemented
-GUI presentation and the P0 full-DAG source reader.
+**Normative GUI design.** The revision graph follows
+`AOWIS-SERVER-DVMDB/docs/version-control-semantics.md`. The graph is a
+visualization of **committed history organized into development branches**,
+not a tree of branch-creation events and not a view of mutable editor state.
 
-## Visible hierarchy
+## The three levels
+
+1. **Database/source**: a connection or embedded database container. Every
+   selected/visible source has a node, including those without projects.
+2. **Project**: a UUIDv7 model-history container. A newly created project has
+   a default `main` branch but no committed revisions.
+3. **Branch lanes with revision history**: each UUIDv7 branch has a stable
+   header, name and committed HEAD reference; immutable UUIDv7 revisions
+   form the history. A revision has zero, one or two parents.
+
+A branch is a persistent development line, **not a revision leaf**. Its
+committed HEAD is a *movable reference* to the latest committed revision on
+that line. A separate private working copy is what a user edits.
 
 ```text
-Server A                 Server B             GUI-only source containers
-    |                        |
- Project X                Project Y           DVMDB repositories
-    |                        |
-    R0                       R0                oldest loaded revisions
-    |                        |
-    R1                       R1 [main · HEAD]   user-named branch reference
-   /  
-  R2  F2 [feature · HEAD]
-  |
-  R3 [main · HEAD]
+Database
+   |
+ Project A
+   |
+   +-- main -----------------+-- feature -----------+  (branch headers/lanes)
+       R0 (finalized)        |                      |
+       |                     |                      |
+       R1 (finalized) -------+                      |  (shared fork revision)
+       |                     |                      |
+       R2 (main HEAD)        F2 (feature HEAD)      |  (independent commits)
 ```
 
-Every revision card represents **one immutable DVMDB revision**. Its `parents`
-are revision-to-revision ancestry edges. A branch is a movable, user-named
-reference to exactly one revision, so `main · HEAD` and `feature · HEAD` are
-**clickable labels within the referenced revision card**, not independent DAG
-vertices. One revision may carry several labels; a branch HEAD can be a
-non-leaf revision (R1 in a history continued by another branch). Historical
-revisions have no fictitious “current branch” badge. Selecting a revision in
-the graph or sidebar never moves a HEAD.
+This is a **conceptual lane diagram**, not an instruction to duplicate R1
+in storage. There is one underlying R1 UUIDv7 and one immutable record.
+Its descendants establish the visible fork. The branch inspector shows
+`Created from: main at R1`, without an additional branch-provenance line.
 
-The GUI now loads the native `ProjectService::revisionGraph()` or remote
-`GET /dvmdb/v1/projects/{id}/revision-graph` and follows the pinned cursor
-until `complete=true`. It validates every referenced HEAD and ancestor before
-publishing the project graph. Truncated or invalid pages fail the refresh
-explicitly; the existing catalogue remains visible as a stale cache. There
-are no fake revision cards or hidden partial parent edges in a successful load.
-To protect the interactive GUI, an oversized graph fails with an explicit
-limit error (25,000 revisions per project / 60,000 per source).
+## Empty projects and branches
 
-## Layout engine and rendering
+Creating a project gives `main` with **no HEAD revision**. The graph displays
+its project and branch lane, with `No commits yet`—never a fabricated
+empty revision card. Creating a branch from an existing committed revision
+adds a branch lane referencing that commit but **does not create an extra
+revision**. Divergence appears only when independent commits exist.
 
-**`src/graph/layered_dag_layout.h` is the production revision-DAG
-layout engine.** It is a self-contained C++17 implementation of a
-Sugiyama-style layered graph layout (not a copy of Graphviz source). Its
-stages are: deterministic topological longest-path ranking; insertion of
-virtual vertices for long edges; repeated barycentric sweeps to reduce
-crossings; constrained coordinate relaxation using isotonic regression to
-prevent variable-sized cards from overlapping; and cubic Bézier route
-construction through the allocated long-edge lanes. Input vertex IDs are
-sorted for stable placement across backend responses. The engine rejects
-malformed cyclic ancestry rather than claiming to lay out a valid DAG.
+Branches that share a committed HEAD are separate named lanes, not several
+labels squeezed into a single card and not fake descendant cards.
+The same committed revision remains one logical object regardless of how
+many branch histories reach it. A branch HEAD can be a non-leaf of the
+project-wide revision DAG.
 
-There is **no runtime Graphviz dependency**, no external executable, no
-`QProcess` and no added third-party library. The graph remains rendered by
-`QWidget/QPainter` using the native layout's edge paths, and remains
-independent of the map's process-global bgfx context. The legacy
-`src/graph/compound_dag_layout.h` continues to serve its independent
-ranked-layout users/tests; it is not the production project history path.
-The obsolete `graphviz_dot_layout.h` adapter is an inert compatibility header
-for worktrees that already received the earlier experimental patch.
+## What an edge means
 
-- `src/tabs/project_graph_placement.h` independently places each project's
-  real revision DAG, measures its full bounds **including spline lanes**, and
-  reserves that entire width before placing the next project. It then packs
-  complete server groups side by side; **every server card stays on the same
-  top row**. This fixes an older hard-coded block width that could let wide
-  revision DAGs overlap adjacent projects.
-- Actual branch HEADs are decorations **inside** their immutable revision
-  cards, not artificial ancestry vertices. HEAD rows contribute to the node
-  heights passed to the native layout engine. Shared and non-leaf HEADs remain supported.
-- The renderer retains routed ancestry edges in Full tree mode. Folded
-  history changes visible coordinates, so its omission markers and their
-  connections are routed separately rather than reusing now-invalid splines.
-  Server/project ownership connections are distinct from revision ancestry.
-- Every project is positioned in its own source-scoped identity namespace;
-  equal hashes from different projects are not silently merged.
+- **Revision ancestry edge**: from one committed revision to another; only
+  real ordered revision-parent IDs create these edges.
+- **Server/project/branch organization**: grouping or lane geometry, not
+  revision ancestry or a commit.
+- **Branch creation provenance**: show source branch UUIDv7 and exact fork
+  revision UUIDv7 in inspector metadata, **not** a dashed extra graph edge.
+- **Working-copy relationship**: an editor workspace/status indicator, not
+  a committed revision node or ancestry edge.
 
-## Interaction and camera
+Do not connect a branch card to both another branch and a revision. Do not
+make branch creation itself appear as a revision or a new level in history.
+Do not infer ancestry by comparing UUIDv7 timestamps, branch names or screen
+positions.
 
-Click a server or project card to open its inspector. Click the body of a
-revision card to inspect that immutable revision. Click the named `· HEAD`
-badge **inside** a revision to inspect its branch. Sidebar selection
-highlights the same card/badge, including multiple branch references on one
-revision. The branch badge's stable ID is independent of its user-chosen name.
+## Selection and inspector
 
-Selecting cards, changing graph display mode and refreshing catalogues do not
-re-fit the graph. Fit happens on initial content load and the explicit
-**Fit graph** action. Drag, inertia and wheel zoom are clamped to the node
-bounding box plus a sensible margin; an undersized graph remains centered.
-Folded history summaries do not invent revisions, and the graph can be flipped
-top-down/bottom-up without rotating text or changing ancestry semantics.
+The graph and navigator share the same project, branch and revision UUIDs.
+Selecting a branch opens its inspector with name, UUIDv7, committed HEAD,
+origin branch, immutable fork revision and available working-copy operations.
+Selecting a revision opens its immutable snapshot and ordered parents.
+Selecting an active working copy opens the editor; it must not change the
+committed HEAD merely by changing selection.
 
-## Testing and limitations
+The inspector remains a compact standard-width dock; object identity stays
+above contextual tabs, and actions are tied to the selected object. Keep
+long UUIDs and SHA-256 digest fields copyable without forcing the dock wider.
 
-`tests/project_revision_graph_test.cpp` covers one chain, non-leaf HEAD,
-shared HEAD references, badge selection, non-overlapping header/badge geometry,
-growing card heights, forks/merges, routed native-DAG edges, measured project
-corridor isolation, deterministic reordering and bounded camera. The native Qt-free layout engine is tested in
-`tests/layered_dag_layout_test.cpp`; the earlier ranked-DAG kernel keeps
-its own tests in `tests/compound_dag_layout_test.cpp`. Execute:
+## Layout and interaction requirements
 
-```bash
-./compile_linux_tests.sh
-```
+- Use `src/graph/layered_dag_layout.h` for genuine revision ancestry only;
+  branch-lane placement is a separate, stable presentation layer.
+- Rank history oldest-to-newest top-down. Route merge parent edges with no
+  invented intermediate committed vertices.
+- Reserve enough space for branch headers and badges; never overlap sibling
+  lanes or adjacent projects. All source groups remain visually distinct.
+- The `Full history` view covers all branch tips and *both* merge parents;
+  `HEADs` selects branch-local latest committed revisions. Unborn HEADs are
+  displayed explicitly, not omitted as broken pointers.
+- A page/graph snapshot is published only after ancestry closure and
+  branch-HEAD consistency are validated. Cancellation cannot merge two
+  different graph generations.
+- Selection, inspector tab changes and refresh do not unexpectedly refit
+  or reset the camera. Fit is an explicit action after initial display.
 
-`tests/project_source_reader_test.cpp` checks full-DAG REST pagination, pinned
-HEAD consistency, merge parents and cancellation; `tests/projects_multi_source_test.cpp`
-uses the graph endpoint for its two independent database sources. Native
-reads use the same source model through `ProjectService::revisionGraph()`.
-The graph is not itself a network checkout or mutable working copy.
+## Graph acceptance examples
+
+1. One empty project: project + `main`, no revision vertices.
+2. `main` and `feature` share committed R0: two branch lanes, one logical R0.
+3. A new branch from R0 changes labels/lanes but not revision count.
+4. Commits on both branches produce true divergence from R0; no extra
+   provenance edge and no false double connection.
+5. A merge has two real parents, preserves the source branch and updates
+   only the target branch's committed HEAD.
+6. Two simultaneous working copies of the same branch do not add branches,
+   move HEADs, or create revision vertices until a commit succeeds.
+
+This document specifies the intended graph behavior. The renderer and Qt
+tests must be updated to match it before the corresponding UI is considered
+complete.

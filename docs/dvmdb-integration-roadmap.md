@@ -1,134 +1,81 @@
-# DVMDB integration — implementation status and next steps
+# DVMDB / GUI integration requirements and delivery order
 
-**Updated 2026-10-27.** This document describes code in this GUI checkout.
-Do not confuse an implemented backend API, a wired GUI feature, and a
-proposed feature: they are separate milestones. See the
-[practical quickstart](dvmdb-quickstart.md) and
-[Projects workspace guide](projects-workspace.md).
+This is the execution plan for the [version-control contract](../../AOWIS-SERVER-DVMDB/docs/version-control-semantics.md),
+[Projects workspace](projects-workspace.md), and
+[branch-oriented graph](project-graph-layout.md). It defines requirements,
+not claims that every workflow is already implemented.
 
-## Current capabilities
+## Foundation: common native and REST identity model
 
-| Capability | GUI state | Important boundary |
-|---|---|---|
-| Database profile CRUD | **Implemented** | Stored locally in GUI configuration; profile deletion does **not** delete database data. The default embedded profile is protected. |
-| Embedded source in Standalone | **Implemented on supported native builds** | Uses DVMDB `ProjectService`, not a second database implementation or an HTTP server. |
-| REST catalogue reader | **Implemented** | HTTP `/dvmdb/v1` project and paginated full-DAG reads with pinned branch HEAD sets, validation, deadlines and cancellation. |
-| Automatic remote health and refresh | **Implemented** | ~5 s health probes, degraded/offline after failures, ~60 s catalogue refresh while healthy; offline caches read-only. |
-| Multi-source explorer | **Implemented** | Persistent visibility checkboxes; source-qualified project/revision IDs; same-named projects on different databases remain distinguishable. |
-| Revision history graph | **P0 integrated** | All-parent graph pages for the entire project, with snapshot-consistent HEADs, duplicate/closure checks and explicit resource limits; QWidget/QPainter, not a second bgfx device. |
-| Project creation | **Implemented, native + REST** | Real server-side create, followed by catalogue refresh. |
-| Branch creation / fork from revision | **Implemented, native + REST** | Creates a new branch from the chosen supported base. No rename/delete. |
-| Network enumeration and checkout | **Not implemented in GUI** | Underlying DVMDB read API for known network IDs exists, but no server network-discovery endpoint. |
-| Edited-model Save as a new revision | **Not implemented in GUI** | Need pinned working-copy session and exact expected-HEAD conflict handling. |
-| Project/branch rename and delete | **Not implemented by DVMDB service** | Preview-only edits are not remote data writes. |
-| REST auth, ACL enforcement, TLS | **Not implemented by DVMDB HTTP server** | Descriptive GUI auth modes cannot authenticate. |
-| Pull/push/compare/review/annotations | **Not implemented in GUI** | Requires explicit designs/contracts, not graph gestures with implicit writes. |
+- Use real project, branch, committed-revision and private working-copy UUIDv7s.
+- Carry canonical SHA-256 digest and Merkle roots separately from UUIDs.
+- Carry branch creation source UUID and exact fork revision UUID.
+- Support **unborn branch HEADs** explicitly: `null` means no commits yet.
+- Make all project-wide graph pages snapshot-consistent with both merge parents
+  and exact branch HEADs. Never display a graph assembled from incompatible
+  generations or invented identities.
 
-## Completed foundations
+## Step 1 — Project/branch lifecycle and graph
 
-### Stage 1 — Data-source UX
+1. `Create project` creates `main` with no committed revision. Remove any
+   implicit empty-root revision publication from both native and REST.
+2. `Create branch` from a committed revision records exact fork metadata,
+   creates no revision and does not alter the source HEAD. A request based
+   on uncommitted edits explicitly offers commit-first or fork-without-edits.
+3. Present branches as **lanes of committed revisions**. No branch-reference
+   leaf cards, double incoming links or extra branch-provenance ancestry
+   edges. Distinct branches may share immutable committed revisions.
+4. Show empty branches/projects with `No commits yet`, never fake R0.
+5. Selecting any source/project/branch/revision must only inspect it; graph
+   camera and source filtering must not alter version control state.
 
-- `Databases` section with compact add action and useful empty states;
-  inspector closed when nothing is selected.
-- An unsaved inspector draft for **Create/Cancel**, without a throwaway
-  name-only dialog or orphan profiles.
-- Local/remote profile types, compatibility for legacy endpoint-only
-  profiles, and a protected default local profile in supported Standalone
-  builds (separate from the daemon's default root).
+## Step 2 — Private working copies
 
-### Stage 2 — Shared read-only catalogue
+1. Implement network discovery and checkout of a **fixed committed revision**
+   (or a first empty model checkout for an unborn branch).
+2. Give each editing session its **own UUIDv7 working copy**, linked to
+   project, branch, owner/session and exact base revision/null.
+3. Keep working changes recoverable across temporary disconnection,
+   refresh and GUI navigation. Never use server branch HEAD as an editor's
+   mutable model object.
+4. Separate `Discard my draft` from version-control operations that would
+   move the branch HEAD.
 
-- Native worker and asynchronous REST readers normalize projects, branches,
-  pinned branch HEADs and the full revision DAG into the same GUI model.
-- Preview content remains distinct from real DVMDB content; real revision
-  inspector data is not editable through the old preview controls.
-- HTTP responses have size/time/decode checks. Graph pagination and
-  uncaptured ancestors must not masquerade as a complete DAG.
+## Step 3 — Commit with optimistic concurrency
 
-### Stage 3a — Real project and branch creation
+1. Validate full model references and hydraulic semantics on the candidate
+   snapshot or deterministic change set.
+2. Commit with project/branch UUIDv7, exact expected committed HEAD/null,
+   working-copy identity and idempotency key.
+3. Durably write one new immutable UUIDv7 revision with SHA-256 record hash,
+   then atomically advance only the chosen branch HEAD.
+4. On stale expected HEAD, show `Branch advanced` and retain the user's
+   draft. Offer explicit three-way comparison/reconciliation/rebase.
+5. After ambiguous timeout, refresh/query operation status before retrying.
 
-- Native and REST writers create projects and fork branches, including from
-  a selected historical revision.
-- Catalogue refresh after completion, no speculative local insertion.
-- An uncertain HTTP POST outcome triggers a read instead of a blind retry.
-  Conflicts and source-switch races are handled without overriding data.
+## Step 4 — Merge, sync and permission-aware workflows
 
-### Stage 3c — Context-sensitive inspector workflows
+- Merge committed heads using pinned source/target values; publish a
+  two-parent immutable revision only for a validated divergent merge.
+- Replication bundles preserve branch UUIDs, immutable fork provenance,
+  nullable HEADs, revision UUIDs, parent IDs and integrity bindings.
+- Authentication, per-project rights, working-copy ownership and auditing
+  must be enforced consistently in native and remote entry points.
 
-- Object identity remains visible above inspector tabs; contextual tabs
-  navigate connection properties, projects, branches, reachable revisions,
-  and revision ancestry without duplicating a graph or offering fake writes.
-- The three-button navigator action row is removed. Project/branch creation
-  uses inline forms in the appropriate inspector with explicit base revision,
-  duplicate-name checks and cancellation. Native/REST creation semantics and
-  authoritative refresh behavior remain unchanged.
-- The Network import action is located on the project inspector; import does
-  not imply a persisted model revision until P1 checkout/save is implemented.
+## GUI acceptance gates
 
-### Stage 3b — Always-active sources and multi-source explorer
+- An empty project displays `main`, zero committed revision cards and an
+  available private checkout action.
+- Two users start from R7 on `main`; the first commit succeeds, the stale
+  second fails without losing draft edits.
+- Branching from R7 preserves an exact fork point, without a new revision.
+- Independent branch commits show actual DAG divergence; merges have two
+  true revision-parent edges.
+- Names with spaces and valid UTF-8, stable UUIDv7 identity and canonical
+  SHA-256 verification work identically in embedded and REST modes.
+- Inspector and navigator display ownership/provenance without creating
+  extra graph ancestry lines or forcing the sidebar wider.
 
-- Connect/Disconnect controls removed: configured sources load automatically.
-  Remote health uses the bounded shared Map Server HTTP monitor with response
-  validation and degraded/recovered states.
-- Independent per-source catalogue readers, stale offline cache handling and
-  persistent source visibility checkboxes.
-- Aggregated navigator and graph with source-qualified IDs. Embedded local
-  DVMDB has no HTTP polling. Explicit Refresh remains in the inspector.
-
-## Next implementation milestones
-
-1. **Network discovery contract.** Define and implement list-networks for an
-   immutable project revision (IDs, descriptive metadata, pagination and
-   empty-project rules) in both the native service and REST. Extend OpenAPI
-   only after the route exists. Avoid choosing an arbitrary network.
-2. **Pinned editor session / checkout.** Load one network snapshot at a
-   specific revision, retain immutable base and mutable working copy
-   separately, track dirty state and prompt on context changes. Tests must
-   cover source switching and temporary network loss.
-3. **Save with optimistic HEAD.** Use the existing DVMDB network-write
-   contract once a safe session exists. Preserve local changes on stale
-   expected-HEAD / HTTP 409; never overwrite another client's branch
-   update or retry an ambiguous POST automatically.
-4. **Lifecycle contracts.** Project/branch rename, deletion/archival, metadata
-   changes, validation and concurrency must be implemented by DVMDB first,
-   then surfaced through the same inspector.
-5. **History/sync workflows.** Build comparison and merge-preview UX on the
-   now-integrated full DAG, plus explicit bundle fetch/push/pull decisions,
-   optional revision annotations, audit and permission-aware capabilities.
-
-Keep the native and REST backends behaviorally equivalent at the GUI
-boundary. The DVMDB backlog is in its `docs/gui-integration-requirements.md`
-and the implemented wire contract is `docs/dvmdb-http-api.yaml`. Introducing
-SQL metadata, if eventually required, must include equivalent supported
-SQLite **and** PostgreSQL queries/migrations; these GUI profiles currently
-use Qt settings/JSON, not SQL.
-
-## Tests / acceptance
-
-Run the GUI test suite from the GUI checkout:
-
-```bash
-./compile_linux_tests.sh
-```
-
-For actual integration, also run the DVMDB server in its own checkout
-(`./compile_linux.sh`) and verify its `/dvmdb/v1/ready` and
-`/dvmdb/v1/projects` endpoints before assessing GUI failures.
-
-The repository contains GUI regression tests for project/branch REST
-creation, HTTP contract/error behavior, multi-source ID collisions and
-visibility persistence. Executing them in a build environment is still
-required; documentation itself is not proof of successful integration.
-
-## UUIDv7 canonical API cutover (integrated)
-
-The uploaded DVMDB native/HTTP snapshot now exposes canonical UUIDv7 project,
-branch and revision identities. GUI readers and project/branch creation writers
-use these APIs. The complete graph retains canonical SHA-256 record digests
-separately from immutable UUID identities, verifies parents/HEAD bindings,
-and preserves source/project scoping. Old SHA-addressed development stores
-are not compatible; recreate them under the new pre-release format.
-
-Remaining GUI work is P1 network checkout/edit/commit, comparison and merge
-workflows, not the revision identity cutover. See
-[the integration checkpoint](dvmdb-uuidv7-gui-readiness.md).
+See the [practical connection guide](dvmdb-quickstart.md). The GUI is complete
+for this design only when native/REST integration and its Qt regression suite
+pass these behaviors end to end.

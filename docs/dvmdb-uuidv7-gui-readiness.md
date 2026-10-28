@@ -1,54 +1,44 @@
-# UUIDv7 DVMDB GUI integration — canonical native and HTTP cutover
+# UUIDv7 version-control integration contract
 
-**2026-10-27 — aligned to DVMDB snapshot `dvmdb(20261027-211243).zip`.**
+AOWIS/DVMDB uses UUIDv7 for the persistent identities of projects,
+branches, immutable committed revisions and private working copies.
+SHA-256 verifies immutable revision records and complete Merkle snapshots;
+it is never an alternative revision identity.
 
-DVMDB now exposes RFC 9562 UUIDv7 as the canonical project, branch and
-revision identity in *both* `ProjectService` and `/dvmdb/v1`. SHA-256 is
-**integrity metadata**, not a revision address. This is a **pre-release
-breaking change**; obsolete SHA-addressed development repositories are not
-silently migrated. Consult DVMDB `docs/uuidv7-http-cutover.md` and
-`docs/uuidv7-identity-format-v2.md` for the current native/storage contract.
+## Model boundaries
 
-## GUI behavior
+| Object | Display and interaction |
+|---|---|
+| Project | UUIDv7; owns named branches and revision history |
+| Branch | Stable UUIDv7, UTF-8 label, nullable committed HEAD, origin branch/fork revision metadata |
+| Committed revision | Immutable UUIDv7, ordered parents, canonical SHA-256, snapshot identity |
+| Working copy | User/session-private UUIDv7, mutable model state, pinned base revision UUID/null |
 
-- **Remote project reading** uses `GET /dvmdb/v1/projects`, then paginated
-  `GET /projects/{id}/revision-graph?limit=256[&cursor=...]` until `complete`.
-  A project ID, each `heads[].branchId`, every `heads[].revision`, every
-  `revisions[].id` and all revision parents must be UUIDv7.
-- Each branch HEAD has an expected canonical `heads[].recordHash` SHA-256.
-  Every revision has a canonical `recordHash` and matching ordered
-  `parentRecordHashes`; the reader checks cross-page HEAD invariance,
-  all parent SHA bindings, closed ancestry and acyclicity **before** publishing
-  the snapshot. Incomplete or oversized responses fail the refresh, leaving
-  previously displayed data stale instead of fabricating graph nodes.
-- **Embedded/Standalone** uses `ProjectService::revisionGraphV2()` when the
-  linked submodule supports it. Older embedded backends fail with an explicit
-  upgrade error; there is **no** legacy SHA graph fallback in this release.
-  The reader retains cooperative native cancellation and project graph limits.
-- **Write operations** use canonical REST `POST /projects` and
-  `POST /projects/{id}/branches`; native embedded writers call
-  `createProjectV2`, `createBranchV2`, or `createBranchAtRevisionV2`. A selected
-  historical revision is passed as a UUIDv7 and an actual reachable source
-  branch. A branch creates a new reference and does **not** create a revision.
-  Responses are validated for UUIDv7 and stable branch names/identities.
-  Uncertain network writes still require an authoritative refresh before
-  retrying, not a blind retry.
-- Graph and navigator selection remain qualified by source and project.
-  The inspector displays the full revision UUIDv7 and canonical SHA-256
-  independently; revision cards use the trailing 12 UUID digits merely as a
-  *label*, never a selection key.
+A new project creates an unborn `main` and **no committed revision**.
+Creating a branch from committed history does **not** create a revision.
+Creating a new working copy does **not** create or advance a branch HEAD.
+Only a successful expected-HEAD commit creates a new immutable revision.
 
-## Remaining scope
+## Native and REST reader/writer requirements
 
-The GUI can now create projects and named branches, inspect their complete
-revision DAGs, and fork from historical revisions for both REST and supported
-native libraries. This patch does **not** implement checkout, network editing,
-model commits, hydraulic merge validation, branch rename/delete or model
-comparison. These belong to later P1 work. The GUI still requires Qt-enabled
-integration tests on the developer system; the standalone C++ native API
-compile probe alone is not a substitute for them.
+- Read paginated complete history with a stable snapshot of branch HEADs,
+  two-parent merge closure, record hashes and branch-origin metadata.
+- Treat `headRevisionId: null` as an unborn branch, not a missing object.
+- Preserve full UUIDv7 IDs in model, selections, API calls and persistence;
+  shortened labels are display-only. Names may contain valid UTF-8 spaces.
+- Checkout always returns an independent working-copy UUIDv7, owner/session,
+  base revision/null and target branch UUIDv7.
+- Commit with an exact expected branch HEAD/null and idempotency key;
+  return a conflict if HEAD advanced. Retain private work on conflict.
+- Never silently replace a current user's draft with a stale catalogue read.
+- Branch provenance is inspector metadata, not a second revision-ancestry
+  graph edge.
 
-Use `./compile_linux_tests.sh` in AOWIS-SERVER-GUI and test a fresh DVMDB
-repository with root revisions, divergent branches, a merge and multi-page
-history in both connection modes. Do not point old SHA-development stores at
-the new UUIDv7 service expecting automatic migration.
+## Verification
+
+The acceptance suite covers empty project, first commit, independent
+branching, shared immutable ancestry, multi-user optimistic conflicts,
+three-way merge, pagination, reload, replication and native/REST equivalence.
+All resulting graph cards and inspector actions follow
+[Projects workspace](projects-workspace.md) and
+[version-control rules](../../AOWIS-SERVER-DVMDB/docs/version-control-semantics.md).

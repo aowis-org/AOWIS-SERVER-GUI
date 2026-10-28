@@ -1,6 +1,7 @@
 #include "tabs/project_revision_graph.h"
 #include "projects/dvmdb_identity.h"
 #include "tabs/project_revision_card_geometry.h"
+#include "tabs/project_branch_visual_link.h"
 
 #include "config/gui_configuration.h"
 #include "config/shortcut_registry.h"
@@ -921,21 +922,28 @@ void ProjectRevisionGraph::paintEvent(QPaintEvent *event)
         }
     }
 
-    // A branch owns its UUIDv7 identity and points to a revision's UUIDv7
-    // identity. Draw this relationship as a dashed *reference*, never as a
-    // solid immutable revision-parent edge.
+    // Exactly one visible connection enters each branch card. A persisted
+    // creation source takes precedence over a HEAD pointer for presentation:
+    // two simultaneous links made an ordinary fork look like a merge. When
+    // its source branch is unavailable, the immutable HEAD remains the
+    // fallback attachment. The actual HEAD is always retained in the model.
+    QHash<QString, QString> visible_branch_projects;
+    for (const ProjectGraphNode &node : this->nodes)
+        if (node.kind == ProjectGraphNode::Kind::Branch)
+            visible_branch_projects.insert(node.id, node.project_group_id);
     for (const ProjectGraphNode &branch : this->nodes)
     {
         if (branch.kind != ProjectGraphNode::Kind::Branch) continue;
-        const ProjectGraphNode *target = visible_by_id.value(branch.head_revision_id, nullptr);
-        if (target == nullptr || target->kind != ProjectGraphNode::Kind::Revision) continue;
+        const QString parent_id = ProjectBranchVisualLink::parentId(branch, visible_branch_projects);
+        const ProjectGraphNode *target = visible_by_id.value(parent_id, nullptr);
+        if (target == nullptr) continue;
+        const bool is_origin = target->kind == ProjectGraphNode::Kind::Branch;
+        if (!is_origin && target->kind != ProjectGraphNode::Kind::Revision) continue;
         const double sign = this->top_down ? 1.0 : -1.0;
         const QPointF begin = target->position + QPointF(0, sign * nodeRect(*target).height() / 2.0);
         const QPointF end = branch.position - QPointF(0, sign * nodeRect(branch).height() / 2.0);
         QPainterPath path(begin);
-        // The DAG placement uses reference links to reserve distinct lanes.
-        // Full-tree routes avoid passing through neighbouring revision cards.
-        const QVector<QPointF> route = branch.parent_routes.value(target->id);
+        const QVector<QPointF> route = branch.parent_routes.value(parent_id);
         if (route.size() >= 4 && (route.size() - 1) % 3 == 0)
         {
             path = QPainterPath(route.first());
@@ -945,35 +953,10 @@ void ProjectRevisionGraph::paintEvent(QPaintEvent *event)
         else if (std::abs(begin.x() - end.x()) < 0.01) path.lineTo(end);
         else path.cubicTo(begin + QPointF(0, sign * 42.0),
                           end - QPointF(0, sign * 42.0), end);
-        painter.setPen(QPen(tint(QColor(57, 184, 145), 190), 2.2,
-                            Qt::DashLine, Qt::RoundCap));
-        painter.setBrush(Qt::NoBrush);
-        painter.drawPath(path);
-    }
-
-    // Creation provenance is deliberately distinct from a HEAD reference:
-    // blue dashed edge = created from branch, green dashed edge = points to
-    // a revision. Neither is a commit parent edge.
-    for (const ProjectGraphNode &branch : this->nodes)
-    {
-        if (branch.kind != ProjectGraphNode::Kind::Branch
-            || branch.origin_branch_node_id.isEmpty()) continue;
-        const ProjectGraphNode *origin = visible_by_id.value(branch.origin_branch_node_id, nullptr);
-        if (origin == nullptr || origin->kind != ProjectGraphNode::Kind::Branch) continue;
-        const double sign = this->top_down ? 1.0 : -1.0;
-        const QPointF begin = origin->position + QPointF(0, sign * nodeRect(*origin).height() / 2.0);
-        const QPointF end = branch.position - QPointF(0, sign * nodeRect(branch).height() / 2.0);
-        QPainterPath path(begin);
-        const QVector<QPointF> route = branch.parent_routes.value(origin->id);
-        if (route.size() >= 4 && (route.size() - 1) % 3 == 0)
-        {
-            path = QPainterPath(route.first());
-            for (int point = 1; point + 2 < route.size(); point += 3)
-                path.cubicTo(route.at(point), route.at(point + 1), route.at(point + 2));
-        }
-        else path.cubicTo(begin + QPointF(0, sign * 42.0),
-                          end - QPointF(0, sign * 42.0), end);
-        painter.setPen(QPen(tint(QColor(74, 154, 235), 225), 2.2,
+        // Blue: branch-creation provenance. Green: fallback HEAD attachment.
+        painter.setPen(QPen(tint(is_origin ? QColor(74, 154, 235)
+                                       : QColor(57, 184, 145),
+                             is_origin ? 225 : 190), 2.2,
                             Qt::DashLine, Qt::RoundCap));
         painter.setBrush(Qt::NoBrush);
         painter.drawPath(path);

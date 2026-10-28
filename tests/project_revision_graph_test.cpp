@@ -719,6 +719,44 @@ int main(int argc, char **argv)
         if (!require(!graph.nodeViewportPosition(references.at(index).id).isNull(),
                      "heads-only graph hid a branch reference card")) return 1;
 
+    // A branch created from main must have ONE visual source (main), not
+    // separate arrows from main AND the same revision. HEAD remains a real
+    // immutable revision pointer regardless of how the cards are connected.
+    references[4].origin_branch_node_id = references[3].id;
+    references[5].origin_branch_node_id = references[4].id;
+    ProjectGraphPlacement::place(references);
+    if (!require(references[3].parent_routes.size() == 1
+                     && references[3].parent_routes.contains(shared_revision.id)
+                     && references[4].parent_routes.size() == 1
+                     && references[4].parent_routes.contains(references[3].id)
+                     && references[5].parent_routes.size() == 1
+                     && references[5].parent_routes.contains(references[4].id),
+                 "branch creation drew two incoming links or lost its source branch")) return 1;
+    if (!require(references[4].head_revision_id == shared_revision.id
+                     && references[5].head_revision_id == shared_revision.id
+                     && references[4].parents.isEmpty()
+                     && references[5].parents.isEmpty(),
+                 "branch provenance changed the immutable HEAD or revision ancestry")) return 1;
+    if (!require(references[3].position.y() > references[4].position.y()
+                     && references[4].position.y() > references[5].position.y(),
+                 "creation-source branches must precede their children")) return 1;
+    graph.setShowFullTree(true);
+    graph.setNodes(references);
+    graph.fitGraph();
+    for (int index = 3; index < references.size(); ++index)
+        if (!require(!graph.nodeViewportPosition(references[index].id).isNull(),
+                     "branch lineage obscured a selectable branch reference")) return 1;
+
+    // Deleting a persisted origin must not leave the child disconnected or
+    // manufacture a replacement branch. Its HEAD revision is the fallback.
+    references[4].origin_branch_node_id = QStringLiteral("group:branch:deleted");
+    ProjectGraphPlacement::place(references);
+    if (!require(references[4].parent_routes.size() == 1
+                     && references[4].parent_routes.contains(shared_revision.id)
+                     && references[4].origin_branch_node_id
+                         == QStringLiteral("group:branch:deleted"),
+                 "missing origin must fall back to the HEAD revision")) return 1;
+
     // Placement regression: database roots must share one horizontal layer
     // even with very uneven project widths and revision history depths.
     QVector<ProjectGraphNode> compound;

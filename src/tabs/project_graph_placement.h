@@ -1,6 +1,7 @@
 #pragma once
 
 #include "tabs/project_revision_graph.h"
+#include "tabs/project_branch_visual_link.h"
 #include "tabs/project_revision_card_geometry.h"
 #include "graph/layered_dag_layout.h"
 
@@ -51,9 +52,9 @@ struct DatabaseBlock
 
 inline void layoutRevisions(ProjectBlock &block, const QVector<ProjectGraphNode> &nodes)
 {
-    // Branch refs are visual leaves in the layout, NOT revisions. Their
-    // incoming reference links participate in layout/crossing reduction, but
-    // only Kind::Revision.parents represent immutable ancestry.
+    // Branch refs are not revisions. Each uses one visual parent: the
+    // persisted creation-source branch, or its HEAD revision as a fallback.
+    // Only Kind::Revision.parents represent immutable revision ancestry.
     std::vector<AowisGraphLayout::LayeredVertex> vertices;
     const int revision_count = block.revision_indices.size();
     vertices.reserve(std::size_t(revision_count + block.branch_indices.size()));
@@ -72,23 +73,17 @@ inline void layoutRevisions(ProjectBlock &block, const QVector<ProjectGraphNode>
             independently_drawn_heads.contains(revision.id) ? 0 : revision.heads.size());
         vertices.push_back(vertex);
     }
+    QHash<QString, QString> branch_projects;
+    for (int index : block.branch_indices)
+        branch_projects.insert(nodes.at(index).id, nodes.at(index).project_group_id);
     for (int index : block.branch_indices)
     {
         const ProjectGraphNode &branch = nodes.at(index);
         AowisGraphLayout::LayeredVertex vertex;
         vertex.id = branch.id.toStdString();
-        vertex.parents.push_back(branch.head_revision_id.toStdString());
-        if (!branch.origin_branch_node_id.isEmpty())
-        {
-            // The origin may have been deleted from the catalogue. Only
-            // include an existing ref; never invent an ancestry node.
-            for (int candidate_index : block.branch_indices)
-                if (nodes.at(candidate_index).id == branch.origin_branch_node_id)
-                {
-                    vertex.parents.push_back(branch.origin_branch_node_id.toStdString());
-                    break;
-                }
-        }
+        const QString parent_id = ProjectBranchVisualLink::parentId(branch, branch_projects);
+        if (!parent_id.isEmpty())
+            vertex.parents.push_back(parent_id.toStdString());
         vertex.width = 196.0;
         vertex.height = 70.0;
         vertices.push_back(vertex);

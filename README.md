@@ -16,12 +16,16 @@ checkboxes: checked sources contribute projects, branches and revision
 history to the navigator and graph. Each project/revision is identified with
 its source, so the same ID on two servers is not conflated.
 
-The GUI currently **reads projects, branches and up to 100 first-parent
-revisions per branch**, and **creates projects and branches** (including a
-branch from a selected historical revision). It does **not** yet check out
-hydraulic networks, save edited model revisions, rename/delete persisted
-projects or branches, authenticate to the DVMDB REST service, or display a
-fully paged revision DAG. The toolbar Save action remains disabled for DVMDB.
+The **target DVMDB model** separates immutable committed revisions from
+private editable working copies. Project creation yields an unborn `main`
+with no committed revisions. Each branch HEAD points to its latest committed
+revision (or null); independent users edit their own working copies and
+commit with an exact expected-HEAD concurrency check. The central history
+graph is branch-oriented but its ancestry edges connect **committed
+revisions only**. See [Projects workspace](docs/projects-workspace.md),
+[graph contract](docs/project-graph-layout.md) and
+[integration plan](docs/dvmdb-integration-roadmap.md). The corresponding
+native/REST/GUI implementation must satisfy those specifications end to end.
 Built-in examples and the explicitly named demo profiles are a separate
 **in-memory preview**, not stored in DVMDB.
 
@@ -31,8 +35,8 @@ Start here:
   add databases, filter them, verify connectivity and avoid data-root mistakes.
 - [Projects workspace](docs/projects-workspace.md) — what each UI control does
   and what is deliberately read-only.
-- [DVMDB integration status and roadmap](docs/dvmdb-integration-roadmap.md) —
-  implemented capabilities versus remaining work.
+- [DVMDB integration requirements](docs/dvmdb-integration-roadmap.md) —
+  build and acceptance steps for the agreed lifecycle.
 
 The revision graph currently uses a renderer-neutral **QWidget/QPainter**
 implementation. It does not initialize another bgfx device alongside the map.
