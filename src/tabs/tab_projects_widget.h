@@ -47,6 +47,7 @@ struct ProjectPreviewBranch
     QStringList tags;
     QString head;
     QString origin_branch_id; // Source branch UUIDv7 (or preview branch ID), if recorded.
+    QString fork_revision_id; // Exact original fork revision; never an ancestry edge.
 };
 
 struct ProjectPreviewData

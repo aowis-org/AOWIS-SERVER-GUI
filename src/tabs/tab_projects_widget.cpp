@@ -1325,6 +1325,7 @@ void ProjectsWidget::applySourceSnapshot(const QString &source_id, const SourceS
             branch.name = source_branch.name;
             branch.head = source_branch.head;
             branch.origin_branch_id = source_branch.origin_branch_id;
+            branch.fork_revision_id = source_branch.fork_revision_id;
             project.branches.append(branch);
         }
         for (const SourceRevision &source_revision : entry.revisions)
@@ -2243,6 +2244,9 @@ void ProjectsWidget::updateInspector()
                         metadata += tr("\nCreated from branch: %1")
                             .arg(origin_name.isEmpty() ? branch.origin_branch_id : origin_name);
                     }
+                    if (!branch.fork_revision_id.isEmpty())
+                        metadata += tr("\nOriginal fork revision UUIDv7: %1")
+                            .arg(branch.fork_revision_id);
                     if (entry.database_backed)
                     {
                         const QString prefix = entry.id + QStringLiteral(":");

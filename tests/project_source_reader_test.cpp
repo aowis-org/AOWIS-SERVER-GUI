@@ -67,20 +67,26 @@ int main(int argc, char **argv)
             {QStringLiteral("parentRecordHashes"), hashes}};
     };
     const auto head = [&digests](const QString &branch, const QString &branch_id,
-                                  const QString &revision, const QString &origin = {})
+                                  const QString &revision, const QString &origin = {},
+                                  const QString &fork = {})
     {
         return QJsonObject{{QStringLiteral("branch"), branch},
             {QStringLiteral("branchId"), branch_id},
             {QStringLiteral("revision"), revision},
             {QStringLiteral("recordHash"), digests.value(revision)},
             {QStringLiteral("originBranchId"), origin.isEmpty()
-                ? QJsonValue(QJsonValue::Null) : QJsonValue(origin)}};
+                ? QJsonValue(QJsonValue::Null) : QJsonValue(origin)},
+            {QStringLiteral("forkRevisionId"), fork.isEmpty()
+                ? QJsonValue(QJsonValue::Null) : QJsonValue(fork)}};
     };
     QStringList requests;
     bool change_pinned_head = false;
     bool corrupt_parent_hash = false;
     bool corrupt_branch_id = false;
     bool corrupt_origin_id = false;
+    bool corrupt_fork_id = false;
+    bool change_pinned_fork = false;
+    bool unreachable_fork = false;
     bool unborn_project = false;
     bool first_commit_project = false;
     bool invalid_unborn_digest = false;
@@ -92,7 +98,9 @@ int main(int argc, char **argv)
             const std::shared_ptr<QByteArray> buffer = std::make_shared<QByteArray>();
             QObject::connect(socket, &QTcpSocket::readyRead, socket,
                 [socket, buffer, &requests, &change_pinned_head, &corrupt_parent_hash,
-                 &corrupt_branch_id, &corrupt_origin_id, &unborn_project, &first_commit_project,
+                 &corrupt_branch_id, &corrupt_origin_id, &corrupt_fork_id, &change_pinned_fork,
+                 &unreachable_fork,
+                 &unborn_project, &first_commit_project,
                  &invalid_unborn_digest, project_id, a, b, c, d, e, branch_main,
                  branch_feature, branch_alias, branch_history, record, head]
             {
@@ -110,9 +118,9 @@ int main(int argc, char **argv)
                 {
                     const bool second = path.contains("&cursor=page-2");
                     QJsonArray heads{head(QStringLiteral("main"), branch_main, e),
-                                     head(QStringLiteral("Feature Branch"), branch_feature, d, branch_main),
-                                     head(QStringLiteral("alias"), branch_alias, e, branch_feature),
-                                     head(QStringLiteral("archive"), branch_history, b, branch_main)};
+                                     head(QStringLiteral("Feature Branch"), branch_feature, d, branch_main, b),
+                                     head(QStringLiteral("alias"), branch_alias, e, branch_feature, d),
+                                     head(QStringLiteral("archive"), branch_history, b, branch_main, a)};
                     if (first_commit_project)
                         heads = QJsonArray{head(QStringLiteral("main"), branch_main, a)};
                     if (unborn_project)
@@ -127,6 +135,10 @@ int main(int argc, char **argv)
                     }
                     if (second && change_pinned_head)
                         heads[0] = head(QStringLiteral("main"), branch_main, c);
+                    if (second && change_pinned_fork)
+                        heads[1] = head(QStringLiteral("Feature Branch"), branch_feature, d, branch_main, a);
+                    if (unreachable_fork)
+                        heads[3] = head(QStringLiteral("archive"), branch_history, b, branch_main, c);
                     if (corrupt_branch_id)
                     {
                         QJsonObject invalid = heads.at(0).toObject();
@@ -137,6 +149,12 @@ int main(int argc, char **argv)
                     {
                         QJsonObject invalid = heads.at(1).toObject();
                         invalid.insert(QStringLiteral("originBranchId"), 42);
+                        heads[1] = invalid;
+                    }
+                    if (corrupt_fork_id)
+                    {
+                        QJsonObject invalid = heads.at(1).toObject();
+                        invalid.insert(QStringLiteral("forkRevisionId"), 42);
                         heads[1] = invalid;
                     }
                     const QJsonArray revisions = unborn_project ? QJsonArray{}
@@ -191,6 +209,10 @@ int main(int argc, char **argv)
         && project.branches.at(1).name == QStringLiteral("Feature Branch")
         && project.branches.at(1).origin_branch_id == branch_main
         && project.branches.at(2).origin_branch_id == branch_feature
+        && project.branches.at(1).fork_revision_id == b
+        && project.branches.at(2).fork_revision_id == d
+        && project.branches.at(3).fork_revision_id == a
+        && project.branches.first().fork_revision_id.isEmpty()
         && project.branches.at(3).head == b
         && project.revisions.first().id == e
         && project.revisions.first().parents == QStringList({c,d})
@@ -206,6 +228,10 @@ int main(int argc, char **argv)
     if (!require(load() && !failure.isEmpty() && received.projects.isEmpty(),
                  "graph accepted changed branch HEAD during pagination")) return 1;
     change_pinned_head = false;
+    change_pinned_fork = true;
+    if (!require(load() && !failure.isEmpty() && received.projects.isEmpty(),
+                 "graph accepted changed immutable fork revision during pagination")) return 1;
+    change_pinned_fork = false;
     corrupt_parent_hash = true;
     if (!require(load() && !failure.isEmpty() && received.projects.isEmpty(),
                  "graph accepted mismatched parent record SHA")) return 1;
@@ -218,6 +244,14 @@ int main(int argc, char **argv)
     if (!require(load() && !failure.isEmpty() && received.projects.isEmpty(),
                  "graph accepted malformed branch creation provenance")) return 1;
     corrupt_origin_id = false;
+    corrupt_fork_id = true;
+    if (!require(load() && !failure.isEmpty() && received.projects.isEmpty(),
+                 "graph accepted malformed immutable fork revision")) return 1;
+    corrupt_fork_id = false;
+    unreachable_fork = true;
+    if (!require(load() && !failure.isEmpty() && received.projects.isEmpty(),
+                 "graph accepted a fork revision outside the branch ancestry")) return 1;
+    unreachable_fork = false;
 
     unborn_project = true;
     if (!require(load() && failure.isEmpty() && received.projects.size() == 1
@@ -226,6 +260,7 @@ int main(int argc, char **argv)
         && received.projects.first().branches.first().id == branch_main
         && received.projects.first().branches.first().head.isEmpty()
         && received.projects.first().branches.first().record_sha256.isEmpty()
+        && received.projects.first().branches.first().fork_revision_id.isEmpty()
         && received.projects.first().revisions.isEmpty(),
         "unborn project with null HEAD was not accepted")) return 1;
     // An unborn graph must stay empty across refreshes, including when a

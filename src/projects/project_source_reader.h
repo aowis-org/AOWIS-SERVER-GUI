@@ -33,6 +33,7 @@ struct SourceBranch
     QString head;
     QString record_sha256; // Expected canonical record digest of HEAD revision.
     QString origin_branch_id; // Persisted creation-source UUIDv7, if known.
+    QString fork_revision_id; // Immutable creation revision UUIDv7; metadata, not a parent.
 };
 
 struct SourceProject

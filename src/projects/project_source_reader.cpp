@@ -74,6 +74,7 @@ bool parseRevision(const QJsonValue &value, SourceRevision &revision)
 bool validateCompleteGraph(const SourceProject &project)
 {
     QHash<QString, QString> hashes;
+    QHash<QString, QStringList> parent_links;
     QSet<QString> branch_ids;
     QSet<QString> branch_names;
     for (const SourceRevision &revision : project.revisions)
@@ -83,6 +84,7 @@ bool validateCompleteGraph(const SourceProject &project)
             || hashes.contains(revision.id)
             || revision.parents.size() != revision.parent_record_sha256.size()) return false;
         hashes.insert(revision.id, revision.record_sha256);
+        parent_links.insert(revision.id, revision.parents);
     }
     for (const SourceBranch &branch : project.branches)
     {
@@ -92,6 +94,30 @@ bool validateCompleteGraph(const SourceProject &project)
                 ? !branch.record_sha256.isEmpty()
                 : (!DvmdbIdentity::isUuidV7(branch.head)
                    || hashes.value(branch.head) != branch.record_sha256))) return false;
+        if (!branch.fork_revision_id.isEmpty())
+        {
+            if (branch.origin_branch_id.isEmpty()
+                || !DvmdbIdentity::isUuidV7(branch.fork_revision_id)
+                || !hashes.contains(branch.fork_revision_id)) return false;
+            // Fork provenance is metadata, but it must identify a genuine
+            // ancestor of this HEAD. Never turn it into a graph parent edge.
+            QSet<QString> visited;
+            QStringList pending{branch.head};
+            bool reached_fork = false;
+            while (!pending.isEmpty())
+            {
+                const QString revision = pending.takeLast();
+                if (visited.contains(revision)) continue;
+                visited.insert(revision);
+                if (revision == branch.fork_revision_id)
+                {
+                    reached_fork = true;
+                    break;
+                }
+                pending.append(parent_links.value(revision));
+            }
+            if (!reached_fork) return false;
+        }
         branch_names.insert(branch.name);
         branch_ids.insert(branch.id);
     }
@@ -193,10 +219,20 @@ bool loadNativeV2Graph(Service &service, const std::string &project_id,
                         origin = QString::fromStdString(head.originBranchId->toString());
                 if (!origin.isEmpty() && (!DvmdbIdentity::isUuidV7(origin) || origin == branch_id))
                     throw std::runtime_error("Invalid DVMDB branch creation origin");
+                QString fork_revision;
+                // Preserve compatibility with embedded DVMDB versions which
+                // predate immutable fork provenance. Never infer it from HEAD.
+                if constexpr (requires { head.forkRevisionId; })
+                    if (head.forkRevisionId)
+                        fork_revision = QString::fromStdString(head.forkRevisionId->toString());
+                if (!fork_revision.isEmpty() && (origin.isEmpty()
+                    || !DvmdbIdentity::isUuidV7(fork_revision)))
+                    throw std::runtime_error("Invalid DVMDB branch fork revision");
                 current_heads.append(name + QLatin1Char('\n') + branch_id
                                      + QLatin1Char('\n') + revision_id
                                      + QLatin1Char('\n') + digest
-                                     + QLatin1Char('\n') + origin);
+                                     + QLatin1Char('\n') + origin
+                                     + QLatin1Char('\n') + fork_revision);
                 if (first_page)
                 {
                     SourceBranch branch;
@@ -205,6 +241,7 @@ bool loadNativeV2Graph(Service &service, const std::string &project_id,
                     branch.head = revision_id;
                     branch.record_sha256 = digest;
                     branch.origin_branch_id = origin;
+                    branch.fork_revision_id = fork_revision;
                     project.branches.append(branch);
                 }
             }
@@ -505,6 +542,16 @@ bool ProjectSourceReader::processRestDocument(const QByteArray &json, QString &e
                 || branch.origin_branch_id == branch.id)
             { error = tr("Invalid DVMDB branch creation origin."); return false; }
         }
+        const QJsonValue fork = head.value(QStringLiteral("forkRevisionId"));
+        if (!fork.isUndefined() && !fork.isNull())
+        {
+            if (!fork.isString())
+            { error = tr("Invalid DVMDB branch fork revision."); return false; }
+            branch.fork_revision_id = fork.toString();
+            if (!DvmdbIdentity::isUuidV7(branch.fork_revision_id)
+                || branch.origin_branch_id.isEmpty())
+            { error = tr("Invalid DVMDB branch fork revision."); return false; }
+        }
         if (branch.name.isEmpty() || !DvmdbIdentity::isUuidV7(branch.id)
             || (branch.head.isEmpty() ? !branch.record_sha256.isEmpty()
                 : (!DvmdbIdentity::isUuidV7(branch.head)
@@ -530,7 +577,8 @@ bool ProjectSourceReader::processRestDocument(const QByteArray &json, QString &e
                 || page_heads[index].id != project.branches[index].id
                 || page_heads[index].head != project.branches[index].head
                 || page_heads[index].record_sha256 != project.branches[index].record_sha256
-                || page_heads[index].origin_branch_id != project.branches[index].origin_branch_id)
+                || page_heads[index].origin_branch_id != project.branches[index].origin_branch_id
+                || page_heads[index].fork_revision_id != project.branches[index].fork_revision_id)
             { error = tr("DVMDB graph HEADs changed during pagination."); return false; }
     }
     if (revisions.toArray().isEmpty() && !complete.toBool())
