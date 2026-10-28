@@ -1987,11 +1987,22 @@ void ProjectsWidget::beginCreation(bool branch)
             if (const ProjectPreviewBranch *selected = currentBranch())
                 chosen = QStringLiteral("branch:") + selected->name;
         for (const ProjectPreviewBranch &entry : project->branches)
+        {
             this->creation_source->addItem(
                 (entry.head.isEmpty()
                     ? tr("%1 · No commits yet").arg(entry.name)
                     : tr("%1 · HEAD %2").arg(entry.name, DvmdbIdentity::shortLabel(entry.head))),
                 QStringLiteral("branch:") + entry.name);
+            if (project->database_backed && entry.head.isEmpty())
+            {
+                // An unborn HEAD is a valid reference, but not a fork point.
+                // Keep it visible for explanation without offering an invalid write.
+                const int item_index = this->creation_source->count() - 1;
+                if (QStandardItemModel *model = qobject_cast<QStandardItemModel *>(this->creation_source->model()))
+                    if (QStandardItem *item = model->item(item_index))
+                        item->setEnabled(false);
+            }
+        }
         for (const ProjectPreviewRevision &entry : project->revisions)
             this->creation_source->addItem(
                 tr("Revision %1").arg(DvmdbIdentity::shortLabel(entry.id)),
@@ -2082,9 +2093,16 @@ void ProjectsWidget::validateCreation()
                 && sourceBranchForRevision(*project, revision, QString()).isEmpty())
                 error = tr("The selected revision cannot be reached from a branch HEAD.");
         }
-        else if (origin != QStringLiteral("empty")) error = tr("Choose a starting revision.");
+        else if (origin == QStringLiteral("empty"))
+        {
+            if (project != nullptr && project->database_backed)
+                error = tr("Commit the source branch before creating another database branch.");
+        }
+        else if (origin.isEmpty() && project != nullptr && project->database_backed)
+            error = tr("Commit the source branch before creating another database branch.");
+        else error = tr("Choose a starting revision.");
         this->creation_summary->setText(tr("Initial HEAD: %1\n").arg(
-                revision.isEmpty() ? tr("empty revision") : revision)
+                revision.isEmpty() ? tr("No commits yet") : revision)
             + tr("Creating a branch adds a reference only; it does not create a revision."));
     }
     this->creation_error->setText(error);
