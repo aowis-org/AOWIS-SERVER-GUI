@@ -125,7 +125,21 @@ QString writeNativeUuid(Service &service, bool project_operation,
                 ? std::nullopt : std::optional<std::string_view>(source);
             service.createBranchV2(project, new_name, branch);
         }
-        return name;
+        // Native branch creation returns a revision ID, not the new branch ID.
+        // Resolve the durable branch identity from the authoritative graph,
+        // exactly as the REST writer does from its creation response.
+        const aowis::dvmdb::RevisionGraphPageV2 graph = service.revisionGraphV2(project);
+        for (const aowis::dvmdb::RevisionGraphHeadV2 &head : graph.heads)
+        {
+            if (head.name == new_name)
+            {
+                const QString id = QString::fromStdString(head.branchId.toString());
+                if (!DvmdbIdentity::isUuidV7(id))
+                    throw std::runtime_error("DVMDB returned a branch without a UUIDv7 identity");
+                return id;
+            }
+        }
+        throw std::runtime_error("Branch was created, but its UUID could not be resolved; refresh before retrying");
     }
 }
 
