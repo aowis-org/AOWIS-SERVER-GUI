@@ -559,6 +559,21 @@ int main(int argc, char **argv)
                      && creation_summary->text().contains(QStringLiteral("Source branch UUID: "))
                      && !creation_confirm->isEnabled(),
                  "historical fork did not retain its exact revision and source provenance")) return 1;
+    // Branch source choices are keyed by the stable branch identity, not
+    // their mutable human-readable name. The display label remains readable.
+    bool found_main_source = false;
+    for (int index = 0; index < creation_source->count(); ++index)
+    {
+        const QString key = creation_source->itemData(index).toString();
+        if (!key.startsWith(QStringLiteral("branch:"))) continue;
+        if (creation_source->itemText(index).startsWith(QStringLiteral("main ·")))
+        {
+            found_main_source = true;
+            if (!require(key != QStringLiteral("branch:main") && key.size() > 7,
+                         "branch creation source is keyed by a mutable name")) return 1;
+        }
+    }
+    if (!require(found_main_source, "main branch is absent from creation sources")) return 1;
     creation_name->setText(QStringLiteral("from-inspector"));
     app.processEvents();
     if (!require(creation_confirm->isEnabled(),

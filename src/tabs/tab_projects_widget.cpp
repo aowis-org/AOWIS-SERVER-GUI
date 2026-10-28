@@ -1985,14 +1985,14 @@ void ProjectsWidget::beginCreation(bool branch)
             chosen = QStringLiteral("revision:") + this->selected_id;
         else if (this->selection_kind == SelectionKind::Branch)
             if (const ProjectPreviewBranch *selected = currentBranch())
-                chosen = QStringLiteral("branch:") + selected->name;
+                chosen = QStringLiteral("branch:") + selected->id;
         for (const ProjectPreviewBranch &entry : project->branches)
         {
             this->creation_source->addItem(
                 (entry.head.isEmpty()
                     ? tr("%1 · No commits yet").arg(entry.name)
                     : tr("%1 · HEAD %2").arg(entry.name, DvmdbIdentity::shortLabel(entry.head))),
-                QStringLiteral("branch:") + entry.name);
+                QStringLiteral("branch:") + entry.id);
             if (project->database_backed && entry.head.isEmpty())
             {
                 // An unborn HEAD is a valid reference, but not a fork point.
@@ -2012,12 +2012,12 @@ void ProjectsWidget::beginCreation(bool branch)
             for (const ProjectPreviewBranch &entry : project->branches)
                 if (entry.name == QStringLiteral("main"))
                 {
-                    chosen = QStringLiteral("branch:main");
+                    chosen = QStringLiteral("branch:") + entry.id;
                     break;
                 }
         }
         if (chosen.isEmpty() && !project->branches.isEmpty())
-            chosen = QStringLiteral("branch:") + project->branches.first().name;
+            chosen = QStringLiteral("branch:") + project->branches.first().id;
         if (this->creation_source->count() == 0)
             this->creation_source->addItem(tr("Initial empty revision"), QStringLiteral("empty"));
         const int index = this->creation_source->findData(chosen);
@@ -2078,7 +2078,7 @@ void ProjectsWidget::validateCreation()
         if (origin.startsWith(QStringLiteral("branch:")) && project != nullptr)
         {
             for (const ProjectPreviewBranch &entry : project->branches)
-                if (entry.name == origin.mid(7))
+                if (entry.id == origin.mid(7))
                 {
                     revision = entry.head;
                     if (project->database_backed && revision.isEmpty())
@@ -2108,7 +2108,14 @@ void ProjectsWidget::validateCreation()
         {
             QString source_name;
             if (origin.startsWith(QStringLiteral("branch:")))
-                source_name = origin.mid(7);
+            {
+                for (const ProjectPreviewBranch &entry : project->branches)
+                    if (entry.id == origin.mid(7))
+                    {
+                        source_name = entry.name;
+                        break;
+                    }
+            }
             else if (origin.startsWith(QStringLiteral("revision:")))
                 source_name = sourceBranchForRevision(*project, revision, QString());
             for (const ProjectPreviewBranch &entry : project->branches)
@@ -2659,7 +2666,18 @@ void ProjectsWidget::createBranch()
         QString from_revision;
         const QString origin = this->creation_source->currentData().toString();
         if (origin.startsWith(QStringLiteral("branch:")))
-            from_branch = origin.mid(7);
+        {
+            for (const ProjectPreviewBranch &candidate : project->branches)
+                if (candidate.id == origin.mid(7))
+                {
+                    from_branch = candidate.name;
+                    // Pin the HEAD shown in the inspector. Sending only the
+                    // branch name would allow a concurrent HEAD advance to
+                    // silently change the selected immutable fork point.
+                    from_revision = candidate.head;
+                    break;
+                }
+        }
         else if (origin.startsWith(QStringLiteral("revision:")))
         {
             from_revision = origin.mid(9);
@@ -2706,13 +2724,13 @@ void ProjectsWidget::createBranch()
     if (origin.startsWith(QStringLiteral("branch:")))
     {
         for (const ProjectPreviewBranch &candidate : project->branches)
-            if (candidate.name == origin.mid(7)) branch.head = candidate.head;
+            if (candidate.id == origin.mid(7)) branch.head = candidate.head;
     }
     else if (origin.startsWith(QStringLiteral("revision:")))
         branch.head = origin.mid(9);
     if (origin.startsWith(QStringLiteral("branch:")))
         for (const ProjectPreviewBranch &candidate : project->branches)
-            if (candidate.name == origin.mid(7))
+            if (candidate.id == origin.mid(7))
                 branch.origin_branch_id = candidate.id;
     const QString id = branch.id;
     project->branches.append(branch);
