@@ -2067,7 +2067,13 @@ void ProjectsWidget::validateCreation()
         if (origin.startsWith(QStringLiteral("branch:")) && project != nullptr)
         {
             for (const ProjectPreviewBranch &entry : project->branches)
-                if (entry.name == origin.mid(7)) revision = entry.head;
+                if (entry.name == origin.mid(7))
+                {
+                    revision = entry.head;
+                    if (project->database_backed && revision.isEmpty())
+                        error = tr("Commit the source branch before creating another database branch.");
+                    break;
+                }
         }
         else if (origin.startsWith(QStringLiteral("revision:")))
         {
@@ -2618,6 +2624,23 @@ void ProjectsWidget::createBranch()
             }
         }
         else if (!project->branches.isEmpty()) return;
+        if (!from_branch.isEmpty())
+        {
+            bool committed_source = false;
+            for (const ProjectPreviewBranch &candidate : project->branches)
+                if (candidate.name == from_branch && !candidate.head.isEmpty())
+                {
+                    committed_source = true;
+                    break;
+                }
+            if (!committed_source)
+            {
+                this->creation_error->setText(
+                    tr("Commit the source branch before creating another database branch."));
+                updateButtons();
+                return;
+            }
+        }
         const QString project_id = project->backend_id;
         this->source_writer->createBranch(*server, project_id, name, from_branch, from_revision,
             [this, project_id, name](const QString &id, const QString &error)
