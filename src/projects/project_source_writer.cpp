@@ -189,8 +189,8 @@ void ProjectSourceWriter::start(const ProjectServerProfile &profile, Operation o
         if (completion) completion({}, validation);
         return;
     }
-    if (name.trimmed().isEmpty() || (operation == Operation::Branch && project_id.isEmpty())
-        || (!from_revision.isEmpty() && from_branch.isEmpty()))
+    if (name.trimmed().isEmpty()
+        || (operation == Operation::Branch && (project_id.isEmpty() || from_branch.trimmed().isEmpty())))
     {
         if (completion) completion({}, tr("Missing project or branch name/source."));
         return;

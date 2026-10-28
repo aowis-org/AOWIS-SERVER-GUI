@@ -161,6 +161,19 @@ int main(int argc, char **argv)
         && requested_paths.size() == before_rejected,
         "legacy SHA revision was sent to the canonical UUIDv7 writer")) return 1;
 
+    const int before_missing_source = requested_paths.size();
+    done = false;
+    writer.createBranch(profile, project_identity, QStringLiteral("unsourced"), {}, {},
+                        [&](const QString &id, const QString &error)
+    {
+        created = id;
+        failure = error;
+        done = true;
+    });
+    if (!require(done && created.isEmpty() && !failure.isEmpty() && !writer.isBusy()
+                 && requested_paths.size() == before_missing_source,
+                 "branch without an explicit committed source reached DVMDB")) return 1;
+
     profile.auth_mode = QStringLiteral("API token");
     done = false;
     writer.createProject(profile, QStringLiteral("invalid"), [&](const QString &, const QString &error)
