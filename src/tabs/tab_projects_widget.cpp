@@ -1883,7 +1883,9 @@ void ProjectsWidget::updateInspectorTabs()
             for (const ProjectPreviewBranch &branch : project->branches)
             {
                 QListWidgetItem *item = new QListWidgetItem(
-                    tr("%1  ·  HEAD %2").arg(branch.name, DvmdbIdentity::shortLabel(branch.head)),
+                    (branch.head.isEmpty()
+                        ? tr("%1  ·  No commits yet").arg(branch.name)
+                        : tr("%1  ·  HEAD %2").arg(branch.name, DvmdbIdentity::shortLabel(branch.head))),
                     this->inspector_related_list);
                 item->setData(Qt::UserRole, keyFor(QStringLiteral("b"), branch.id));
             }
@@ -1896,6 +1898,12 @@ void ProjectsWidget::updateInspectorTabs()
             const ProjectPreviewBranch *branch = currentBranch();
             if (branch != nullptr)
             {
+                if (branch->head.isEmpty())
+                {
+                    QListWidgetItem *item = new QListWidgetItem(
+                        tr("No commits yet"), this->inspector_related_list);
+                    item->setFlags(item->flags() & ~Qt::ItemIsSelectable & ~Qt::ItemIsEnabled);
+                }
                 QSet<QString> reachable;
                 QStringList remaining{branch->head};
                 QHash<QString, QStringList> parents;
@@ -1980,7 +1988,9 @@ void ProjectsWidget::beginCreation(bool branch)
                 chosen = QStringLiteral("branch:") + selected->name;
         for (const ProjectPreviewBranch &entry : project->branches)
             this->creation_source->addItem(
-                tr("%1 · HEAD %2").arg(entry.name, DvmdbIdentity::shortLabel(entry.head)),
+                (entry.head.isEmpty()
+                    ? tr("%1 · No commits yet").arg(entry.name)
+                    : tr("%1 · HEAD %2").arg(entry.name, DvmdbIdentity::shortLabel(entry.head))),
                 QStringLiteral("branch:") + entry.name);
         for (const ProjectPreviewRevision &entry : project->revisions)
             this->creation_source->addItem(
@@ -2155,9 +2165,11 @@ void ProjectsWidget::updateInspector()
                     name = branch.name;
                     description = branch.description;
                     tags = branch.tags;
-                    metadata = tr("Head revision: %1\nBranch: %2\nRevision identity: %3")
-                        .arg(branch.head, branch.name,
-                             DvmdbIdentity::revisionFormatName(branch.head));
+                    metadata = branch.head.isEmpty()
+                        ? tr("No commits yet\nBranch: %1").arg(branch.name)
+                        : tr("Head revision: %1\nBranch: %2\nRevision identity: %3")
+                            .arg(branch.head, branch.name,
+                                 DvmdbIdentity::revisionFormatName(branch.head));
                     if (!branch.origin_branch_id.isEmpty())
                     {
                         const QString origin_id = entry.database_backed
