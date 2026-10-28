@@ -73,6 +73,14 @@ struct NativeUuidWritesAvailable<Service, std::void_t<
             std::declval<std::string_view>(), std::declval<std::string_view>()))>()))
     >> : std::true_type {};
 
+template <typename Service, typename = void>
+struct NativeUnbornProjectAvailable : std::false_type {};
+
+template <typename Service>
+struct NativeUnbornProjectAvailable<Service, std::void_t<
+    decltype(std::declval<Service &>().createUnbornProjectV2(std::declval<std::string_view>()))
+    >> : std::true_type {};
+
 template <typename Service>
 QString writeNativeUuid(Service &service, bool project_operation,
                         const QString &project_id, const QString &name,
@@ -86,10 +94,17 @@ QString writeNativeUuid(Service &service, bool project_operation,
     {
         if (project_operation)
         {
-            const QString id = QString::fromStdString(service.createProjectV2(name.toStdString()).id);
-            if (!DvmdbIdentity::isUuidV7(id))
-                throw std::runtime_error("DVMDB created a project without a UUIDv7 identity");
-            return id;
+            if constexpr (NativeUnbornProjectAvailable<Service>::value)
+            {
+                const QString id = QString::fromStdString(service.createUnbornProjectV2(name.toStdString()).id);
+                if (!DvmdbIdentity::isUuidV7(id))
+                    throw std::runtime_error("DVMDB created a project without a UUIDv7 identity");
+                return id;
+            }
+            else
+            {
+                throw std::runtime_error("Embedded DVMDB is outdated: unborn project creation is required");
+            }
         }
         if (!DvmdbIdentity::isUuidV7(project_id))
             throw std::runtime_error("Cannot write to an obsolete non-UUIDv7 DVMDB project");
@@ -223,6 +238,8 @@ void ProjectSourceWriter::start(const ProjectServerProfile &profile, Operation o
     if (!root.endsWith(QStringLiteral("/dvmdb/v1"))) root += QStringLiteral("/dvmdb/v1");
     QString path = QStringLiteral("/projects");
     QJsonObject body{{QStringLiteral("name"), name}};
+    if (operation == Operation::Project)
+        body.insert(QStringLiteral("unborn"), true);
     if (operation == Operation::Branch)
     {
         path += QStringLiteral("/") + segment(project_id) + QStringLiteral("/branches");

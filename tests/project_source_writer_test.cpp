@@ -115,7 +115,9 @@ int main(int argc, char **argv)
     if (!require(!writer.isBusy() && failure.isEmpty() && created == project_identity,
                  "project POST did not return the persisted ID")) return 1;
     if (!require(requested_paths.size() == 1 && requested_paths.first() == QStringLiteral("/dvmdb/v1/projects")
-                 && request_bodies.first().value(QStringLiteral("name")) == QStringLiteral("Water Project"),
+                 && request_bodies.first().value(QStringLiteral("name")) == QStringLiteral("Water Project")
+                 && request_bodies.first().value(QStringLiteral("unborn")).isBool()
+                 && request_bodies.first().value(QStringLiteral("unborn")).toBool(),
                  "project POST did not match DVMDB contract")) return 1;
 
     done = false;

@@ -48,6 +48,7 @@ run_suite()
         --test-dir "${build_dir}" \
         --verbose \
         --output-on-failure \
+        --timeout 30 \
         -L '^aowis$'
 }
 

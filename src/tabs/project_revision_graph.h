@@ -162,6 +162,8 @@ private:
     bool top_down = true;
     bool show_full_tree = true;
     bool pending_fit = true;
+    bool automatic_fit = false;
+    bool preserve_camera = false;
     bool has_fitted_content = false; // First visible server/graph content.
     bool has_fitted_catalogue = false; // First actual project catalogue.
     bool dragging = false;

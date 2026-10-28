@@ -88,8 +88,10 @@ bool validateCompleteGraph(const SourceProject &project)
     {
         if (branch.name.isEmpty() || branch_names.contains(branch.name)
             || !DvmdbIdentity::isUuidV7(branch.id) || branch_ids.contains(branch.id)
-            || !DvmdbIdentity::isUuidV7(branch.head)
-            || hashes.value(branch.head) != branch.record_sha256) return false;
+            || (branch.head.isEmpty()
+                ? !branch.record_sha256.isEmpty()
+                : (!DvmdbIdentity::isUuidV7(branch.head)
+                   || hashes.value(branch.head) != branch.record_sha256))) return false;
         branch_names.insert(branch.name);
         branch_ids.insert(branch.id);
     }
@@ -164,11 +166,20 @@ bool loadNativeV2Graph(Service &service, const std::string &project_id,
             {
                 const QString name = QString::fromStdString(head.name);
                 const QString branch_id = QString::fromStdString(head.branchId.toString());
-                const QString revision_id = QString::fromStdString(head.revision.toString());
-                const QString digest = QString::fromStdString(aowis::dvmdb::toHex(head.recordHash));
-                if (name.isEmpty() || !DvmdbIdentity::isLegacySha256(digest)
-                    || !DvmdbIdentity::isUuidV7(branch_id)
-                    || !DvmdbIdentity::isUuidV7(revision_id)
+                const QString revision_id = []<typename Head>(const Head &item) -> QString {
+                    if constexpr (requires { item.revision.has_value(); })
+                        return item.revision ? QString::fromStdString(item.revision->toString()) : QString();
+                    else return QString::fromStdString(item.revision.toString());
+                }(head);
+                const QString digest = []<typename Head>(const Head &item) -> QString {
+                    if constexpr (requires { item.recordHash.has_value(); })
+                        return item.recordHash ? QString::fromStdString(aowis::dvmdb::toHex(*item.recordHash)) : QString();
+                    else return QString::fromStdString(aowis::dvmdb::toHex(item.recordHash));
+                }(head);
+                if (name.isEmpty() || !DvmdbIdentity::isUuidV7(branch_id)
+                    || (revision_id.isEmpty() ? !digest.isEmpty()
+                        : (!DvmdbIdentity::isUuidV7(revision_id)
+                           || !DvmdbIdentity::isLegacySha256(digest)))
                     || current_branch_ids.contains(branch_id)
                     || current_names.contains(name))
                     throw std::runtime_error("Invalid UUIDv7 branch HEAD in native graph");
@@ -475,9 +486,15 @@ bool ProjectSourceReader::processRestDocument(const QByteArray &json, QString &e
         const QJsonObject head = value.toObject();
         SourceBranch branch;
         branch.name = head.value(QStringLiteral("branch")).toString();
-        branch.head = head.value(QStringLiteral("revision")).toString();
+        const QJsonValue head_revision = head.value(QStringLiteral("revision"));
+        const QJsonValue head_digest = head.value(QStringLiteral("recordHash"));
+        if ((!head_revision.isString() && !head_revision.isNull())
+            || (!head_digest.isString() && !head_digest.isNull())
+            || head_revision.isNull() != head_digest.isNull())
+        { error = tr("Invalid nullable DVMDB branch HEAD."); return false; }
+        branch.head = head_revision.toString();
         branch.id = head.value(QStringLiteral("branchId")).toString();
-        branch.record_sha256 = head.value(QStringLiteral("recordHash")).toString();
+        branch.record_sha256 = head_digest.toString();
         const QJsonValue origin = head.value(QStringLiteral("originBranchId"));
         if (!origin.isUndefined() && !origin.isNull())
         {
@@ -489,8 +506,9 @@ bool ProjectSourceReader::processRestDocument(const QByteArray &json, QString &e
             { error = tr("Invalid DVMDB branch creation origin."); return false; }
         }
         if (branch.name.isEmpty() || !DvmdbIdentity::isUuidV7(branch.id)
-            || !DvmdbIdentity::isUuidV7(branch.head)
-            || !DvmdbIdentity::isLegacySha256(branch.record_sha256)
+            || (branch.head.isEmpty() ? !branch.record_sha256.isEmpty()
+                : (!DvmdbIdentity::isUuidV7(branch.head)
+                   || !DvmdbIdentity::isLegacySha256(branch.record_sha256)))
             || names.contains(branch.name))
         { error = tr("Invalid or repeated DVMDB branch HEAD."); return false; }
         names.insert(branch.name);

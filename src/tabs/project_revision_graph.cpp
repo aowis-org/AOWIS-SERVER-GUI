@@ -88,7 +88,11 @@ ProjectRevisionGraph::ProjectRevisionGraph(QWidget *parent)
     connect(&this->initial_fit_timer, &QTimer::timeout, this, [this]()
     {
         if (this->pending_fit && isVisible())
+        {
+            this->automatic_fit = true;
             fitGraph();
+            this->automatic_fit = false;
+        }
     });
     // Navigation bindings are shared with the map, but no overlay or
     // hover tooltip is drawn over the revision graph.
@@ -469,8 +473,19 @@ void ProjectRevisionGraph::setNodes(const QVector<ProjectGraphNode> &nodes)
     // once. Later refreshes, clicks and selection-driven rebuilds only clamp.
     const bool has_catalogue = std::any_of(this->nodes.cbegin(), this->nodes.cend(),
         [](const ProjectGraphNode &node) { return node.kind != ProjectGraphNode::Kind::Server; });
-    if ((!this->has_fitted_content && !this->nodes.isEmpty())
-        || (has_catalogue && !this->has_fitted_catalogue))
+    if (!this->preserve_camera && !same_layout && this->has_fitted_content
+        && !this->nodes.isEmpty() && isVisible())
+    {
+        // Replacing an already visible graph must establish its new camera
+        // synchronously: callers query node viewport positions immediately.
+        // The deferred timer remains responsible for startup layout settling.
+        this->automatic_fit = true;
+        fitGraph();
+        this->automatic_fit = false;
+    }
+    else if ((!this->has_fitted_content && !this->nodes.isEmpty())
+             || (has_catalogue && !this->has_fitted_catalogue)
+             || (!this->preserve_camera && !same_layout && !this->nodes.isEmpty()))
         scheduleInitialFit();
     else if (this->pending_fit)
         scheduleInitialFit();
@@ -698,6 +713,8 @@ void ProjectRevisionGraph::scheduleInitialFit()
 
 void ProjectRevisionGraph::fitGraph()
 {
+    if (!this->automatic_fit)
+        this->preserve_camera = true;
     if (!isVisible() || width() <= 0 || height() <= 0)
     {
         scheduleInitialFit();
@@ -740,7 +757,7 @@ void ProjectRevisionGraph::showEvent(QShowEvent *event)
 void ProjectRevisionGraph::resizeEvent(QResizeEvent *event)
 {
     QWidget::resizeEvent(event);
-    if (this->pending_fit)
+    if (this->pending_fit || (!this->preserve_camera && this->has_fitted_content))
     {
         // The first geometry may still be the placeholder size. Wait until
         // the last startup resize before applying the initial camera fit.
@@ -1257,6 +1274,7 @@ void ProjectRevisionGraph::mouseMoveEvent(QMouseEvent *event)
         const qint64 elapsed_ms = this->drag_elapsed.restart();
         if (this->dragging && !delta.isNull())
         {
+            this->preserve_camera = true;
             const QPointF before_pan = this->offset;
             this->offset += delta;
             this->zoom_anchor += delta;
@@ -1345,6 +1363,7 @@ void ProjectRevisionGraph::wheelEvent(QWheelEvent *event)
         ? event->angleDelta().y() / 120.0 : event->pixelDelta().y() / 240.0;
     if (std::isfinite(steps) && std::abs(steps) > 1e-9)
     {
+        this->preserve_camera = true;
         setZoomAnchor(event->position());
         this->zoom_motion.addImpulse(std::log2(this->zoom), steps * 0.5);
         startNavigation();
@@ -1434,6 +1453,7 @@ void ProjectRevisionGraph::keyPressEvent(QKeyEvent *event)
         return;
     }
 
+    this->preserve_camera = true;
     this->key_fast = event->modifiers().testFlag(Qt::ShiftModifier);
     if (!*key)
     {

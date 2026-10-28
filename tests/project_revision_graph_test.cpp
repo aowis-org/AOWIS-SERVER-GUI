@@ -298,6 +298,7 @@ int main(int argc, char **argv)
     ProjectRevisionGraph *first_show_graph = new ProjectRevisionGraph(&graph_page);
     page_layout.addWidget(first_show_graph);
     ProjectGraphNode start_node = latest;
+    start_node.position = QPointF(0.0, 0.0);
     start_node.parents.clear();
     ProjectGraphNode end_node = previous;
     end_node.position = QPointF(0.0, 500.0);
@@ -308,7 +309,7 @@ int main(int argc, char **argv)
     waitFor(110); // dock/splitter startup geometry must settle before fitting
     const double expected_fit = qBound(0.25,
         qMin((first_show_graph->width() - 32.0) / (224.0 + 152.0),
-             (first_show_graph->height() - 32.0) / (500.0 + 84.0 + 170.0)), 1.5);
+             (first_show_graph->height() - 32.0) / (500.0 + ProjectRevisionCardGeometry::height(1) + 170.0)), 1.5);
     if (!require(std::abs(first_show_graph->zoomFactor() - expected_fit) < 0.02,
                  "initial graph was not fitted after the page received its final size"))
         return 1;
@@ -328,7 +329,7 @@ int main(int argc, char **argv)
     waitFor(110);
     const double late_fit = qBound(0.25,
         qMin((late_graph->width() - 32.0) / (224.0 + 152.0),
-             (late_graph->height() - 32.0) / (500.0 + 84.0 + 170.0)), 1.5);
+             (late_graph->height() - 32.0) / (500.0 + ProjectRevisionCardGeometry::height(1) + 170.0)), 1.5);
     if (!require(std::abs(late_graph->zoomFactor() - late_fit) < 0.02,
                  "initial fit used stale geometry after a delayed page resize"))
         return 1;

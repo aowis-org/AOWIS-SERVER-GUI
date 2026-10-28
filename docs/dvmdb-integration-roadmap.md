@@ -92,6 +92,10 @@ remain deferred; private HTTP editing requires deployment isolation.
 the approved DG-04 migration policy is applied; no UI operation is built
 on unverified backend shapes.
 
+VC-00 source/contract baseline: see
+[`vc00-baseline.md`](vc00-baseline.md). GUI nullable-HEAD implementation
+remains gated on the native/REST contract update.
+
 ### VC-01 — Unborn projects and null HEAD display
 
 **Needs:** backend VC-01. **GUI work:**

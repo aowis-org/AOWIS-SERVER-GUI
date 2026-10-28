@@ -81,6 +81,8 @@ int main(int argc, char **argv)
     bool corrupt_parent_hash = false;
     bool corrupt_branch_id = false;
     bool corrupt_origin_id = false;
+    bool unborn_project = false;
+    bool invalid_unborn_digest = false;
     QObject::connect(&server, &QTcpServer::newConnection, &server, [&]
     {
         while (server.hasPendingConnections())
@@ -89,7 +91,8 @@ int main(int argc, char **argv)
             const std::shared_ptr<QByteArray> buffer = std::make_shared<QByteArray>();
             QObject::connect(socket, &QTcpSocket::readyRead, socket,
                 [socket, buffer, &requests, &change_pinned_head, &corrupt_parent_hash,
-                 &corrupt_branch_id, &corrupt_origin_id, project_id, a, b, c, d, e, branch_main,
+                 &corrupt_branch_id, &corrupt_origin_id, &unborn_project,
+                 &invalid_unborn_digest, project_id, a, b, c, d, e, branch_main,
                  branch_feature, branch_alias, branch_history, record, head]
             {
                 buffer->append(socket->readAll());
@@ -109,6 +112,16 @@ int main(int argc, char **argv)
                                      head(QStringLiteral("Feature Branch"), branch_feature, d, branch_main),
                                      head(QStringLiteral("alias"), branch_alias, e, branch_feature),
                                      head(QStringLiteral("archive"), branch_history, b, branch_main)};
+                    if (unborn_project)
+                    {
+                        heads = QJsonArray{QJsonObject{{QStringLiteral("branch"), QStringLiteral("main")},
+                            {QStringLiteral("branchId"), branch_main},
+                            {QStringLiteral("revision"), QJsonValue(QJsonValue::Null)},
+                            {QStringLiteral("recordHash"), invalid_unborn_digest
+                                ? QJsonValue(QString(64, QLatin1Char('a')))
+                                : QJsonValue(QJsonValue::Null)},
+                            {QStringLiteral("originBranchId"), QJsonValue(QJsonValue::Null)}}};
+                    }
                     if (second && change_pinned_head)
                         heads[0] = head(QStringLiteral("main"), branch_main, c);
                     if (corrupt_branch_id)
@@ -123,14 +136,14 @@ int main(int argc, char **argv)
                         invalid.insert(QStringLiteral("originBranchId"), 42);
                         heads[1] = invalid;
                     }
-                    const QJsonArray revisions = second
+                    const QJsonArray revisions = unborn_project ? QJsonArray{} : second
                         ? QJsonArray{record(b, {a}), record(a, {})}
                         : QJsonArray{record(e, {c,d}, corrupt_parent_hash),
                                      record(c, {b}), record(d, {b})};
                     body = QJsonDocument(QJsonObject{{QStringLiteral("heads"), heads},
                         {QStringLiteral("revisions"), revisions},
-                        {QStringLiteral("complete"), second},
-                        {QStringLiteral("nextCursor"), second ? QJsonValue(QJsonValue::Null)
+                        {QStringLiteral("complete"), unborn_project || second},
+                        {QStringLiteral("nextCursor"), (unborn_project || second) ? QJsonValue(QJsonValue::Null)
                             : QJsonValue(QStringLiteral("page-2"))}}).toJson();
                 }
                 else body = R"({"error":"unknown route"})";
@@ -201,6 +214,21 @@ int main(int argc, char **argv)
     if (!require(load() && !failure.isEmpty() && received.projects.isEmpty(),
                  "graph accepted malformed branch creation provenance")) return 1;
     corrupt_origin_id = false;
+
+    unborn_project = true;
+    if (!require(load() && failure.isEmpty() && received.projects.size() == 1
+        && received.projects.first().graph_complete
+        && received.projects.first().branches.size() == 1
+        && received.projects.first().branches.first().id == branch_main
+        && received.projects.first().branches.first().head.isEmpty()
+        && received.projects.first().branches.first().record_sha256.isEmpty()
+        && received.projects.first().revisions.isEmpty(),
+        "unborn project with null HEAD was not accepted")) return 1;
+    invalid_unborn_digest = true;
+    if (!require(load() && !failure.isEmpty() && received.projects.isEmpty(),
+        "unborn branch accepted a non-null record digest")) return 1;
+    invalid_unborn_digest = false;
+    unborn_project = false;
 
     if (!require(DvmdbIdentity::isUuidV7(a)
         && !DvmdbIdentity::isUuidV7(QStringLiteral("018f84c0-0000-4000-8000-000000000001"))

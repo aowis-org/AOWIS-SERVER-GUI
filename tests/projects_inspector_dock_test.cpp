@@ -3,6 +3,7 @@
 #include "config/gui_configuration.h"
 #include "config/project_server_profile_storage.h"
 
+#include <QAbstractButton>
 #include <QApplication>
 #include <QDockWidget>
 #include <QComboBox>
@@ -582,6 +583,9 @@ int main(int argc, char **argv)
         QStringLiteral("projectsGraphFitButton"));
     if (!require(fit_button != nullptr, "Fit graph control is missing"))
         return 1;
+    // Graph layout changes can schedule a deferred initial fit. Compare only
+    // after that fit has completed, not during the settling interval.
+    waitFor(110);
     const double startup_zoom = graph->zoomFactor();
     const QPointF startup_head = graph->revisionViewportPosition(head_id);
     fit_button->click();
@@ -995,22 +999,50 @@ int main(int argc, char **argv)
     if (!require(delete_action->text() == QStringLiteral("Delete project…"),
                  "inspector project deletion is not available"))
         return 1;
-    QTimer::singleShot(0, []
+    bool confirmed_deletion = false;
+    QTimer confirmation_timer;
+    confirmation_timer.setInterval(1);
+    QObject::connect(&confirmation_timer, &QTimer::timeout, [&]
     {
         for (QWidget *widget : QApplication::topLevelWidgets())
         {
             QMessageBox *confirmation = qobject_cast<QMessageBox *>(widget);
-            if (confirmation != nullptr && confirmation->isVisible())
-                confirmation->done(QMessageBox::Yes);
+            if (confirmation != nullptr && confirmation->isVisible()
+                && confirmation->windowTitle() == QStringLiteral("Delete from preview"))
+            {
+                confirmed_deletion = true;
+                confirmation_timer.stop();
+                if (QAbstractButton *yes = confirmation->button(QMessageBox::Yes))
+                    yes->click();
+                else
+                    confirmation->done(QMessageBox::Yes);
+                return;
+            }
         }
     });
+    confirmation_timer.start();
     delete_action->click();
-    app.processEvents();
-    if (!require(delete_projects->topLevelItemCount() == 1
-                     && delete_projects->topLevelItem(0)->text(0)
-                        == QStringLiteral("Sample North Network"),
-                 "inspector Delete project action did not remove the preview project"))
+    confirmation_timer.stop();
+    if (!require(confirmed_deletion, "inspector Delete project confirmation was not displayed"))
         return 1;
+    app.processEvents();
+    bool deleted_project_present = false;
+    bool retained_project_present = false;
+    QStringList project_keys_after_delete;
+    for (QTreeWidgetItemIterator it(delete_projects); *it; ++it)
+    {
+        const QString key = (*it)->data(0, Qt::UserRole).toString();
+        if (key.startsWith(QStringLiteral("p:"))) project_keys_after_delete.append(key);
+        if (key == QStringLiteral("p:preview-south")) deleted_project_present = true;
+        if (key == QStringLiteral("p:preview-north")) retained_project_present = true;
+    }
+    if (deleted_project_present || !retained_project_present)
+    {
+        std::fprintf(stderr, "projects_inspector_dock: project IDs after deletion: %s\n",
+                     project_keys_after_delete.join(QStringLiteral(", ")).toUtf8().constData());
+        if (!require(false, "inspector Delete project action did not remove the preview project"))
+            return 1;
+    }
 
     // The compact + opens the inspector; only Create persists a full profile.
     add_server->click();
@@ -1053,15 +1085,43 @@ int main(int argc, char **argv)
     // Deletion must remove the profile from disk, without deleting any DVMDB data.
     servers->setCurrentItem(servers->topLevelItem(2));
     app.processEvents();
-    QTimer::singleShot(0, []
+    if (!require(delete_in_inspector->isVisible()
+                     && delete_in_inspector->text() == QStringLiteral("Delete database…"),
+                 "newly created database profile was not selected for deletion"))
+        return 1;
+    bool confirmed_server_deletion = false;
+    QTimer server_confirmation_timer;
+    server_confirmation_timer.setInterval(1);
+    QObject::connect(&server_confirmation_timer, &QTimer::timeout, [&]
     {
-        if (QMessageBox *confirmation = qobject_cast<QMessageBox *>(QApplication::activeModalWidget()))
-            confirmation->done(QMessageBox::Yes);
+        for (QWidget *widget : QApplication::topLevelWidgets())
+        {
+            QMessageBox *confirmation = qobject_cast<QMessageBox *>(widget);
+            if (confirmation == nullptr || !confirmation->isVisible()
+                || confirmation->windowTitle() != QStringLiteral("Delete database profile"))
+                continue;
+            if (QAbstractButton *yes = confirmation->button(QMessageBox::Yes))
+            {
+                confirmed_server_deletion = true;
+                server_confirmation_timer.stop();
+                yes->click();
+            }
+            return;
+        }
     });
+    server_confirmation_timer.start();
     delete_in_inspector->click();
+    server_confirmation_timer.stop();
+    if (!require(confirmed_server_deletion,
+                 "database profile deletion confirmation was not accepted"))
+        return 1;
     app.processEvents();
-    if (!require(servers->topLevelItemCount() == 2
-                     && loadProjectServerProfiles().size() == 2,
+    const QList<ProjectServerProfile> saved_servers = loadProjectServerProfiles();
+    bool added_server_remains = false;
+    for (const ProjectServerProfile &profile : saved_servers)
+        if (profile.name == QStringLiteral("Added server")) added_server_remains = true;
+    if (!require(servers->topLevelItemCount() == 2 && saved_servers.size() == 2
+                     && !added_server_remains,
                  "server deletion was not persisted"))
         return 1;
 
