@@ -1,6 +1,8 @@
 # Projects graph — Git-style committed revision DAG
 
-**Normative GUI design.** The revision graph follows
+**Normative GUI design.** The practical graph cutover is milestone VC-09
+of the [GUI implementation roadmap](dvmdb-integration-roadmap.md).
+The revision graph follows
 `AOWIS-SERVER-DVMDB/docs/version-control-semantics.md`. The graph is a
 visualization of **committed history organized into development branches**,
 not a tree of branch-creation events and not a view of mutable editor state.

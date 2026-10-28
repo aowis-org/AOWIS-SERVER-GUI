@@ -4,6 +4,8 @@
 [DVMDB personal repository contract](../../AOWIS-SERVER-DVMDB/docs/private-working-repositories.md),
 [Projects workspace](projects-workspace.md), and
 [security backlog](../../AOWIS-SERVER-DVMDB/docs/security-permissions-design.md).
+The [GUI implementation roadmap](dvmdb-integration-roadmap.md) lists the
+backend prerequisites, per-user configuration work, decision gates and tests.
 Actual configuration names and widgets are to be implemented; example field
 names below are proposed logical keys, not a claim that these keys work today.
 

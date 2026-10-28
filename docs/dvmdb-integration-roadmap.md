@@ -1,101 +1,412 @@
-# DVMDB / GUI integration requirements and delivery order
+# AOWIS-SERVER-GUI / DVMDB version-control implementation roadmap
 
-This is the execution plan for the [version-control contract](../../AOWIS-SERVER-DVMDB/docs/version-control-semantics.md),
-[Projects workspace](projects-workspace.md),
-[Git-style commit graph](project-graph-layout.md), and
-[private working repo configuration](working-repository-configuration.md).
-It defines requirements,
-not claims that every workflow is already implemented.
+**Canonical implementation and thread-handoff plan. This is a specification,
+not a statement that all described functionality already exists.**
 
-## Foundation: common native and REST identity model
+Use this alongside [Projects workspace](projects-workspace.md),
+[Git-style history graph](project-graph-layout.md),
+[working-repository configuration](working-repository-configuration.md),
+and [DVMDB quickstart](dvmdb-quickstart.md). The matching backend plan is
+`AOWIS-SERVER-DVMDB/docs/roadmap.md`; both use the **same VC-xx milestone
+IDs** and **DG-xx decision gates**. New implementation threads should be able
+to work from these documents and the latest uploaded repository snapshots
+without reopening the entire design discussion.
 
-- Use real project, branch, committed-revision and private working-copy UUIDv7s.
-- Carry canonical SHA-256 digest and Merkle roots separately from UUIDs.
-- Carry branch creation source UUID and exact fork revision UUID.
-- Support **unborn branch HEADs** explicitly: `null` means no commits yet.
-- Make all project-wide graph pages snapshot-consistent with both merge parents
-  and exact branch HEADs. Never display a graph assembled from incompatible
-  generations or invented identities.
+## A. The fixed user-visible model
 
-## Step 1 — Project/branch lifecycle and graph
+- **Database/source:** an embedded DVMDB or a configured HTTP DVMDB. Shared
+  project sources are distinct from the **user's private working repo**.
+- **Project:** one UUIDv7 model-history container, initially `main` with
+  **no committed HEAD and no revision node** (an unborn branch).
+- **Branch:** UUIDv7 name/reference to a latest **committed immutable**
+  revision or explicit null. It advances on Commit in a personal DVMDB or
+  Publish in the shared DVMDB. Branch creation does not itself create a commit.
+- **Revision/commit:** immutable UUIDv7 identity, complete Merkle-protected
+  model state, SHA-256 record hash, zero/one/two real parent revisions.
+- **Working copy:** a **separate private editable** UUIDv7 model state, saved
+  durably in the user's working DVMDB; never called a committed revision.
+- **Save draft:** persists only the private working copy. **Commit locally:**
+  creates an immutable commit and conditionally advances only the local
+  branch HEAD. **Publish:** conditionally advances the separately identified
+  shared branch after verified history transfer. **Fetch:** reads remote
+  history/tracking without altering private drafts or silently moving local
+  HEADs. **Reconcile:** explicit user action on stale histories.
+- **Graph:** one Git-style committed revision DAG. Revision-parent edges
+  only. Branch names/HEAD status decorate the referenced immutable commits;
+  layout lanes are not ownership. Unborn branches and empty projects are
+  visible; private drafts do not appear as committed revision cards.
+- **Branch provenance:** source branch UUID and precise immutable fork UUID
+  are displayed in the inspector, not an additional graph ancestry edge.
+- **Permissions:** intentionally a separate later design; private HTTP
+  services **must be deployment-isolated** until proper authorization exists.
 
-1. `Create project` creates `main` with no committed revision. Remove any
-   implicit empty-root revision publication from both native and REST.
-2. `Create branch` from a committed revision records exact fork metadata,
-   creates no revision and does not alter the source HEAD. A request based
-   on uncommitted edits explicitly offers commit-first or fork-without-edits.
-3. Present one **Git-style committed revision DAG**, where optional visual
-   lanes route real ancestry edges and branch names label their HEAD tips.
-   Never duplicate shared committed revisions, invent branch ancestry edges,
-   or show branch-reference cards as revision vertices.
-4. Show empty branches/projects with `No commits yet`, never fake R0.
-5. Selecting any source/project/branch/revision must only inspect it; graph
-   camera and source filtering must not alter version control state.
+No code patch may substitute the earlier fabricated empty revision, a
+writable shared HEAD, two ancestry parents for a branch reference, or a
+branch card as a fake committed revision. UUIDv7 is identity; SHA-256 is
+integrity. Names can include spaces and supported UTF-8.
 
-## Step 2 — Personal working DVMDB repositories and private working copies
+## B. Unresolved narrow contracts — decision gates
 
-1. Add explicit, validated personal working-repository configuration:
-   Standalone uses built-in DVMDB, basic GUI and browser/web GUI require a
-   user's **private HTTP DVMDB**. Shared project sources are distinct.
-2. Implement fetch/checkout into the working repo, local/remote tracking
-   refs and durable private drafts. An unavailable working repo disables
-   editing, not published-history browsing.
-3. Provide draft recovery and separate Save, Commit locally and Publish
-   actions. A configured private HTTP URL alone is not access control.
+These are the **only design questions that must be resolved in the relevant
+implementation milestone**. Defaults below are proposals, not pre-approved
+format/API changes. Resolve the matching DG-xx in DVMDB's roadmap before
+implementing an incompatible client assumption.
 
-### Individual working-copy requirements
+| Gate | Before GUI milestone | What must be fixed |
+|---|---|---|
+| **DG-01: identity/tracking** | VC-03, VC-06 | Separate repository identity from project UUID and branch UUID; persist an explicit mapping from one private local branch ref to one remote repository/project/branch ref. Proposed: local and remote refs have distinct UUIDs, immutable commits retain UUIDs. GUI must never match by branch display name alone. |
+| **DG-02: draft/session concurrency** | VC-04 | How one user's multiple GUI sessions reopen or edit drafts. Proposed: each session creates its own draft UUID by default, with version-checked Save when deliberately reopening the same draft; recovery and retention must be explicit. |
+| **DG-03: uncertain writes** | VC-05, VC-07 | Operation UUID, request digest, durable status lookup, payload-mismatch rejection and retry/retention rules. GUI must not generate a fresh Commit or Publish request after a timeout without querying status. |
+| **DG-04: current repository compatibility** | VC-01, VC-11 | What to do with snapshots whose project creation already generated R0; proposed: explicit verified conversion/backup or fail-closed fresh initialization. Never relabel or silently delete an existing committed UUID. |
+| **DG-05: reconciliation UX scope** | VC-08 | Initial supported resolution: explicit fetch, fast-forward and interactive three-way merge; no unapproved automatic rebase, force push or last-writer-wins. Full hydraulic validation still required. |
+| **DG-06: first remote branch mapping** | VC-06, VC-07 | How to explicitly create/map shared refs during first Publish (including expected remote `null`), without guessing a target from project/branch labels. |
 
-1. Implement network discovery and checkout of a **fixed committed revision**
-   (or a first empty model checkout for an unborn branch).
-2. Give each editing session its **own UUIDv7 working copy**, linked to
-   project, branch, owner/session and exact base revision/null.
-3. Keep working changes recoverable across temporary disconnection,
-   refresh and GUI navigation. Never use server branch HEAD as an editor's
-   mutable model object.
-4. Separate `Discard my draft` from version-control operations that would
-   move the branch HEAD.
+Security/permissions (VC-12) is a separately tracked design phase. A
+configured personal HTTP URL is **not proof of ownership**.
 
-## Step 3 — Local commit and remote publication with optimistic concurrency
+## C. Milestone order and concrete GUI work
 
-1. Validate full model references and hydraulic semantics on the candidate
-   snapshot or deterministic change set.
-2. **Commit locally** in the personal repository with exact expected
-   local HEAD/null, working-copy identity and idempotency key.
-3. **Publish** verified immutable commits and conditionally advance the
-   shared branch from its separately pinned expected remote HEAD/null.
-4. A stale local Commit retains the draft. A stale remote Publish retains
-   both the already-committed local history and private drafts; offer
-   fetch, explicit reconciliation/merge and safe re-publication.
-5. After ambiguous local or remote timeout, query the corresponding
-   repository's authoritative operation status before retrying.
+### VC-00 — Current baseline, API inventory and acceptance matrix
 
-## Step 4 — Merge, sync and permission-aware workflows
+**Dependency:** none. **Backend:** its VC-00 inventory. **GUI work:**
 
-- Merge pinned committed histories in the personal repository, publishing
-  the validated two-parent revision (or an eligible fast-forward) by an
-  explicit conditional update of the shared target branch.
-- Replication bundles preserve branch UUIDs, immutable fork provenance,
-  nullable HEADs, revision UUIDs, parent IDs and integrity bindings.
-- Authentication, per-project rights, working-copy ownership and auditing
-  require a dedicated later AOWIS-wide design. Until implemented, private
-  HTTP working repositories must be isolated by deployment controls; see
-  [security backlog](../../AOWIS-SERVER-DVMDB/docs/security-permissions-design.md).
+1. Inventory `src/projects/project_source_reader.*`,
+   `project_source_writer.*`, `src/tabs/tab_projects_widget.*`,
+   `src/tabs/project_revision_graph.*`, `src/graph/layered_dag_layout.h`,
+   project-profile/config code, network import and the existing test suite.
+2. Map every GUI assumption that all branch HEADs are non-null, a project
+   always owns R0, a branch ID can be formed from its name, branch cards are
+   revision nodes, or every source is also a writable working repository.
+3. Agree on one native/REST DVMDB API revision and submodule baseline;
+   audit Qt desktop, Standalone and browser/web build capabilities and
+   network transport boundaries separately.
+4. Capture reproducible current UI, graph and data-flow baselines. Create
+   initially failing acceptance tests from section E below rather than
+   assuming an earlier patch has already been applied.
 
-## GUI acceptance gates
+**Exit:** source file/API matrix and DVMDB/GUI build prerequisites listed;
+DG-04 direction selected; no UI operation built on unverified backend shapes.
 
-- An empty project displays `main`, zero committed revision cards and an
-  available private checkout action.
-- Two users start from shared R7 in separate working DVMDBs. Both may
-  commit locally, but only a compatible conditional remote Publish advances
-  shared `main`; rejection preserves local commits and drafts.
-- Branching from R7 preserves an exact fork point, without a new revision.
-- Independent branch commits show actual DAG divergence; merges have two
-  true revision-parent edges.
-- Names with spaces and valid UTF-8, stable UUIDv7 identity and canonical
-  SHA-256 verification work identically in embedded and REST modes.
-- Inspector and navigator display ownership/provenance without creating
-  extra graph ancestry lines or forcing the sidebar wider.
+### VC-01 — Unborn projects and null HEAD display
 
-See the [practical connection guide](dvmdb-quickstart.md). The GUI is complete
-for this design only when native/REST integration and its Qt regression suite
-pass these behaviors end to end.
+**Needs:** backend VC-01. **GUI work:**
+
+1. Update native and REST project-source readers to preserve a real UUIDv7
+   branch with `headRevisionId: null`, not a fake all-zero or empty-revision
+   UUID; reject malformed graph pages, changing pinned HEADs and missing
+   parents. Graph pages for an empty project are valid and complete.
+2. Show selected database and project nodes even with zero revisions. Show
+   unborn `main` with **No commits yet** and a disabled branch-from-revision
+   action until the first real commit exists.
+3. Preserve an empty graph after refresh, reconnect and source switching.
+   Navigation, selection and inspector updates never auto-create revisions.
+4. Test native/REST parity, creation via inspector, zero-history graph,
+   multiple databases and offline/error states.
+
+**Exit:** first project has zero immutable revision cards in all modes;
+round-trip reload is accurate and the creation UI does not invent R0.
+
+### VC-02 — Creating branches from exact immutable revisions
+
+**Needs:** backend VC-02. **GUI work:**
+
+1. Use full project/branch/revision UUIDs as action targets and selection
+   keys. Source names are labels, not identifiers. Prefer selecting an exact
+   committed revision (possibly reached from another branch's history).
+2. In the compact tabbed inspector, create a branch with validated name,
+   selected source branch UUID (when relevant), and exact committed fork
+   revision UUID. Show source identity/hash before confirmation.
+3. Do not create a branch from an unborn HEAD. When a draft contains edits,
+   make the choice explicit: Commit locally first, or fork from the latest
+   committed base **without** draft changes; never silently commit drafts.
+4. Refresh from the authoritative backend and select the resulting new
+   branch UUID. Its creation does not add a revision vertex or DAG edge.
+
+**Exit:** correct provenance after rename/restart, no extra commit on branch
+creation, UTF-8 labels with spaces, native/REST parity.
+
+### VC-03 — Personal repository configuration and tracking identity
+
+**Needs:** backend VC-03, DG-01 and DG-06. **GUI work:**
+
+1. Add one explicit *personal working repository* profile per active user,
+   configured separately from read-only/shared source profiles. Standalone
+   uses the persistent built-in DVMDB; desktop/basic and browser/web need a
+   configured, reachable private HTTP DVMDB endpoint and repository UUID.
+2. Verify expected working-repository identity on connection and reconnect,
+   reject mismatched endpoints or projects; never silently use the currently
+   checked shared server as the personal working repo.
+3. Store source identity and local/remote branch tracking relationships
+   without treating project UUID, branch names or source label as a global
+   mutable-HEAD identifier.
+4. Make missing/failed private HTTP repo a visible **read-only editing
+   disabled** state; do not save drafts to browser memory or shared DVMDB as
+   a fallback. Never write credentials into plain-text config or logs.
+5. Add settings/restart/connection-state tests, including multiple shared
+   sources with one personal working DVMDB.
+
+**Exit:** every editor path knows exactly which persistent private DVMDB it
+will use, and no read-only navigation operation changes that selection.
+
+### VC-04 — Private checkout, draft editing and crash recovery
+
+**Needs:** backend VC-04, DG-02. **GUI work:**
+
+1. Checkout a pinned revision UUID or explicit unborn `main` into a
+   dedicated UUIDv7 working copy **inside the personal DVMDB**.
+2. Wire EPANET/network/model editing to this draft through the private
+   native/REST APIs. The committed graph remains read-only.
+3. Show draft base, local branch, dirty state, save status, validation errors
+   and personal repository location. Autosave needs debouncing, version
+   checking and reliable last-save acknowledgement; it never commits.
+4. Support opening/recovering existing drafts after restart or HTTP
+   reconnect, continuing one draft deliberately, and discarding only after
+   explicit confirmation. Preserve edits across graph navigation and tab
+   switches.
+5. Test two simultaneous GUI sessions, lost connectivity, interrupted
+   autosave, stale draft-generation rejection and reopening by UUID.
+
+**Exit:** persistent editing works without moving any committed HEAD; draft
+recovery is verified in Standalone and HTTP modes.
+
+### VC-05 — Local Commit, validation and safe retry UX
+
+**Needs:** backend VC-05 and DG-03. **GUI work:**
+
+1. Expose **Commit locally** separately from **Save draft** and **Publish**.
+   Display the candidate snapshot, project, exact target *local* branch,
+   expected local HEAD UUID/null and validation results.
+2. Send persisted draft UUID and a stable idempotency/operation UUID. Track
+   progress and authoritative operation status through cancel/timeout/
+   restart; don't interpret HTTP disconnect as rejected Commit.
+3. On successful Commit show immutable revision UUID/SHA-256, advance
+   local HEAD only and offer continuing work in a newly based working copy.
+4. On stale local HEAD, display the new local HEAD and preserve the draft;
+   offer explicit reconciliation rather than automatically overwriting.
+5. Test first zero-parent local commit, two drafts racing to commit, 409
+   conflict, duplicate submission and post-response crash.
+
+**Exit:** local success never claims the shared branch advanced and a
+failed/unknown result never loses drafts.
+
+### VC-06 — Fetch/clone and remote-tracking presentation
+
+**Needs:** backend VC-06 and DG-01/DG-06. **GUI work:**
+
+1. Add **Fetch** and project checkout/clone into the personal DVMDB,
+   presenting the exact shared repository, project and branch identities.
+2. Show separate *local HEAD*, *fetched remote-tracking HEAD* and *current
+   shared HEAD* when available. Explain when a tracking value is stale.
+3. Fetch must be non-destructive to local branches and active private
+   drafts. Show pending object verification, progress, and resumable/error
+   outcomes; validate pinned DAG generations before graph publication.
+4. Support unborn shared projects, Unicode branch names, multiple shared
+   servers, shared/non-leaf tips and two-parent histories.
+
+**Exit:** two separate users can fetch the same shared revision with
+independent local refs, unchanged drafts and accurate tracking indicators.
+
+### VC-07 — Publish/Push and stale-remote recovery
+
+**Needs:** backend VC-07, DG-03 and DG-06. **GUI work:**
+
+1. Show **Publish** only when a valid local commit/branch, explicit shared
+   destination and expected shared HEAD UUID/null have been resolved.
+2. Include idempotency/operation ID, destination project/branch UUID,
+   verified immutable history and exact expected shared HEAD; no guesses
+   from labels, no auto force push and no direct writing into the editor.
+3. Present progress separately for transferring objects and atomic remote
+   ref publication. On timeout query authoritative status before retrying.
+4. On 409 stale/non-fast-forward, retain local commits and private drafts,
+   show the current remote HEAD, and offer Fetch / Compare / Reconcile;
+   don't falsely label a successful local Commit as failed.
+5. Test two editors pushing from R7, first publication from an unborn
+   branch with expected null, duplicate operations and interrupted network.
+
+**Exit:** one safe remote Publish, no lost commits on failed Publish, and
+comprehensible local-vs-remote status across reconnect.
+
+### VC-08 — Reconciliation, hydraulic validation and merge UX
+
+**Needs:** backend VC-08 and DG-05. **GUI work:**
+
+1. Present base, local committed tip, shared fetched tip and candidate
+   three-way differences. Distinguish stale HEAD from actual entity/model
+   conflicts; do not assume non-overlapping edits are hydraulically valid.
+2. Support explicit user-approved fast-forward/merge and manual conflict
+   resolution, with whole-model validation and no lost uncommitted draft.
+3. A merge creates one genuine two-parent immutable revision **locally**;
+   Publish still requires a separate conditional remote update. Avoid
+   automatic rebase/replay in the initial scope.
+4. Test safe cancellation, persisted unresolved conflict draft, retry after
+   another remote advance, correct parent ordering and domain validation.
+
+**Exit:** Bob can reconcile after Alice's Publish and publish a validated
+successor, without overwriting either user's earlier committed history.
+
+### VC-09 — Final Git-style revision graph and inspectors
+
+**Needs:** backend VC-01/VC-02/VC-09 pinned graph contract. **GUI work:**
+
+1. Render **one node per committed revision UUID**, with only actual ordered
+   revision-parent edges. Do not draw branch-origin blue/dashed ancestry
+   edges or branch-reference cards as descendants of a revision.
+2. Decorate tips with **branch names and HEAD markers**, not fake revision
+   vertices. If many refs share one revision, use a compact, selectable
+   overflow list/inspector linked to the same revision—not a crowded card.
+3. Preserve source/project organization and user filtering, but ensure
+   containment links are visually distinct from ancestry. Never refit the
+   graph automatically on selection or inspector tab changes.
+4. Show zero-revision projects, single-commit shared HEADs, non-leaf HEADs,
+   genuine divergence and two-parent merge. No UUIDv7 chronological
+   heuristics for commit ancestry.
+5. Keep the inspector at `Sizes::SidebarRightWidth`, with separate related
+   tabs for branch provenance, commit integrity and working-copy status.
+6. Test actual Qt item geometry/click targets and no overlays/orphaned
+   widgets, not just Qt-independent DAG coordinates.
+
+**Exit:** native and REST graph snapshots render the same genuine commit
+DAG and all pointers remain correct after full refresh and pagination.
+
+### VC-10 — Integrated editor lifecycle across GUI variants
+
+**Needs:** VC-04 through VC-09 in DVMDB and GUI. **GUI work:**
+
+1. Join network discovery/import, checkout, model editor, draft autosave,
+   Commit, Fetch, Publish and conflict recovery into one persistent workflow.
+2. Confirm the correct private working DVMDB in Standalone; for basic GUI
+   and browser/web, require a per-user HTTP endpoint and explicit connection
+   state. Shared project servers stay independently browsable.
+3. Exercise cancellation, navigation, app shutdown, reconnect and draft
+   recovery during each operation. Preserve selection and camera without
+   sacrificing data safety.
+4. Verify native/REST parity through real service integration, not only
+   synthetic REST fixtures. Unsupported action paths must be disabled with
+   explanatory feedback, not silently substituted with preview behavior.
+
+**Exit:** end-to-end tests cover private editing and local committing
+alongside shared publication and conflict recovery for all supported modes.
+
+### VC-11 — Migration, data-integrity and release qualification
+
+**Needs:** backend VC-11 and DG-04. **GUI work:**
+
+1. Handle incompatible/old development repositories explicitly using the
+   approved transition policy; don't auto-rename old UUIDs or invent missing
+   fork points. Display helpful error/recovery actions.
+2. Test all source roles, graph import, bundle transfer, draft restore,
+   empty unborn repositories, database restart, slow/failed HTTP, Unicode
+   names and corrupt histories in the actual target environments.
+3. Run `./compile_linux_tests.sh` and scoped project tests (including
+   `aowis-project-source-reader`, `aowis-project-source-writer`,
+   `aowis-projects-inspector-dock`, `aowis-projects-multi-source`, and
+   graph-layout tests). Test Standalone embedded build and browser build
+   separately; record tests missing/unbuilt, not just ctest totals.
+4. Capture benchmark/resource and manual UI evidence, including actual
+   inspector/graph rendering, narrow-dock sizing and branch-label overflow.
+
+**Exit:** all scenarios in section E pass with evidence; no unsupported
+backend contract is hidden behind GUI fallback code.
+
+### VC-12 — Permissions, safety and deployment qualification
+
+**Later design track; mandatory before exposing multi-user/public writable
+HTTP services.** See `AOWIS-SERVER-DVMDB/docs/security-permissions-design.md`.
+
+1. Add authenticated identity and explicit authorization for personal
+   repositories, projects, drafts, branches, fetch/push and administration.
+2. Provide secure credentials, deny-by-default errors, audit events and
+   owner/session-aware UI. No client-provided `ownerId` is trusted alone.
+3. Test malicious cross-user access, replay, wrong remote, unauthorized
+   draft retrieval, secret leakage and revocation.
+4. Until approved, private HTTP working DVMDBs must be isolated outside
+   public multi-user reach; a URL/config value is never an access-control
+   mechanism.
+
+**Exit:** security-specific test/review evidence approves writable remote
+multi-user deployment independently of the VC-11 functional release gate.
+
+## D. Shared milestone matrix and dependency rules
+
+| Milestone | Backend dependency | GUI result |
+|---|---|---|
+| VC-00 | Inventory and baseline | Source, graph, config and Qt regression gap list |
+| VC-01 | Nullable HEADs/unborn lifecycle | Unborn `main`, zero revisions, valid graph |
+| VC-02 | Persistent fork metadata/branch API | Explicit branch-from-revision editor |
+| VC-03 | Repository identity/tracking | Safe personal DVMDB config and connection |
+| VC-04 | Durable draft CRUD and concurrency | Checkout, autosave and recovery |
+| VC-05 | Local Commit CAS/status | Commit locally and stale-local recovery |
+| VC-06 | Fetch/clone and tracking refs | Show local vs remote HEADs, Fetch action |
+| VC-07 | Publish atomic shared ref CAS | Publish and stale-remote recovery |
+| VC-08 | Merge/compare/domain validation | Explicit conflict and merge workflow |
+| VC-09 | Pinned full revision DAG | True Git-style revision graph and inspector |
+| VC-10 | Native/REST complete parity | Integrated user workflow in all GUI modes |
+| VC-11 | Format/fault/replica qualification | Real Qt/Standalone/browser acceptance |
+| VC-12 | Authentication and authorization | Permission-aware multi-user UI |
+
+**Sequencing:** A backend API stage can be implemented before its matching
+GUI stage; the GUI may prepare read-only UI in parallel. **Do not enable**
+mutating controls until the native and REST contract actually exists.
+If an endpoint is intentionally not available in a particular mode, show a
+clear unsupported/read-only state, not a substitute request to a shared repo.
+
+## E. Mandatory GUI acceptance stories
+
+1. Create a project on a shared source: project and unborn `main` appear,
+   revision count is zero, the graph has no synthetic R0.
+2. Standalone checks out empty `main` into its persistent embedded DVMDB;
+   remote GUI checks out into an explicitly configured private HTTP DVMDB.
+3. Save a draft, switch tabs/servers, close and restart: saved draft UUID and
+   edits are recovered, while the published branch HEAD remains unchanged.
+4. Commit locally from unborn `main`: exactly one immutable zero-parent R0
+   appears in personal history; shared `main` still has null HEAD.
+5. First Publish conditionally updates shared `main` from null to R0. HTTP
+   timeout/retry reports authoritative status without duplicating a commit.
+6. Create `feature` from R0: source UUID and exact R0 are recorded, no extra
+   revision node; independent R1/F1 commits create actual divergence.
+7. Two users with different private DVMDBs commit locally from shared R7;
+   only one can publish from expected R7; the other retains all local commits
+   and saved drafts, fetches and resolves explicitly.
+8. Real two-parent merge validates hydraulic meaning, creates one committed
+   merge revision locally and updates only the selected shared target after
+   successful Publish.
+9. Shared/non-leaf branch refs, long UTF-8 names and several branch HEADs at
+   one revision remain selectable and readable without a fake ancestry edge
+   or a widened/obscured inspector.
+10. Missing/misconfigured private HTTP working repo disables editing but
+    preserves published history; no silent fallback into shared server.
+11. Wrong repo/project/branch UUID, changed pagination snapshot, corrupted
+    parent hash, wrong expected HEAD and repeated idempotency key each have
+    correct non-destructive errors and status.
+12. All variants expose data-consistent state after recovery, replication,
+    compaction and backend upgrades; no old empty-root assumptions leak in.
+13. Public/other-user writable exposure remains disallowed until VC-12.
+
+## F. Thread handoff and status discipline
+
+**For the next thread:** supply the **latest full DVMDB and GUI source ZIPs**,
+refer to `AOWIS-SERVER-DVMDB/docs/roadmap.md`, this document and the relevant
+VC-xx stage. Do not assume an earlier patch was applied merely because it
+was previously delivered. Use one named milestone or independently testable
+substep per patch.
+
+1. Review the exact source and relevant API/test fixtures in both archives.
+2. Check DG-xx gates; resolve schema/wire/storage decisions in both docs
+   before implementation. Keep a written outcome and acceptance criterion.
+3. Implement backend storage and native/REST semantics first; then GUI
+   reader/writer, editor/inspector and graph changes with real integration
+   tests. Do not mix unrelated UI redesign into a backend lifecycle patch.
+4. Run Qt-independent and Qt tests where available; record what cannot run,
+   including CI/Standalone/web platform gaps. A ZIP/application success is
+   not a GUI functionality test.
+5. Produce ZIP patches of **changed/added files only** under the correct
+   repository root hierarchy, with fresh timestamps; include a one-line
+   `./tools/apply_patch.sh ~/Downloads/<patch>.zip` command and a one-line
+   commit message for each affected repository.
+6. Mark each milestone `Not started`, `In progress`, `Blocked` or `Verified`
+   **only with matching test evidence**. Avoid claiming features work from
+   documentation alone.
+
+**Next recommended task:** VC-00 and DG-04 inventory, followed by VC-01
+unborn project/nullable committed HEADs in DVMDB and the GUI's empty
+history display. Review branch tracking DG-01 before VC-03 schema work.
