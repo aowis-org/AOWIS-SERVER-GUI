@@ -873,11 +873,12 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
         ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_link_libraries(aowis-bgfx-hud-tests PRIVATE Qt6::Core Qt6::Gui)
     add_test(NAME aowis-bgfx-hud COMMAND aowis-bgfx-hud-tests)
-    # The HUD atlas and full-viewport input sweeps are significantly slower
-    # than other unit tests. Bound them separately rather than permitting the
-    # CTest default (1500 seconds) to hide a deadlock.
+    # Full-viewport input sweeps are CPU-intensive. Do not run this test
+    # concurrently with other tests: contention can push it past its limit.
+    # Retain a bounded timeout to detect genuine hangs.
     set_tests_properties(aowis-bgfx-hud PROPERTIES
-        LABELS "aowis" ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 120)
+        LABELS "aowis" ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+        RUN_SERIAL TRUE TIMEOUT 240)
 
     # Map editor on bgfx (Phase 2) without a GPU: what the overlay builder
     # draws for each editor state, positioned with the continuous camera.
