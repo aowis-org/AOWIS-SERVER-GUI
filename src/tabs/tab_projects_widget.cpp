@@ -1279,7 +1279,8 @@ void ProjectsWidget::loadSource(const QString &id)
                         select(SelectionKind::Project, project.id);
                         if (!branch_to_select.isEmpty())
                             for (const ProjectPreviewBranch &branch : project.branches)
-                                if (branch.name == branch_to_select)
+                                if (branch.id == project.id + QStringLiteral(":") + branch_to_select
+                                    || branch.name == branch_to_select)
                                 {
                                     select(SelectionKind::Branch, branch.id);
                                     break;
@@ -2711,7 +2712,7 @@ void ProjectsWidget::createBranch()
         this->source_writer->createBranch(*server, project_id, name, from_branch, from_revision,
             [this, project_id, name](const QString &id, const QString &error)
             {
-                finishSourceWrite(id, error, project_id, name);
+                finishSourceWrite(id, error, project_id, id.isEmpty() ? name : id);
             });
         updateConnectionStatus();
         updateButtons();

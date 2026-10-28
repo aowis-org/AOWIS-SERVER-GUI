@@ -130,7 +130,7 @@ int main(int argc, char **argv)
         done = true;
     });
     if (!require(waitUntil(app, [&] { return done; }), "branch POST did not finish")) return 1;
-    if (!require(failure.isEmpty() && created == QStringLiteral("feature")
+    if (!require(failure.isEmpty() && created == branch_identity
         && requested_paths.size() == 2
         && requested_paths.last() == QStringLiteral("/dvmdb/v1/projects/%1/branches").arg(project_identity)
         && request_bodies.last().value(QStringLiteral("name")) == QStringLiteral("feature")
@@ -151,7 +151,7 @@ int main(int argc, char **argv)
         done = true;
     });
     if (!require(waitUntil(app, [&] { return done; }), "historical UTF-8 branch POST did not finish")) return 1;
-    if (!require(failure.isEmpty() && created == historical_name
+    if (!require(failure.isEmpty() && created == branch_identity
                  && requested_paths.size() == 3
                  && request_bodies.last().value(QStringLiteral("name")) == historical_name
                  && request_bodies.last().value(QStringLiteral("fromBranch")) == QStringLiteral("main")

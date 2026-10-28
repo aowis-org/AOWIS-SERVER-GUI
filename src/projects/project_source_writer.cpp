@@ -308,6 +308,6 @@ void ProjectSourceWriter::start(const ProjectServerProfile &profile, Operation o
             finish({}, tr("Invalid branch creation response. Refresh before retrying."));
             return;
         }
-        finish(name, {});
+        finish(object.value(QStringLiteral("branchId")).toString(), {});
     });
 }
