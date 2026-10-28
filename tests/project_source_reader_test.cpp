@@ -82,6 +82,7 @@ int main(int argc, char **argv)
     bool corrupt_branch_id = false;
     bool corrupt_origin_id = false;
     bool unborn_project = false;
+    bool first_commit_project = false;
     bool invalid_unborn_digest = false;
     QObject::connect(&server, &QTcpServer::newConnection, &server, [&]
     {
@@ -91,7 +92,7 @@ int main(int argc, char **argv)
             const std::shared_ptr<QByteArray> buffer = std::make_shared<QByteArray>();
             QObject::connect(socket, &QTcpSocket::readyRead, socket,
                 [socket, buffer, &requests, &change_pinned_head, &corrupt_parent_hash,
-                 &corrupt_branch_id, &corrupt_origin_id, &unborn_project,
+                 &corrupt_branch_id, &corrupt_origin_id, &unborn_project, &first_commit_project,
                  &invalid_unborn_digest, project_id, a, b, c, d, e, branch_main,
                  branch_feature, branch_alias, branch_history, record, head]
             {
@@ -112,6 +113,8 @@ int main(int argc, char **argv)
                                      head(QStringLiteral("Feature Branch"), branch_feature, d, branch_main),
                                      head(QStringLiteral("alias"), branch_alias, e, branch_feature),
                                      head(QStringLiteral("archive"), branch_history, b, branch_main)};
+                    if (first_commit_project)
+                        heads = QJsonArray{head(QStringLiteral("main"), branch_main, a)};
                     if (unborn_project)
                     {
                         heads = QJsonArray{QJsonObject{{QStringLiteral("branch"), QStringLiteral("main")},
@@ -136,14 +139,15 @@ int main(int argc, char **argv)
                         invalid.insert(QStringLiteral("originBranchId"), 42);
                         heads[1] = invalid;
                     }
-                    const QJsonArray revisions = unborn_project ? QJsonArray{} : second
+                    const QJsonArray revisions = unborn_project ? QJsonArray{}
+                        : first_commit_project ? QJsonArray{record(a, {})} : second
                         ? QJsonArray{record(b, {a}), record(a, {})}
                         : QJsonArray{record(e, {c,d}, corrupt_parent_hash),
                                      record(c, {b}), record(d, {b})};
                     body = QJsonDocument(QJsonObject{{QStringLiteral("heads"), heads},
                         {QStringLiteral("revisions"), revisions},
-                        {QStringLiteral("complete"), unborn_project || second},
-                        {QStringLiteral("nextCursor"), (unborn_project || second) ? QJsonValue(QJsonValue::Null)
+                        {QStringLiteral("complete"), unborn_project || first_commit_project || second},
+                        {QStringLiteral("nextCursor"), (unborn_project || first_commit_project || second) ? QJsonValue(QJsonValue::Null)
                             : QJsonValue(QStringLiteral("page-2"))}}).toJson();
                 }
                 else body = R"({"error":"unknown route"})";
@@ -240,7 +244,30 @@ int main(int argc, char **argv)
     };
     if (!require(verify_unborn_reload() && verify_unborn_reload(),
                  "refresh of unborn project produced a revision or changed HEAD")) return 1;
+    // The first commit must publish exactly one parentless UUIDv7 revision
+    // while retaining the UUID identity of the original unborn main branch.
     unborn_project = false;
+    first_commit_project = true;
+    const auto verify_first_commit = [&]()
+    {
+        if (!load() || !failure.isEmpty() || received.projects.size() != 1)
+            return false;
+        const SourceProject &committed = received.projects.first();
+        return committed.graph_complete && committed.id == project_id
+            && committed.branches.size() == 1
+            && committed.branches.first().name == QStringLiteral("main")
+            && committed.branches.first().id == branch_main
+            && committed.branches.first().head == a
+            && committed.branches.first().record_sha256 == digests.value(a)
+            && committed.revisions.size() == 1
+            && committed.revisions.first().id == a
+            && committed.revisions.first().parents.isEmpty()
+            && committed.revisions.first().parent_record_sha256.isEmpty()
+            && committed.revisions.first().record_sha256 == digests.value(a);
+    };
+    if (!require(verify_first_commit() && verify_first_commit(),
+                 "first commit from unborn main did not persist across graph refresh")) return 1;
+    first_commit_project = false;
     if (!require(load() && failure.isEmpty() && received.projects.size() == 1
         && received.projects.first().revisions.size() == 5
         && received.projects.first().branches.first().head == e,
