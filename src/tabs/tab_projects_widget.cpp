@@ -2101,9 +2101,39 @@ void ProjectsWidget::validateCreation()
         else if (origin.isEmpty() && project != nullptr && project->database_backed)
             error = tr("Commit the source branch before creating another database branch.");
         else error = tr("Choose a starting revision.");
-        this->creation_summary->setText(tr("Initial HEAD: %1\n").arg(
-                revision.isEmpty() ? tr("No commits yet") : revision)
-            + tr("Creating a branch adds a reference only; it does not create a revision."));
+        QString source_branch_id;
+        QString source_branch_name;
+        QString source_revision_hash;
+        if (project != nullptr)
+        {
+            QString source_name;
+            if (origin.startsWith(QStringLiteral("branch:")))
+                source_name = origin.mid(7);
+            else if (origin.startsWith(QStringLiteral("revision:")))
+                source_name = sourceBranchForRevision(*project, revision, QString());
+            for (const ProjectPreviewBranch &entry : project->branches)
+                if (entry.name == source_name)
+                {
+                    source_branch_id = entry.id;
+                    source_branch_name = entry.name;
+                    break;
+                }
+            for (const ProjectPreviewRevision &entry : project->revisions)
+                if (entry.id == revision)
+                {
+                    source_revision_hash = entry.record_sha256;
+                    break;
+                }
+        }
+        QString summary = tr("Fork revision UUID: %1\n").arg(
+            revision.isEmpty() ? tr("No commits yet") : revision);
+        if (!source_branch_id.isEmpty())
+            summary += tr("Source branch: %1\nSource branch UUID: %2\n")
+                .arg(source_branch_name, source_branch_id);
+        if (!source_revision_hash.isEmpty())
+            summary += tr("Revision SHA-256: %1\n").arg(source_revision_hash);
+        summary += tr("Creating a branch adds a reference only; it does not create a revision.");
+        this->creation_summary->setText(summary);
     }
     this->creation_error->setText(error);
     updateButtons();
