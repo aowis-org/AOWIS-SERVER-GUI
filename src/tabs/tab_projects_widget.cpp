@@ -1,6 +1,8 @@
 #include "tabs/tab_projects_widget.h"
 #include "projects/dvmdb_identity.h"
+#include "config/personal_repository_storage.h"
 #include "tabs/project_graph_placement.h"
+#include "tabs/personal_working_copy_dialog.h"
 
 #include "app/builtin_examples.h"
 #include "config/gui_configuration.h"
@@ -642,6 +644,9 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     this->create_branch_button = compactButton(tr("Create branch"),
         tr("Create a named reference from an explicitly chosen revision"), right);
     this->create_branch_button->setObjectName(QStringLiteral("projectsInspectorCreateBranch"));
+    this->working_copies_button = compactButton(tr("Personal working copies…"),
+        tr("Create or reopen a durable private draft for this exact branch HEAD"), right);
+    this->working_copies_button->setObjectName(QStringLiteral("projectsInspectorWorkingCopies"));
     this->inspector_import_button = compactButton(tr("Import network…"),
         tr("Import a network into the selected project"), right);
     this->inspector_import_button->setObjectName(QStringLiteral("projectsInspectorImport"));
@@ -656,6 +661,7 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     // Import is a separate project-scoped action so it never makes the
     // narrow dock's Create/Cancel row overflow.
     inspector_actions->addWidget(this->inspector_import_button);
+    inspector_actions->addWidget(this->working_copies_button);
     QHBoxLayout *creation_actions = new QHBoxLayout();
     creation_actions->setSpacing(5);
     creation_actions->addStretch(1);
@@ -761,6 +767,8 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
             this, [this] { beginCreation(false); });
     connect(this->create_branch_button, &QPushButton::clicked,
             this, [this] { beginCreation(true); });
+    connect(this->working_copies_button, &QPushButton::clicked,
+            this, &ProjectsWidget::showWorkingCopies);
     connect(this->inspector_import_button, &QPushButton::clicked,
             this, &ProjectsWidget::importProjectRequested);
     connect(this->creation_cancel_button, &QPushButton::clicked,
@@ -2379,6 +2387,10 @@ void ProjectsWidget::updateButtons()
             || this->selection_kind == SelectionKind::Branch
             || this->selection_kind == SelectionKind::Revision));
     this->create_branch_button->setEnabled(ready && currentProject() != nullptr);
+    this->working_copies_button->setVisible(!editing && !new_source
+        && this->selection_kind == SelectionKind::Branch
+        && currentProject() != nullptr && currentProject()->database_backed);
+    this->working_copies_button->setEnabled(!this->source_writer->isBusy());
     this->inspector_import_button->setVisible(!editing && !new_source
         && this->selection_kind == SelectionKind::Project);
     this->inspector_import_button->setEnabled(!this->source_writer->isBusy());
@@ -2662,6 +2674,35 @@ void ProjectsWidget::createProject()
     populateProjectTree();
     cancelCreation();
     select(SelectionKind::Project, id);
+}
+
+void ProjectsWidget::showWorkingCopies()
+{
+    const ProjectPreviewData *project = currentProject();
+    const ProjectPreviewBranch *branch = currentBranch();
+    if (this->selection_kind != SelectionKind::Branch || project == nullptr
+        || !project->database_backed || branch == nullptr) return;
+    const PersonalRepositoryTarget target = resolvePersonalRepositoryTarget();
+    if (target.kind == PersonalRepositoryTarget::Kind::Unavailable)
+    {
+        QMessageBox::information(this, tr("Personal working repository unavailable"),
+            tr("Configure a separate personal DVMDB in Settings first. "
+               "The selected project database will not be used as a fallback."));
+        return;
+    }
+    const QString branch_uuid = branch->id.mid(project->id.size() + 1);
+    if (!DvmdbIdentity::isUuidV7(project->backend_id)
+        || !DvmdbIdentity::isUuidV7(branch_uuid)
+        || (!branch->head.isEmpty() && !DvmdbIdentity::isUuidV7(branch->head)))
+    {
+        QMessageBox::warning(this, tr("Cannot open personal draft"),
+            tr("The selected project, branch or HEAD has no canonical UUIDv7 identity."));
+        return;
+    }
+    PersonalWorkingCopyDialog dialog(project->backend_id,
+        branch_uuid, branch->name, branch->head,
+        project->repository_id, this);
+    dialog.exec();
 }
 
 void ProjectsWidget::createBranch()

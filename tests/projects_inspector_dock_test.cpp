@@ -218,6 +218,10 @@ int main(int argc, char **argv)
                      && delete_in_inspector->text() == QStringLiteral("Delete branch…"),
                  "context-sensitive inspector tabs or actions are missing"))
         return 1;
+    QPushButton *working_copies = projects.findChild<QPushButton *>(
+        QStringLiteral("projectsInspectorWorkingCopies"));
+    if (!require(working_copies != nullptr && !working_copies->isVisible(),
+                 "preview-only branch must not expose private DVMDB working copies")) return 1;
     if (!require(projects.findChild<QPushButton *>(QStringLiteral("serversRenameButton")) == nullptr
                      && projects.findChild<QPushButton *>(QStringLiteral("serversDeleteButton")) == nullptr,
                  "redundant server rename/delete controls remain in the sidebar"))

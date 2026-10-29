@@ -1,0 +1,50 @@
+#pragma once
+
+#include "config/personal_repository_storage.h"
+
+#include <QByteArray>
+#include <QList>
+#include <QNetworkAccessManager>
+#include <QObject>
+#include <QString>
+#include <QJsonObject>
+
+#include <functional>
+
+// Draft identities are local to the personal repository. This client NEVER
+// falls back to a project-source profile and NEVER changes a committed HEAD.
+struct PersonalWorkingCopyInfo
+{
+    QString id;
+    QString project_id;
+    QString branch_id;
+    QString base_revision; // empty == explicit unborn HEAD
+    QString session_id;
+    QString generation; // decimal, not a lossy JSON number
+    bool dirty = false;
+};
+
+class PersonalWorkingCopyClient final : public QObject
+{
+public:
+    using DraftCompletion = std::function<void(const PersonalWorkingCopyInfo &, const QString &)>;
+    using ListCompletion = std::function<void(const QList<PersonalWorkingCopyInfo> &, const QString &)>;
+
+    explicit PersonalWorkingCopyClient(QObject *parent = nullptr);
+
+    void list(const PersonalRepositoryTarget &target, ListCompletion completion);
+    void create(const PersonalRepositoryTarget &target, const QString &project_id,
+                const QString &branch, const QString &base_revision,
+                DraftCompletion completion);
+    void reopen(const PersonalRepositoryTarget &target, const QString &draft_id,
+                DraftCompletion completion);
+
+    static QString newSessionUuidV7();
+
+private:
+    using Response = std::function<void(const QJsonObject &, const QString &)>;
+    void request(const PersonalRepositoryTarget &target, const QByteArray &method,
+                 const QString &path, const QJsonObject &body, Response completion);
+    static bool parseDraft(const QJsonObject &object, PersonalWorkingCopyInfo &draft);
+    QNetworkAccessManager manager;
+};

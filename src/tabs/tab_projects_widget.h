@@ -125,6 +125,7 @@ private:
     void deleteServer();
     void createProject();
     void createBranch();
+    void showWorkingCopies();
     void beginCreation(bool branch);
     void cancelCreation();
     void submitCreation();
@@ -197,6 +198,7 @@ private:
     QPushButton *source_save_button = nullptr;
     QPushButton *source_cancel_button = nullptr;
     QPushButton *create_branch_button = nullptr;
+    QPushButton *working_copies_button = nullptr;
     QHash<QString, SourceSession *> source_sessions;
     QHash<QString, QPair<QString, QString>> graph_revision_lookup;
     ProjectSourceWriter *source_writer = nullptr;

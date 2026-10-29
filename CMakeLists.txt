@@ -229,6 +229,10 @@ qt_add_executable(aowis-server-gui
     src/projects/project_source_reader.h
     src/projects/project_source_writer.cpp
     src/projects/project_source_writer.h
+    src/projects/personal_working_copy_client.cpp
+    src/projects/personal_working_copy_client.h
+    src/tabs/personal_working_copy_dialog.cpp
+    src/tabs/personal_working_copy_dialog.h
     src/tabs/project_revision_graph.cpp
     src/tabs/project_revision_graph.h
     src/tabs/project_graph_placement.h
@@ -710,6 +714,24 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
     set_tests_properties(aowis-personal-repository-settings PROPERTIES
         LABELS "aowis" ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+    # VC-04: personal DVMDB draft creation/recovery, never source-profile writes.
+    add_executable(aowis-personal-working-copy-client-tests
+        tests/personal_working_copy_client_test.cpp
+        src/projects/personal_working_copy_client.cpp
+        src/projects/personal_working_copy_client.h
+        src/config/personal_repository_storage.cpp
+        src/config/personal_repository_storage.h
+        src/config/project_server_profile_storage.cpp
+        src/config/project_server_profile_storage.h
+        src/config/gui_configuration.cpp)
+    target_include_directories(aowis-personal-working-copy-client-tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(aowis-personal-working-copy-client-tests PRIVATE
+        Qt6::Core Qt6::Gui Qt6::Network)
+    add_test(NAME aowis-personal-working-copy-client
+        COMMAND aowis-personal-working-copy-client-tests)
+    set_tests_properties(aowis-personal-working-copy-client PROPERTIES LABELS "aowis")
+
     # Projects uses a real nested dock: closing it must leave the graph
     # visible and selections must still synchronize while it is hidden.
     add_executable(aowis-projects-inspector-dock-tests
@@ -720,6 +742,12 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
         src/projects/project_source_reader.h
         src/projects/project_source_writer.cpp
         src/projects/project_source_writer.h
+        src/projects/personal_working_copy_client.cpp
+        src/projects/personal_working_copy_client.h
+        src/tabs/personal_working_copy_dialog.cpp
+        src/tabs/personal_working_copy_dialog.h
+        src/config/personal_repository_storage.cpp
+        src/config/personal_repository_storage.h
         src/tabs/project_revision_graph.cpp
         src/tabs/project_revision_graph.h
         src/tabs/project_graph_placement.h
@@ -748,6 +776,12 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
         src/projects/project_source_reader.h
         src/projects/project_source_writer.cpp
         src/projects/project_source_writer.h
+        src/projects/personal_working_copy_client.cpp
+        src/projects/personal_working_copy_client.h
+        src/tabs/personal_working_copy_dialog.cpp
+        src/tabs/personal_working_copy_dialog.h
+        src/config/personal_repository_storage.cpp
+        src/config/personal_repository_storage.h
         src/tabs/project_revision_graph.cpp
         src/tabs/project_revision_graph.h
         src/tabs/project_graph_placement.h
