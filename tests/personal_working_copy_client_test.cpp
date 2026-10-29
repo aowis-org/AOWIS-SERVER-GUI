@@ -69,6 +69,7 @@ public:
     int release_count = 0;
     int generation = 0;
     bool malformed_overlay = false;
+    bool drop_next_save_acknowledgement = false;
 
     QByteArray bundlePayload() const
     {
@@ -215,6 +216,14 @@ public:
                     {
                         status = 404;
                         document.insert(QStringLiteral("error"), QStringLiteral("Not found"));
+                    }
+                    if (request_line.startsWith("POST /dvmdb/v1/working-copies/") &&
+                        request_line.contains("/save ") &&
+                        this->drop_next_save_acknowledgement && status == 200)
+                    {
+                        this->drop_next_save_acknowledgement = false;
+                        socket->disconnectFromHost();
+                        return;
                     }
                     const QByteArray payload = binary_response ? bundlePayload() :
                         QJsonDocument(document).toJson(QJsonDocument::Compact);
@@ -429,6 +438,29 @@ int main(int argc, char **argv)
                && created.changes.first().references == update.references,
                "reopened draft did not decode its saved candidate overlay")) return 1;
 
+    // Simulate an acknowledged durable write whose HTTP response is lost.
+    // The client must reopen once and verify exact bytes plus generation;
+    // it must NEVER issue a duplicate Save request.
+    stub.drop_next_save_acknowledgement = true;
+    update.payload.append(" after interruption");
+    bool recovered = false;
+    done = false;
+    client.saveChangesRecovering(stub.target(), draft_id, head_id, lease.token,
+        QStringLiteral("1"), {update},
+        [&](const PersonalWorkingCopyInfo &draft, bool from_recovery, const QString &failure)
+    {
+        created = draft;
+        recovered = from_recovery;
+        error = failure;
+        done = true;
+    });
+    if (!check(until(application, [&] { return done; }) && error.isEmpty()
+               && recovered && created.generation == QStringLiteral("2")
+               && created.changes.size() == 1
+               && created.changes.first().payload == update.payload
+               && stub.save_count == 2 && stub.open_count >= 3,
+               "lost Save acknowledgement was not recovered exactly once")) return 1;
+
     done = false;
     client.saveChanges(stub.target(), draft_id, head_id, lease.token, lease.generation,
                        {update}, [&](const PersonalWorkingCopyInfo &, const QString &failure)
@@ -437,7 +469,7 @@ int main(int argc, char **argv)
         done = true;
     });
     if (!check(until(application, [&] { return done; }) && !error.isEmpty()
-               && stub.save_count == 1,
+               && stub.save_count == 2,
                "stale Save overwrote a newer generation")) return 1;
     done = false;
     client.saveChanges(stub.target(), draft_id, head_id, draft_id, QStringLiteral("1"),
@@ -447,8 +479,24 @@ int main(int argc, char **argv)
         done = true;
     });
     if (!check(until(application, [&] { return done; }) && !error.isEmpty()
-               && stub.save_count == 1,
+               && stub.save_count == 2,
                "stale fencing token was accepted")) return 1;
+
+    // A stale request that happens to propose the same data must not be
+    // mistaken for recovered success: generation must be exactly expected+1.
+    done = false;
+    recovered = true;
+    client.saveChangesRecovering(stub.target(), draft_id, head_id, lease.token,
+        QStringLiteral("0"), {update},
+        [&](const PersonalWorkingCopyInfo &, bool from_recovery, const QString &failure)
+    {
+        recovered = from_recovery;
+        error = failure;
+        done = true;
+    });
+    if (!check(until(application, [&] { return done; }) && !error.isEmpty()
+               && !recovered && stub.save_count == 2,
+               "stale Save was incorrectly accepted as recovered")) return 1;
 
     stub.malformed_overlay = true;
     done = false;
@@ -470,8 +518,25 @@ int main(int argc, char **argv)
         error = failure;
         done = true;
     });
-    if (!check(done && !error.isEmpty() && stub.save_count == 1,
+    if (!check(done && !error.isEmpty() && stub.save_count == 2,
                "invalid model reference reached HTTP Save")) return 1;
+
+    // Recovery cannot reinterpret an invalid command as an older completed
+    // Save, even when the persisted generation and payload happen to match.
+    const int reads_before_invalid = stub.open_count;
+    done = false;
+    recovered = true;
+    client.saveChangesRecovering(stub.target(), draft_id, head_id, lease.token,
+        QStringLiteral("1"), {update},
+        [&](const PersonalWorkingCopyInfo &, bool from_recovery, const QString &failure)
+    {
+        recovered = from_recovery;
+        error = failure;
+        done = true;
+    });
+    if (!check(done && !error.isEmpty() && !recovered &&
+               stub.open_count == reads_before_invalid && stub.save_count == 2,
+               "invalid Save incorrectly triggered recovery or another write")) return 1;
 
     done = false;
     client.releaseLease(stub.target(), draft_id, head_id, lease.token,

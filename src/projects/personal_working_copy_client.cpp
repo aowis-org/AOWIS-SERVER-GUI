@@ -2,6 +2,7 @@
 #include "projects/dvmdb_identity.h"
 
 #include <QDateTime>
+#include <QHash>
 #include <QSet>
 #include <QUuid>
 #include <limits>
@@ -49,6 +50,33 @@ bool decimal(const QString &value)
     for (const QChar digit : value)
         if (digit < QLatin1Char('0') || digit > QLatin1Char('9')) return false;
     return true;
+}
+
+QString validateSaveRequest(const QString &draft_id, const QString &session_id,
+                            const QString &fencing_token,
+                            const QString &expected_generation,
+                            const QList<PersonalWorkingCopyChange> &changes)
+{
+    bool parsed = false;
+    const qulonglong generation = expected_generation.toULongLong(&parsed);
+    if (!DvmdbIdentity::isUuidV7(draft_id) || !DvmdbIdentity::isUuidV7(session_id)
+        || !DvmdbIdentity::isUuidV7(fencing_token) || !decimal(expected_generation)
+        || !parsed || generation == std::numeric_limits<qulonglong>::max()
+        || changes.isEmpty() || changes.size() > 128)
+        return QStringLiteral("Invalid draft save identifiers, generation or batch size.");
+    QSet<QString> seen;
+    for (const PersonalWorkingCopyChange &change : changes)
+    {
+        if (!modelKeyUuid(change.uuid) || seen.contains(change.uuid)
+            || change.references.size() > 65535 || change.payload.size() > 8 * 1024 * 1024)
+            return QStringLiteral("Invalid or duplicate model-record UUID in draft Save.");
+        seen.insert(change.uuid);
+        if (change.deleted) continue;
+        for (const QString &reference : change.references)
+            if (!modelKeyUuid(reference))
+                return QStringLiteral("Invalid model-record reference UUID.");
+    }
+    return {};
 }
 }
 
@@ -322,27 +350,13 @@ void PersonalWorkingCopyClient::saveChanges(
     const QString &expected_generation,
     const QList<PersonalWorkingCopyChange> &changes, DraftCompletion completion)
 {
-    bool generation_ok = false;
-    const qulonglong generation = expected_generation.toULongLong(&generation_ok);
-    if (!DvmdbIdentity::isUuidV7(draft_id) || !DvmdbIdentity::isUuidV7(session_id)
-        || !DvmdbIdentity::isUuidV7(fencing_token) || !decimal(expected_generation)
-        || !generation_ok || changes.isEmpty() || changes.size() > 128
-        || generation == std::numeric_limits<qulonglong>::max())
-    {
-        completion({}, QStringLiteral("Invalid draft save identifiers, generation or batch size."));
-        return;
-    }
+    const QString invalid = validateSaveRequest(draft_id, session_id, fencing_token,
+                                                expected_generation, changes);
+    if (!invalid.isEmpty()) { completion({}, invalid); return; }
+    const qulonglong generation = expected_generation.toULongLong();
     QJsonArray batch;
-    QSet<QString> seen;
     for (const PersonalWorkingCopyChange &change : changes)
     {
-        if (!modelKeyUuid(change.uuid) || seen.contains(change.uuid)
-            || change.references.size() > 65535 || change.payload.size() > 8 * 1024 * 1024)
-        {
-            completion({}, QStringLiteral("Invalid or duplicate model-record UUID in draft Save."));
-            return;
-        }
-        seen.insert(change.uuid);
         if (change.deleted)
         {
             batch.append(QJsonObject{{QStringLiteral("uuid"), change.uuid},
@@ -351,14 +365,7 @@ void PersonalWorkingCopyClient::saveChanges(
         }
         QJsonArray references;
         for (const QString &reference : change.references)
-        {
-            if (!modelKeyUuid(reference))
-            {
-                completion({}, QStringLiteral("Invalid model-record reference UUIDv7."));
-                return;
-            }
             references.append(reference);
-        }
         batch.append(QJsonObject{{QStringLiteral("uuid"), change.uuid},
                                  {QStringLiteral("kind"), static_cast<int>(change.kind)},
                                  {QStringLiteral("references"), references},
@@ -390,6 +397,86 @@ void PersonalWorkingCopyClient::saveChanges(
             return;
         }
         completion(draft, {});
+    });
+}
+
+void PersonalWorkingCopyClient::saveChangesRecovering(
+    const PersonalRepositoryTarget &target, const QString &draft_id,
+    const QString &session_id, const QString &fencing_token,
+    const QString &expected_generation,
+    const QList<PersonalWorkingCopyChange> &changes,
+    RecoveringSaveCompletion completion)
+{
+    // Reject invalid commands BEFORE any recovery read: an invalid request
+    // cannot be reclassified as a previously successful Save.
+    const QString invalid = validateSaveRequest(draft_id, session_id, fencing_token,
+                                                expected_generation, changes);
+    if (!invalid.isEmpty()) { completion({}, false, invalid); return; }
+    // Do not use a network failure as permission to retry a possibly
+    // completed write: a generation-checked save must execute at most once.
+    saveChanges(target, draft_id, session_id, fencing_token, expected_generation,
+                changes, [this, target, draft_id, expected_generation, changes,
+                          completion = std::move(completion)]
+                (const PersonalWorkingCopyInfo &confirmed, const QString &error)
+    {
+        if (error.isEmpty())
+        {
+            completion(confirmed, false, QString());
+            return;
+        }
+        bool parsed = false;
+        const qulonglong expected = expected_generation.toULongLong(&parsed);
+        if (!parsed || expected == std::numeric_limits<qulonglong>::max())
+        {
+            completion({}, false, error);
+            return;
+        }
+        reopen(target, draft_id, [draft_id, expected, changes, error,
+                                  completion = std::move(completion)]
+               (const PersonalWorkingCopyInfo &persisted, const QString &reopen_error)
+        {
+            if (!reopen_error.isEmpty())
+            {
+                completion({}, false, error + QStringLiteral(" Recovery lookup failed: ")
+                    + reopen_error);
+                return;
+            }
+            if (persisted.id != draft_id ||
+                persisted.generation != QString::number(expected + 1))
+            {
+                completion(persisted, false,
+                    error + QStringLiteral(" The authoritative draft generation differs; "
+                                           "keep local edits and resolve the conflict."));
+                return;
+            }
+            // A persisted overlay can include unrelated earlier edits.
+            // Every proposed record must match exactly, including reference
+            // order, deletion state, kind and canonical codec payload bytes.
+            QHash<QString, PersonalWorkingCopyChange> by_id;
+            for (const PersonalWorkingCopyChange &change : persisted.changes)
+                by_id.insert(change.uuid, change);
+            for (const PersonalWorkingCopyChange &proposed : changes)
+            {
+                if (!by_id.contains(proposed.uuid))
+                {
+                    completion(persisted, false,
+                        error + QStringLiteral(" The saved overlay is missing a proposed record."));
+                    return;
+                }
+                const PersonalWorkingCopyChange stored = by_id.value(proposed.uuid);
+                if (stored.deleted != proposed.deleted ||
+                    (!proposed.deleted &&
+                     (stored.kind != proposed.kind ||
+                      stored.references != proposed.references ||
+                      stored.payload != proposed.payload)))
+                {
+                    completion(persisted, false,
+                        error + QStringLiteral(" The saved overlay differs from the proposed changes."));
+                    return;
+                }
+            }
+            completion(persisted, true, QString());
+        });
     });
 }
 

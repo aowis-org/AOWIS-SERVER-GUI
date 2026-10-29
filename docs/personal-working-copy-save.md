@@ -24,9 +24,14 @@ success the response must identify the same draft and next generation; only
 then may the editor mark that generation saved. Duplicate keys, invalid
 references and malformed candidate overlays are rejected before presenting
 an acknowledgement. Release uses the exact token and session. A failed or
-uncertain HTTP Save must **not** be replayed blindly: reopen the draft, read
-its persisted generation and candidate overlay, compare the proposed changes,
-and explicitly recover the editing session. Lease expiry and stale generations
+uncertain HTTP Save must **not** be replayed blindly. The new
+`saveChangesRecovering()` issues the Save once, then (if the result is not
+confirmed) reopens the draft to verify the exact **next generation** and all
+proposed candidate records byte-for-byte, including ordered references. Only
+this exact match counts as recovered success; a stale/advanced generation,
+different payload, missing entry or failed reopen leaves the editor's local
+changes unsaved and requires explicit conflict handling. A recovery read does
+not acquire or extend a lease, and it never sends another write. Lease expiry and stale generations
 are not silently overridden. The server stores candidate changes separately
 from immutable HEADs and committed revisions.
 
@@ -39,3 +44,21 @@ typed `ModelRecord` changes using the shared AOWIS Model codec, and bind
 Save/autosave and recovery to this transport. Until that bridge is proven,
 there must be no generic “Save” button claiming to persist a hydraulic model.
 A local Commit is a distinct VC-05 operation.
+
+## Codec integration boundary
+
+`NetworkHydraulic` is the editor's authoritative in-memory representation.
+The canonical `ModelCodec<NetworkHydraulic>` and typed per-entity encodings
+currently live in AOWIS-SERVER-DVMDB (`model_codec.cpp` and
+`hydraulic_network_persistence.cpp`), **not** in the supplied GUI or its
+Model headers. The GUI's personal-client transport accepts canonical typed
+records but cannot itself convert `NetworkHydraulic` without sharing this
+codec implementation. Do not reconstruct network data using ad-hoc JSON or
+blindly treat the currently open example network as a checked-out revision.
+
+Next: expose/reuse the existing canonical codec as a shared build dependency
+for the GUI's HTTP/Standalone targets, then hydrate a pinned private revision
+plus its draft overlay into `HydraulicData`. Only after that can Save/autosave
+be hooked to real editor changes. The model network UUID and draft base must
+be verified rather than guessed. This is a VC-04 integration prerequisite,
+not a security or separate roadmap milestone.

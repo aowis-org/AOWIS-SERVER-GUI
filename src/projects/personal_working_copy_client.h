@@ -68,6 +68,19 @@ public:
                      const QString &expected_generation,
                      const QList<PersonalWorkingCopyChange> &changes,
                      DraftCompletion completion);
+    // A lost HTTP acknowledgement does not mean the Save failed. On any
+    // unconfirmed result, reopen the authoritative draft and accept recovery
+    // only if it contains the exact proposed records at exactly generation+1.
+    // No second Save is issued; the caller keeps its local edits on failure.
+    using RecoveringSaveCompletion = std::function<void(
+        const PersonalWorkingCopyInfo &, bool recovered, const QString &)>;
+    void saveChangesRecovering(const PersonalRepositoryTarget &target,
+                               const QString &draft_id, const QString &session_id,
+                               const QString &fencing_token,
+                               const QString &expected_generation,
+                               const QList<PersonalWorkingCopyChange> &changes,
+                               RecoveringSaveCompletion completion);
+
     void releaseLease(const PersonalRepositoryTarget &target, const QString &draft_id,
                       const QString &session_id, const QString &fencing_token,
                       Completion completion);
