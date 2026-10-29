@@ -189,10 +189,12 @@ void PersonalWorkingCopyDialog::showDraft(const PersonalWorkingCopyInfo &draft)
 {
     this->status->setText(tr("Personal draft record loaded successfully."));
     this->details->setText(tr("Draft UUIDv7: %1\nSession: %2\nBase revision: %3\n"
-                              "Generation: %4\nSaved changes: %5")
+                              "Generation: %4\nSaved changes: %5\n"
+                              "Loaded candidate records: %6")
         .arg(draft.id, draft.session_id,
              draft.base_revision.isEmpty() ? tr("Unborn") : draft.base_revision,
-             draft.generation, draft.dirty ? tr("Yes") : tr("None")));
+             draft.generation, draft.dirty ? tr("Yes") : tr("None"),
+             QString::number(draft.changes.size())));
 }
 
 void PersonalWorkingCopyDialog::checkoutBranch()

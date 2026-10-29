@@ -2,6 +2,9 @@
 #include "projects/dvmdb_identity.h"
 
 #include <QDateTime>
+#include <QSet>
+#include <QUuid>
+#include <limits>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonParseError>
@@ -29,6 +32,15 @@ QString responseError(QNetworkReply *reply, const QByteArray &bytes)
         .value(QStringLiteral("error")).toString();
     if (!message.isEmpty()) return message;
     return reply->errorString();
+}
+
+bool modelKeyUuid(const QString &value)
+{
+    // Model keys are canonical 16-byte UUIDs; older imported Model data may
+    // have UUIDs other than v7, which the native DVMDB model API preserves.
+    if (value.size() != 36) return false;
+    const QUuid parsed(value);
+    return !parsed.isNull() && parsed.toString(QUuid::WithoutBraces) == value;
 }
 
 bool decimal(const QString &value)
@@ -75,6 +87,50 @@ bool PersonalWorkingCopyClient::parseDraft(const QJsonObject &object,
         || !decimal(draft.generation)
         || !object.value(QStringLiteral("dirty")).isBool()) return false;
     draft.dirty = object.value(QStringLiteral("dirty")).toBool();
+    draft.changes.clear();
+    const QJsonValue candidate = object.value(QStringLiteral("changes"));
+    if (!candidate.isUndefined())
+    {
+        if (!candidate.isArray() || candidate.toArray().size() > 20000) return false;
+        QSet<QString> seen;
+        for (const QJsonValue &entry : candidate.toArray())
+        {
+            if (!entry.isObject()) return false;
+            const QJsonObject item = entry.toObject();
+            PersonalWorkingCopyChange change;
+            change.uuid = item.value(QStringLiteral("uuid")).toString();
+            if (!modelKeyUuid(change.uuid) || seen.contains(change.uuid)) return false;
+            seen.insert(change.uuid);
+            if (item.value(QStringLiteral("delete")) == QJsonValue(true))
+            {
+                if (item.size() != 2) return false;
+                change.deleted = true;
+            }
+            else
+            {
+                if (item.size() != 4 || !item.value(QStringLiteral("kind")).isDouble()
+                    || !item.value(QStringLiteral("references")).isArray()
+                    || !item.value(QStringLiteral("payloadBase64")).isString()) return false;
+                const double kind = item.value(QStringLiteral("kind")).toDouble(-1);
+                if (kind < 0 || kind > 65535 || kind != static_cast<int>(kind)) return false;
+                change.kind = static_cast<quint16>(kind);
+                const QJsonArray references = item.value(QStringLiteral("references")).toArray();
+                if (references.size() > 65535) return false;
+                for (const QJsonValue &reference : references)
+                {
+                    if (!reference.isString() || !modelKeyUuid(reference.toString()))
+                        return false;
+                    change.references.append(reference.toString());
+                }
+                const QByteArray encoded = item.value(QStringLiteral("payloadBase64")).toString().toLatin1();
+                const QByteArray::FromBase64Result decoded = QByteArray::fromBase64Encoding(
+                    encoded, QByteArray::AbortOnBase64DecodingErrors);
+                if (!decoded || decoded.decoded.toBase64() != encoded) return false;
+                change.payload = decoded.decoded;
+            }
+            draft.changes.append(change);
+        }
+    }
     return true;
 }
 
@@ -225,6 +281,138 @@ void PersonalWorkingCopyClient::reopen(const PersonalRepositoryTarget &target,
             return;
         }
         completion(draft, QString());
+    });
+}
+
+void PersonalWorkingCopyClient::acquireLease(
+    const PersonalRepositoryTarget &target, const QString &draft_id,
+    const QString &session_id, int seconds, LeaseCompletion completion)
+{
+    if (!DvmdbIdentity::isUuidV7(draft_id) || !DvmdbIdentity::isUuidV7(session_id)
+        || seconds < 1 || seconds > 120)
+    {
+        completion({}, QStringLiteral("Invalid draft/session UUIDv7 or lease duration."));
+        return;
+    }
+    request(target, "POST", QStringLiteral("/working-copies/") + draft_id
+                + QStringLiteral("/lease"),
+            QJsonObject{{QStringLiteral("sessionId"), session_id},
+                        {QStringLiteral("seconds"), seconds}},
+            [completion = std::move(completion)](const QJsonObject &response,
+                                                 const QString &error)
+    {
+        if (!error.isEmpty()) { completion({}, error); return; }
+        PersonalWorkingCopyLease lease;
+        lease.token = response.value(QStringLiteral("token")).toString();
+        lease.generation = response.value(QStringLiteral("generation")).toString();
+        lease.expires_at_ms = response.value(QStringLiteral("expiresAtMs")).toString();
+        if (!DvmdbIdentity::isUuidV7(lease.token) || !decimal(lease.generation)
+            || !decimal(lease.expires_at_ms))
+        {
+            completion({}, QStringLiteral("Invalid writer-lease response."));
+            return;
+        }
+        completion(lease, {});
+    });
+}
+
+void PersonalWorkingCopyClient::saveChanges(
+    const PersonalRepositoryTarget &target, const QString &draft_id,
+    const QString &session_id, const QString &fencing_token,
+    const QString &expected_generation,
+    const QList<PersonalWorkingCopyChange> &changes, DraftCompletion completion)
+{
+    bool generation_ok = false;
+    const qulonglong generation = expected_generation.toULongLong(&generation_ok);
+    if (!DvmdbIdentity::isUuidV7(draft_id) || !DvmdbIdentity::isUuidV7(session_id)
+        || !DvmdbIdentity::isUuidV7(fencing_token) || !decimal(expected_generation)
+        || !generation_ok || changes.isEmpty() || changes.size() > 128
+        || generation == std::numeric_limits<qulonglong>::max())
+    {
+        completion({}, QStringLiteral("Invalid draft save identifiers, generation or batch size."));
+        return;
+    }
+    QJsonArray batch;
+    QSet<QString> seen;
+    for (const PersonalWorkingCopyChange &change : changes)
+    {
+        if (!modelKeyUuid(change.uuid) || seen.contains(change.uuid)
+            || change.references.size() > 65535 || change.payload.size() > 8 * 1024 * 1024)
+        {
+            completion({}, QStringLiteral("Invalid or duplicate model-record UUID in draft Save."));
+            return;
+        }
+        seen.insert(change.uuid);
+        if (change.deleted)
+        {
+            batch.append(QJsonObject{{QStringLiteral("uuid"), change.uuid},
+                                     {QStringLiteral("delete"), true}});
+            continue;
+        }
+        QJsonArray references;
+        for (const QString &reference : change.references)
+        {
+            if (!modelKeyUuid(reference))
+            {
+                completion({}, QStringLiteral("Invalid model-record reference UUIDv7."));
+                return;
+            }
+            references.append(reference);
+        }
+        batch.append(QJsonObject{{QStringLiteral("uuid"), change.uuid},
+                                 {QStringLiteral("kind"), static_cast<int>(change.kind)},
+                                 {QStringLiteral("references"), references},
+                                 {QStringLiteral("payloadBase64"),
+                                  QString::fromLatin1(change.payload.toBase64())}});
+    }
+    request(target, "POST", QStringLiteral("/working-copies/") + draft_id
+                + QStringLiteral("/save"),
+            QJsonObject{{QStringLiteral("sessionId"), session_id},
+                        {QStringLiteral("fencingToken"), fencing_token},
+                        {QStringLiteral("expectedGeneration"), expected_generation},
+                        {QStringLiteral("changes"), batch}},
+            [completion = std::move(completion), draft_id, generation]
+            (const QJsonObject &response, const QString &error)
+    {
+        if (!error.isEmpty())
+        {
+            completion({}, error + QStringLiteral(
+                " Check the saved draft and its generation before retrying; "
+                "the server may have completed this Save."));
+            return;
+        }
+        PersonalWorkingCopyInfo draft;
+        if (!parseDraft(response, draft) || draft.id != draft_id
+            || draft.generation != QString::number(generation + 1) || !draft.dirty)
+        {
+            completion({}, QStringLiteral("Save response has an unexpected draft identity or generation. "
+                "Reopen the draft before any further Save."));
+            return;
+        }
+        completion(draft, {});
+    });
+}
+
+void PersonalWorkingCopyClient::releaseLease(
+    const PersonalRepositoryTarget &target, const QString &draft_id,
+    const QString &session_id, const QString &fencing_token, Completion completion)
+{
+    if (!DvmdbIdentity::isUuidV7(draft_id) || !DvmdbIdentity::isUuidV7(session_id)
+        || !DvmdbIdentity::isUuidV7(fencing_token))
+    {
+        completion(QStringLiteral("Invalid draft, session or fencing UUIDv7."));
+        return;
+    }
+    request(target, "POST", QStringLiteral("/working-copies/") + draft_id
+                + QStringLiteral("/release"),
+            QJsonObject{{QStringLiteral("sessionId"), session_id},
+                        {QStringLiteral("fencingToken"), fencing_token}},
+            [completion = std::move(completion)](const QJsonObject &response,
+                                                 const QString &error)
+    {
+        if (!error.isEmpty()) { completion(error); return; }
+        completion(response.value(QStringLiteral("released")) == QJsonValue(true)
+            ? QString() : QStringLiteral("Invalid lease-release response."));
     });
 }
 

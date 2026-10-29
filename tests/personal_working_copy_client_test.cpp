@@ -23,6 +23,8 @@ const QString project_id = QStringLiteral("019a47b1-2041-7af9-8d1c-2670badb6371"
 const QString branch_id = QStringLiteral("019a47b1-2042-7af9-8d1c-2670badb6371");
 const QString draft_id = QStringLiteral("019a47b1-2043-7af9-8d1c-2670badb6371");
 const QString head_id = QStringLiteral("019a47b1-2044-7af9-8d1c-2670badb6371");
+const QString lease_token = QStringLiteral("019a47b1-2045-7af9-8d1c-2670badb6371");
+const QString entity_id = QStringLiteral("019a47b1-2046-7af9-8d1c-2670badb6371");
 
 bool check(bool value, const char *message)
 {
@@ -60,6 +62,13 @@ public:
     int creating_count = 0;
     int open_count = 0;
     QJsonObject last_create;
+    QJsonObject last_save;
+    QJsonArray saved_changes;
+    QString lease_session;
+    int save_count = 0;
+    int release_count = 0;
+    int generation = 0;
+    bool malformed_overlay = false;
 
     QByteArray bundlePayload() const
     {
@@ -149,10 +158,58 @@ public:
                         document.insert(QStringLiteral("baseRevision"), request_body.value(QStringLiteral("baseRevision")));
                         status = 201;
                     }
+                    else if (request_line.startsWith("POST /dvmdb/v1/working-copies/") &&
+                             request_line.contains("/lease "))
+                    {
+                        this->lease_session = request_body.value(QStringLiteral("sessionId")).toString();
+                        document = QJsonObject{{QStringLiteral("token"), lease_token},
+                            {QStringLiteral("generation"), QString::number(this->generation)},
+                            {QStringLiteral("expiresAtMs"), QStringLiteral("1800000000000")}};
+                    }
+                    else if (request_line.startsWith("POST /dvmdb/v1/working-copies/") &&
+                             request_line.contains("/save "))
+                    {
+                        this->last_save = request_body;
+                        if (request_body.value(QStringLiteral("sessionId")).toString() != this->lease_session
+                            || request_body.value(QStringLiteral("fencingToken")).toString() != lease_token
+                            || request_body.value(QStringLiteral("expectedGeneration")).toString()
+                                != QString::number(this->generation))
+                        {
+                            status = 409;
+                            document.insert(QStringLiteral("error"), QStringLiteral("stale writer"));
+                        }
+                        else
+                        {
+                            ++this->save_count;
+                            ++this->generation;
+                            this->saved_changes = request_body.value(QStringLiteral("changes")).toArray();
+                            document = draftRecord(this->lease_session);
+                        }
+                    }
+                    else if (request_line.startsWith("POST /dvmdb/v1/working-copies/") &&
+                             request_line.contains("/release "))
+                    {
+                        if (request_body.value(QStringLiteral("fencingToken")).toString() != lease_token
+                            || request_body.value(QStringLiteral("sessionId")).toString() != this->lease_session)
+                            status = 409;
+                        else
+                        {
+                            ++this->release_count;
+                            this->lease_session.clear();
+                            document.insert(QStringLiteral("released"), true);
+                        }
+                    }
                     else if (request_line.startsWith("GET /dvmdb/v1/working-copies/"))
                     {
                         ++this->open_count;
                         document = draftRecord(QString());
+                        document.insert(QStringLiteral("changes"), this->saved_changes);
+                        if (this->malformed_overlay)
+                            document.insert(QStringLiteral("changes"), QJsonArray{
+                                QJsonObject{{QStringLiteral("uuid"), entity_id},
+                                    {QStringLiteral("kind"), 4},
+                                    {QStringLiteral("references"), QJsonArray{}},
+                                    {QStringLiteral("payloadBase64"), QStringLiteral("@@@")}}});
                     }
                     else
                     {
@@ -187,8 +244,8 @@ public:
             {QStringLiteral("branchId"), branch_id},
             {QStringLiteral("baseRevision"), QJsonValue(QJsonValue::Null)},
             {QStringLiteral("sessionId"), session.isEmpty() ? head_id : session},
-            {QStringLiteral("generation"), QStringLiteral("0")},
-            {QStringLiteral("dirty"), false}};
+            {QStringLiteral("generation"), QString::number(this->generation)},
+            {QStringLiteral("dirty"), this->generation != 0}};
     }
 
     PersonalRepositoryTarget target() const
@@ -322,6 +379,105 @@ int main(int argc, char **argv)
     if (!check(until(application, [&] { return done; }) && !error.isEmpty() &&
                stub.bundle_import_count == 1,
                "checkout imported a bundle with the wrong immutable HEAD")) return 1;
+
+    // A model-record Save must use the exact fenced lease and generation.
+    PersonalWorkingCopyLease lease;
+    done = false;
+    client.acquireLease(stub.target(), draft_id, head_id, 90,
+        [&](const PersonalWorkingCopyLease &result, const QString &failure)
+    {
+        lease = result;
+        error = failure;
+        done = true;
+    });
+    if (!check(until(application, [&] { return done; }) && error.isEmpty()
+               && lease.token == lease_token && lease.generation == QStringLiteral("0"),
+               "lease acquisition did not expose the fencing token and generation")) return 1;
+
+    PersonalWorkingCopyChange update;
+    update.uuid = entity_id;
+    update.kind = 42;
+    update.references.append(project_id);
+    update.payload = QByteArray("AOWIS raw payload \0 bytes", 25);
+    done = false;
+    client.saveChanges(stub.target(), draft_id, head_id, lease.token, lease.generation,
+                       {update}, [&](const PersonalWorkingCopyInfo &draft, const QString &failure)
+    {
+        created = draft;
+        error = failure;
+        done = true;
+    });
+    if (!check(until(application, [&] { return done; }) && error.isEmpty()
+               && created.generation == QStringLiteral("1") && created.dirty
+               && stub.save_count == 1 && stub.saved_changes.size() == 1
+               && stub.saved_changes.first().toObject().value(QStringLiteral("kind")).toInt() == 42
+               && stub.saved_changes.first().toObject().value(QStringLiteral("payloadBase64")).toString()
+                  == QString::fromLatin1(update.payload.toBase64()),
+               "draft Save did not preserve the typed record and exact bytes")) return 1;
+
+    done = false;
+    client.reopen(stub.target(), draft_id,
+        [&](const PersonalWorkingCopyInfo &draft, const QString &failure)
+    {
+        created = draft;
+        error = failure;
+        done = true;
+    });
+    if (!check(until(application, [&] { return done; }) && error.isEmpty()
+               && created.changes.size() == 1 && created.changes.first().uuid == entity_id
+               && created.changes.first().payload == update.payload
+               && created.changes.first().references == update.references,
+               "reopened draft did not decode its saved candidate overlay")) return 1;
+
+    done = false;
+    client.saveChanges(stub.target(), draft_id, head_id, lease.token, lease.generation,
+                       {update}, [&](const PersonalWorkingCopyInfo &, const QString &failure)
+    {
+        error = failure;
+        done = true;
+    });
+    if (!check(until(application, [&] { return done; }) && !error.isEmpty()
+               && stub.save_count == 1,
+               "stale Save overwrote a newer generation")) return 1;
+    done = false;
+    client.saveChanges(stub.target(), draft_id, head_id, draft_id, QStringLiteral("1"),
+                       {update}, [&](const PersonalWorkingCopyInfo &, const QString &failure)
+    {
+        error = failure;
+        done = true;
+    });
+    if (!check(until(application, [&] { return done; }) && !error.isEmpty()
+               && stub.save_count == 1,
+               "stale fencing token was accepted")) return 1;
+
+    stub.malformed_overlay = true;
+    done = false;
+    client.reopen(stub.target(), draft_id,
+        [&](const PersonalWorkingCopyInfo &, const QString &failure)
+    {
+        error = failure;
+        done = true;
+    });
+    if (!check(until(application, [&] { return done; }) && !error.isEmpty(),
+               "malformed candidate model record was accepted on reopening")) return 1;
+    stub.malformed_overlay = false;
+
+    done = false;
+    update.references = {QStringLiteral("not-a-uuid")};
+    client.saveChanges(stub.target(), draft_id, head_id, lease.token, QStringLiteral("1"),
+                       {update}, [&](const PersonalWorkingCopyInfo &, const QString &failure)
+    {
+        error = failure;
+        done = true;
+    });
+    if (!check(done && !error.isEmpty() && stub.save_count == 1,
+               "invalid model reference reached HTTP Save")) return 1;
+
+    done = false;
+    client.releaseLease(stub.target(), draft_id, head_id, lease.token,
+        [&](const QString &failure) { error = failure; done = true; });
+    if (!check(until(application, [&] { return done; }) && error.isEmpty()
+               && stub.release_count == 1, "writer lease was not released")) return 1;
 
     stub.identity = different_repository;
     done = false;
