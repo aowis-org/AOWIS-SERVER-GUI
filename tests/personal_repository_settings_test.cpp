@@ -3,6 +3,7 @@
 #include "settings/personal_repository_settings_widget.h"
 
 #include <QApplication>
+#include <QDir>
 #include <QElapsedTimer>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -113,6 +114,11 @@ int main(int argc, char **argv)
     other.endpoint = QStringLiteral("https://second.example.invalid");
     if (!check(saveProjectServerProfiles({shared, other}), "failed to save shared source fixtures")) return 1;
     if (!check(!loadPersonalRepositoryProfile().has_value(), "personal repository must default to absent")) return 1;
+    if (!check(QDir::cleanPath(defaultPersonalDvmdbPath())
+                   != QDir::cleanPath(defaultLocalDvmdbPath()),
+               "Standalone private repository must not reuse the local project source")) return 1;
+    if (!check(resolvePersonalRepositoryTarget().kind == PersonalRepositoryTarget::Kind::Unavailable,
+               "missing personal HTTP repository must fail closed")) return 1;
 
     {
         PersonalRepositorySettingsWidget page;
@@ -137,6 +143,11 @@ int main(int argc, char **argv)
         if (!check(persisted && persisted->repository_id == personal_id
                    && persisted->endpoint == remote.endpoint(), "personal repository config not persisted")) return 1;
         if (!check(loadProjectServerProfiles().size() == 2, "private repository replaced a source profile")) return 1;
+        const PersonalRepositoryTarget selected = resolvePersonalRepositoryTarget();
+        if (!check(selected.kind == PersonalRepositoryTarget::Kind::Http
+                   && selected.endpoint == remote.endpoint()
+                   && selected.repository_id == personal_id && selected.storage_path.isEmpty(),
+                   "private target was not resolved by its independent HTTP configuration")) return 1;
 
         remote.id = other_id;
         recheck->click();
@@ -180,6 +191,8 @@ int main(int argc, char **argv)
         if (!check(!loadPersonalRepositoryProfile() &&
                    page.verificationState() == PersonalRepositoryMonitor::State::Unconfigured,
                    "removing personal repo did not persist disabled state")) return 1;
+        if (!check(resolvePersonalRepositoryTarget().kind == PersonalRepositoryTarget::Kind::Unavailable,
+                   "removing personal repository must disable target resolution")) return 1;
     }
     std::puts("Personal repository configuration and identity checks passed");
     return 0;

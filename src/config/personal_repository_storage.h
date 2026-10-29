@@ -20,3 +20,20 @@ bool validatePersonalRepositoryProfile(const PersonalRepositoryProfile &profile,
 std::optional<PersonalRepositoryProfile> loadPersonalRepositoryProfile();
 bool savePersonalRepositoryProfile(const PersonalRepositoryProfile &profile);
 bool clearPersonalRepositoryProfile();
+
+// Resolve the intended PRIVATE repository independently of selected source
+// profiles. Resolution does not verify identity/role, establish a session,
+// open the store, or grant permission to edit (VC-04).
+struct PersonalRepositoryTarget
+{
+    enum class Kind { Unavailable, Embedded, Http };
+    Kind kind = Kind::Unavailable;
+    QString storage_path;    // Embedded only, never a shared-source path.
+    QString endpoint;        // HTTP only.
+    QString repository_id;   // Expected HTTP UUIDv7; verified on connection.
+};
+
+// The Standalone private store is a stable, separate root from the built-in
+// local source DVMDB. Neither this getter nor resolve opens the database.
+QString defaultPersonalDvmdbPath();
+PersonalRepositoryTarget resolvePersonalRepositoryTarget();

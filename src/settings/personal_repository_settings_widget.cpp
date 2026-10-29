@@ -1,7 +1,5 @@
 #include "settings/personal_repository_settings_widget.h"
 
-#include "config/project_server_profile_storage.h"
-
 #include <QFormLayout>
 #include <QLabel>
 #include <QHBoxLayout>
@@ -31,10 +29,15 @@ PersonalRepositorySettingsWidget::PersonalRepositorySettingsWidget(QWidget *pare
     layout->addWidget(description);
 
 #ifdef AOWIS_STANDALONE_DVMDB_ENABLED
-    QLabel *embedded = new QLabel(tr(
-        "Standalone uses its dedicated embedded DVMDB at: %1. "
-        "Native repository role/identity verification and draft checkout are not enabled yet.")
-        .arg(defaultLocalDvmdbPath()), this);
+    const PersonalRepositoryTarget target = resolvePersonalRepositoryTarget();
+    QLabel *embedded = new QLabel(
+        target.kind == PersonalRepositoryTarget::Kind::Embedded
+            ? tr("Dedicated personal DVMDB: %1. "
+                 "It is separate from the navigable Local database. "
+                 "Native identity/role verification and draft checkout are not enabled yet.")
+                  .arg(target.storage_path)
+            : tr("The private DVMDB path is also configured as a local project source. "
+                 "Remove the conflicting source before enabling private editing."), this);
     embedded->setObjectName(QStringLiteral("personalRepositoryStandaloneStatus"));
     embedded->setWordWrap(true);
     layout->addWidget(embedded);
@@ -91,7 +94,11 @@ void PersonalRepositorySettingsWidget::restore()
 {
 #ifdef AOWIS_STANDALONE_DVMDB_ENABLED
     updateStatus(PersonalRepositoryMonitor::State::Unconfigured,
-                 tr("Embedded repository identity verification is not yet available."));
+                 resolvePersonalRepositoryTarget().kind == PersonalRepositoryTarget::Kind::Embedded
+                     ? tr("Standalone private repository is selected, but its identity and role "
+                          "have not yet been verified. Editing remains disabled.")
+                     : tr("Private working repository conflicts with a project source. "
+                          "Editing remains disabled."));
 #else
     const std::optional<PersonalRepositoryProfile> profile = loadPersonalRepositoryProfile();
     if (!profile)

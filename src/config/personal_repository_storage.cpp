@@ -1,8 +1,11 @@
 #include "config/personal_repository_storage.h"
 
 #include "config/gui_configuration.h"
+#include "config/project_server_profile_storage.h"
 #include "projects/dvmdb_identity.h"
 
+#include <QDir>
+#include <QStandardPaths>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonParseError>
@@ -128,4 +131,38 @@ bool savePersonalRepositoryProfile(const PersonalRepositoryProfile &profile)
 bool clearPersonalRepositoryProfile()
 {
     return writeProfile(QByteArray(), true);
+}
+
+QString defaultPersonalDvmdbPath()
+{
+    // Separate from aowis-standalone-dvmdb, which is registered as a
+    // navigable project source. Never use the selected source as a draft root.
+    return QDir(QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation))
+        .filePath(QStringLiteral("aowis-personal-dvmdb"));
+}
+
+PersonalRepositoryTarget resolvePersonalRepositoryTarget()
+{
+    PersonalRepositoryTarget target;
+#ifdef AOWIS_STANDALONE_DVMDB_ENABLED
+    const QString private_path = QDir::cleanPath(defaultPersonalDvmdbPath());
+    if (private_path.isEmpty() || private_path == QDir::cleanPath(defaultLocalDvmdbPath()))
+        return target;
+    // A manually added local source must not turn the personal working store
+    // into a navigable/shared database. Fail closed instead of silently
+    // reusing the path under a different role.
+    for (const ProjectServerProfile &source : loadProjectServerProfiles())
+        if (source.connection_type == QStringLiteral("local")
+            && QDir::cleanPath(source.local_path) == private_path)
+            return target;
+    target.kind = PersonalRepositoryTarget::Kind::Embedded;
+    target.storage_path = private_path;
+#else
+    const std::optional<PersonalRepositoryProfile> configured = loadPersonalRepositoryProfile();
+    if (!configured) return target;
+    target.kind = PersonalRepositoryTarget::Kind::Http;
+    target.endpoint = configured->endpoint;
+    target.repository_id = configured->repository_id;
+#endif
+    return target;
 }

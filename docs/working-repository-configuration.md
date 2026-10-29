@@ -21,7 +21,7 @@ without giving it custody of their private draft data.
 
 | Mode | Working DVMDB configuration | Behavior |
 |---|---|---|
-| Standalone | Built-in/native database with configured persistent working repo path | Edit and local commit without HTTP; publish to selected shared source when connected |
+| Standalone | Dedicated native personal DVMDB root (`aowis-personal-dvmdb` under per-user generic data), **not** the navigable `aowis-standalone-dvmdb` local project source | Edit and local commit without HTTP once VC-04 enables verified private checkout; publish to a separately selected shared source |
 | Desktop/basic GUI | **Required** private HTTP DVMDB endpoint and repository identity | Draft saving, checkout and local commit go to that private service |
 | Browser/web GUI | **Required** private HTTP DVMDB endpoint and repository identity | No editing with browser memory alone; server-side durable draft recovery |
 
