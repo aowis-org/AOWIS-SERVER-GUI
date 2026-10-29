@@ -307,6 +307,12 @@ SourceSnapshot loadNative(const ProjectServerProfile &profile,
 {
     SourceSnapshot snapshot;
     aowis::dvmdb::ProjectService service(std::filesystem::path(profile.local_path.toStdString()));
+    if constexpr (requires { service.repositoryId(); })
+        snapshot.repository_id = QString::fromStdString(service.repositoryId());
+    else
+        throw std::runtime_error("Embedded DVMDB is outdated: repositoryId is required for VC-03");
+    if (!DvmdbIdentity::isUuidV7(snapshot.repository_id))
+        throw std::runtime_error("Invalid embedded DVMDB repository identity");
     const std::vector<aowis::dvmdb::ProjectInfo> projects = service.listProjects();
     if (projects.size() > maximum_projects) throw std::runtime_error("Too many projects to display");
     int branch_count = 0;
@@ -354,7 +360,7 @@ void ProjectSourceReader::load(const ProjectServerProfile &profile, Completion c
     this->profile = profile;
     this->completion = std::move(completion);
     this->snapshot = {};
-    this->step = Step::Projects;
+    this->step = Step::Repository;
     this->project_index = 0;
     this->total_branches = 0;
     this->total_revisions = 0;
@@ -417,7 +423,8 @@ void ProjectSourceReader::nextRestRequest(quint64 requested)
         complete(requested);
         return;
     }
-    QString path = QStringLiteral("/projects");
+    QString path = this->step == Step::Repository
+        ? QStringLiteral("/repository") : QStringLiteral("/projects");
     if (this->step == Step::Graph)
     {
         path += QStringLiteral("/") + segment(this->snapshot.projects[this->project_index].id)
@@ -482,6 +489,17 @@ bool ProjectSourceReader::processRestDocument(const QByteArray &json, QString &e
         return false;
     }
     const QJsonObject object = document.object();
+    if (this->step == Step::Repository)
+    {
+        this->snapshot.repository_id = object.value(QStringLiteral("repositoryId")).toString();
+        if (!DvmdbIdentity::isUuidV7(this->snapshot.repository_id))
+        {
+            error = tr("Invalid DVMDB repository UUIDv7.");
+            return false;
+        }
+        this->step = Step::Projects;
+        return true;
+    }
     if (this->step == Step::Projects)
     {
         const QJsonValue projects = object.value(QStringLiteral("projects"));

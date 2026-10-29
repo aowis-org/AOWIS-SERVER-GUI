@@ -54,6 +54,7 @@ struct ProjectPreviewData
 {
     QString id;
     QString backend_id; // raw DVMDB ID, distinct from globally unique GUI ID
+    QString repository_id; // DVMDB root UUID; immutable source identity, not GUI profile ID.
     QString server_id;
     QString name;
     QString description;

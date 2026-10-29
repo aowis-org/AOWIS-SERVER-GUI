@@ -9,6 +9,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QLabel>
 #include <QTcpServer>
 #include <QPushButton>
 #include <QTcpSocket>
@@ -42,6 +43,7 @@ struct FakeDvmdb
 {
     QTcpServer server;
     bool valid = true;
+    QString repository_id = QStringLiteral("018f84c0-0000-7000-8000-00000000d001");
     const QString hash = QStringLiteral("018f84c0-0000-7000-8000-00000000b001");
     const QString project_id = QStringLiteral("018f84c0-0000-7000-8000-00000000a001");
     const QString branch_id = QStringLiteral("018f84c0-0000-7000-8000-00000000c001");
@@ -65,7 +67,10 @@ struct FakeDvmdb
                     QByteArray data = R"({"broken":true})";
                     if (this->valid)
                     {
-                        if (path == "/dvmdb/v1/projects")
+                        if (path == "/dvmdb/v1/repository")
+                            data = QJsonDocument(QJsonObject{
+                                {QStringLiteral("repositoryId"), this->repository_id}}).toJson();
+                        else if (path == "/dvmdb/v1/projects")
                             data = QJsonDocument(QJsonObject{
                                 {QStringLiteral("projects"), QJsonArray{QJsonObject{
                                     {QStringLiteral("id"), this->project_id},
@@ -115,6 +120,7 @@ int main(int argc, char **argv)
     QApplication app(argc, argv);
     FakeDvmdb first;
     FakeDvmdb second;
+    second.repository_id = QStringLiteral("018f84c0-0000-7000-8000-00000000d002");
     if (!require(first.start() && second.start(), "loopback servers failed")) return 1;
 
     ProjectServerProfile a;
@@ -150,6 +156,28 @@ int main(int argc, char **argv)
     if (!require(tree->topLevelItem(0)->child(0)->data(0, Qt::UserRole).toString()
                  != tree->topLevelItem(1)->child(0)->data(0, Qt::UserRole).toString(),
                  "project identities collide across different databases")) return 1;
+    // The source profile name is not a globally unique repository identity.
+    sources->setCurrentItem(sources->topLevelItem(0));
+    app.processEvents();
+    const auto inspectorHasIdentity = [&projects](const QString &identity)
+    {
+        for (QLabel *label : projects.findChildren<QLabel *>())
+            if (label->text().contains(QStringLiteral("DVMDB repository UUIDv7: ") + identity))
+                return true;
+        return false;
+    };
+    if (!require(inspectorHasIdentity(first.repository_id),
+                 "first database UUID was not shown in inspector")) return 1;
+    sources->setCurrentItem(sources->topLevelItem(1));
+    app.processEvents();
+    if (!require(inspectorHasIdentity(second.repository_id),
+                 "second database UUID was not shown separately")) return 1;
+    tree->setCurrentItem(tree->topLevelItem(1)->child(0));
+    app.processEvents();
+    QLabel *metadata = projects.findChild<QLabel *>(QStringLiteral("projectInspectorMetadata"));
+    if (!require(metadata != nullptr
+                 && metadata->text().contains(QStringLiteral("Repository UUIDv7: ") + second.repository_id),
+                 "project inspector lost the repository-qualified project identity")) return 1;
     const QString first_graph_id = QStringLiteral("source-a|") + first.project_id + QStringLiteral("|") + first.hash;
     const QString second_graph_id = QStringLiteral("source-b|") + second.project_id + QStringLiteral("|") + second.hash;
     graph->fitGraph();

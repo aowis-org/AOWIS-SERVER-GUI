@@ -37,8 +37,11 @@ without reopening the entire design discussion.
   visible; private drafts do not appear as committed revision cards.
 - **Branch provenance:** source branch UUID and precise immutable fork UUID
   are displayed in the inspector, not an additional graph ancestry edge.
-- **Permissions:** intentionally a separate later design; private HTTP
-  services **must be deployment-isolated** until proper authorization exists.
+- **Security boundary:** authentication, authorization, permissions, credentials,
+  auditing and multi-user security design are **not part of this version-control
+  implementation roadmap**. Record ideas only in
+  [deferred security considerations](deferred-security-considerations.md).
+  An HTTP repository URL or UUID identifies a target, not an authenticated user.
 
 No code patch may substitute the earlier fabricated empty revision, a
 writable shared HEAD, two ancestry parents for a branch reference, or a
@@ -65,8 +68,10 @@ being implemented.
 **Operational parameters:** lease duration, draft quotas/recovery windows,
 operation-status retention, conflict-report payloads and exact endpoint/config
 names must be documented and tested in the appropriate milestone. The agreed
-lifecycle is not open for renegotiation. VC-12 authentication/permissions
-remain deferred; private HTTP editing requires deployment isolation.
+lifecycle is not open for renegotiation. Security design has **no VC milestone
+and is not an acceptance dependency** for the database/graph implementation.
+Any operational exposure risks are described separately in the
+[security backlog](deferred-security-considerations.md).
 
 ## C. Milestone order and concrete GUI work
 
@@ -150,7 +155,8 @@ creation, UTF-8 labels with spaces, native/REST parity.
    mutable-HEAD identifier.
 4. Make missing/failed private HTTP repo a visible **read-only editing
    disabled** state; do not save drafts to browser memory or shared DVMDB as
-   a fallback. Never write credentials into plain-text config or logs.
+   a fallback. Credentials and account features are explicitly outside this
+   milestone; the future security backlog remains separate.
 5. Add settings/restart/connection-state tests, including multiple shared
    sources with one personal working DVMDB.
 
@@ -317,23 +323,12 @@ alongside shared publication and conflict recovery for all supported modes.
 **Exit:** all scenarios in section E pass with evidence; no unsupported
 backend contract is hidden behind GUI fallback code.
 
-### VC-12 — Permissions, safety and deployment qualification
-
-**Later design track; mandatory before exposing multi-user/public writable
-HTTP services.** See `AOWIS-SERVER-DVMDB/docs/security-permissions-design.md`.
-
-1. Add authenticated identity and explicit authorization for personal
-   repositories, projects, drafts, branches, fetch/push and administration.
-2. Provide secure credentials, deny-by-default errors, audit events and
-   owner/session-aware UI. No client-provided `ownerId` is trusted alone.
-3. Test malicious cross-user access, replay, wrong remote, unauthorized
-   draft retrieval, secret leakage and revocation.
-4. Until approved, private HTTP working DVMDBs must be isolated outside
-   public multi-user reach; a URL/config value is never an access-control
-   mechanism.
-
-**Exit:** security-specific test/review evidence approves writable remote
-multi-user deployment independently of the VC-11 functional release gate.
+**Security is deliberately outside VC-00 through VC-11.** No authentication,
+permission or deployment-hardening milestone follows VC-11 in this roadmap.
+Possible future AOWIS-wide work is documented solely in
+[deferred security considerations](deferred-security-considerations.md) and
+DVMDB's `docs/security-permissions-design.md`; those documents are not
+prerequisites for completing the database/graph integration.
 
 ## D. Shared milestone matrix and dependency rules
 
@@ -351,7 +346,6 @@ multi-user deployment independently of the VC-11 functional release gate.
 | VC-09 | Pinned full revision DAG | True Git-style revision graph and inspector |
 | VC-10 | Native/REST complete parity | Integrated user workflow in all GUI modes |
 | VC-11 | Format/fault/replica qualification | Real Qt/Standalone/browser acceptance |
-| VC-12 | Authentication and authorization | Permission-aware multi-user UI |
 
 **Sequencing:** A backend API stage can be implemented before its matching
 GUI stage; the GUI may prepare read-only UI in parallel. **Do not enable**
@@ -389,19 +383,18 @@ clear unsupported/read-only state, not a substitute request to a shared repo.
     correct non-destructive errors and status.
 12. All variants expose data-consistent state after recovery, replication,
     compaction and backend upgrades; no old empty-root assumptions leak in.
-13. Public/other-user writable exposure remains disallowed until VC-12.
-14. Cloned logical branch UUID remains identical in personal and shared
+13. Cloned logical branch UUID remains identical in personal and shared
     repositories while their HEADs differ; selecting a shared branch never
     silently targets the private HEAD of another repository.
-15. Reopening one draft in multiple sessions exposes read-only and writer
+14. Reopening one draft in multiple sessions exposes read-only and writer
     lease/fencing states; stale generation Save is rejected after takeover.
-16. Lost Commit/Publish response is recovered by original operation UUID,
+15. Lost Commit/Publish response is recovered by original operation UUID,
     with pending/succeeded/rejected display and no duplicate write.
-17. Existing committed initial R0 remains visible after upgrade; only
+16. Existing committed initial R0 remains visible after upgrade; only
     newly created projects show unborn `main`.
-18. New local branch is provisioned explicitly at the shared repository
+17. New local branch is provisioned explicitly at the shared repository
     with its own stable branch UUID; absence is distinct from null HEAD.
-19. Initial conflict workflow is explicit validated three-way merge, not
+18. Initial conflict workflow is explicit validated three-way merge, not
     automatic rebase, force-push or silent resolution.
 
 ## F. Thread handoff and status discipline

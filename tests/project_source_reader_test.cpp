@@ -39,6 +39,7 @@ int main(int argc, char **argv)
     QTcpServer server;
     if (!require(server.listen(QHostAddress::LocalHost, 0), "cannot start REST mock")) return 1;
     const QString project_id = QStringLiteral("018f84c0-0000-7000-8000-000000000900");
+    const QString repository_id = QStringLiteral("018f84c0-0000-7000-8000-000000000999");
     const QString a = QStringLiteral("018f84c0-0000-7000-8000-000000000001");
     const QString b = QStringLiteral("018f84c0-0000-7000-8000-000000000002");
     const QString c = QStringLiteral("018f84c0-0000-7000-8000-000000000003");
@@ -90,6 +91,7 @@ int main(int argc, char **argv)
     bool unborn_project = false;
     bool first_commit_project = false;
     bool invalid_unborn_digest = false;
+    bool invalid_repository_id = false;
     QObject::connect(&server, &QTcpServer::newConnection, &server, [&]
     {
         while (server.hasPendingConnections())
@@ -101,7 +103,8 @@ int main(int argc, char **argv)
                  &corrupt_branch_id, &corrupt_origin_id, &corrupt_fork_id, &change_pinned_fork,
                  &unreachable_fork,
                  &unborn_project, &first_commit_project,
-                 &invalid_unborn_digest, project_id, a, b, c, d, e, branch_main,
+                 &invalid_unborn_digest, &invalid_repository_id, repository_id,
+                 project_id, a, b, c, d, e, branch_main,
                  branch_feature, branch_alias, branch_history, record, head]
             {
                 buffer->append(socket->readAll());
@@ -109,7 +112,11 @@ int main(int argc, char **argv)
                 const QByteArray path = buffer->split(' ').value(1);
                 requests.append(QString::fromLatin1(path));
                 QByteArray body;
-                if (path == "/dvmdb/v1/projects")
+                if (path == "/dvmdb/v1/repository")
+                    body = QJsonDocument(QJsonObject{
+                        {QStringLiteral("repositoryId"), invalid_repository_id
+                            ? QStringLiteral("invalid") : repository_id}}).toJson();
+                else if (path == "/dvmdb/v1/projects")
                     body = QJsonDocument(QJsonObject{{QStringLiteral("projects"), QJsonArray{
                         QJsonObject{{QStringLiteral("id"), project_id},
                                     {QStringLiteral("name"), QStringLiteral("Waterworks")}}}}}).toJson();
@@ -199,8 +206,9 @@ int main(int argc, char **argv)
         return waitUntil(app, [&] { return finished; });
     };
     if (!require(load(), "canonical REST reader timed out")) return 1;
-    if (!require(failure.isEmpty() && received.projects.size() == 1,
-                 "canonical graph refresh failed")) return 1;
+    if (!require(failure.isEmpty() && received.projects.size() == 1
+                 && received.repository_id == repository_id,
+                 "canonical graph refresh lost its repository UUID")) return 1;
     const SourceProject &project = received.projects.first();
     if (!require(project.graph_complete && project.id == project_id
         && project.branches.size() == 4 && project.revisions.size() == 5
@@ -219,10 +227,18 @@ int main(int argc, char **argv)
         && project.revisions.first().parent_record_sha256 == QStringList({digests.value(c),digests.value(d)})
         && project.revisions.first().record_sha256 == digests.value(e),
         "UUIDv7 branch/merge identities or SHA record binding lost")) return 1;
-    if (!require(requests.size() == 3
-        && requests.at(1) == QStringLiteral("/dvmdb/v1/projects/%1/revision-graph?limit=256").arg(project_id)
-        && requests.at(2) == QStringLiteral("/dvmdb/v1/projects/%1/revision-graph?limit=256&cursor=page-2").arg(project_id),
+    if (!require(requests.size() == 4
+        && requests.at(0) == QStringLiteral("/dvmdb/v1/repository")
+        && requests.at(1) == QStringLiteral("/dvmdb/v1/projects")
+        && requests.at(2) == QStringLiteral("/dvmdb/v1/projects/%1/revision-graph?limit=256").arg(project_id)
+        && requests.at(3) == QStringLiteral("/dvmdb/v1/projects/%1/revision-graph?limit=256&cursor=page-2").arg(project_id),
         "pinned graph pagination did not use the canonical route")) return 1;
+
+    invalid_repository_id = true;
+    if (!require(load() && !failure.isEmpty() && received.projects.isEmpty()
+                 && received.repository_id.isEmpty(),
+                 "reader accepted an invalid repository identity")) return 1;
+    invalid_repository_id = false;
 
     change_pinned_head = true;
     if (!require(load() && !failure.isEmpty() && received.projects.isEmpty(),

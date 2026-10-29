@@ -3,7 +3,7 @@
 **Normative GUI integration design**, coordinated with the
 [DVMDB personal repository contract](../../AOWIS-SERVER-DVMDB/docs/private-working-repositories.md),
 [Projects workspace](projects-workspace.md), and
-[security backlog](../../AOWIS-SERVER-DVMDB/docs/security-permissions-design.md).
+[deferred security notes](deferred-security-considerations.md).
 The [GUI implementation roadmap](dvmdb-integration-roadmap.md) lists the
 backend prerequisites, per-user configuration work, decision gates and tests.
 Actual configuration names and widgets are to be implemented; example field
@@ -26,8 +26,9 @@ without giving it custody of their private draft data.
 | Browser/web GUI | **Required** private HTTP DVMDB endpoint and repository identity | No editing with browser memory alone; server-side durable draft recovery |
 
 One configured working repo belongs to one intended user and can serve
-multiple of their sessions, projects and devices (subject to later identity
-and authorization rules). Each session creates its **own working-copy UUID**
+multiple of their sessions, projects and devices. This is a functional
+repository-selection model, not an authentication or ownership policy.
+Each session creates its **own working-copy UUID**
 by default. Reopening one existing draft requires an exclusive expiring
 writer lease, fencing token and expected saved-state generation on every
 Save; read-only sessions may inspect the draft, and a stale writer never
@@ -48,8 +49,9 @@ repositoryId=<user-private-repository-uuidv7>
 ```
 
 Shared project connections remain separate GUI database-source profiles.
-Do not put access tokens or passwords in this file. Store credential handles
-in an approved secure provider once authentication is implemented.
+This version-control configuration does not define access tokens, passwords,
+accounts or an authentication mechanism. Any future credential handling is
+separate [security backlog](deferred-security-considerations.md) work.
 
 ## Startup and connectivity behavior
 
@@ -80,9 +82,11 @@ in an approved secure provider once authentication is implemented.
    while new projects start unborn.
 
 The private HTTP service being configured does **not** prove that only the
-intended user can access it. Until the security phase, this must be enforced
-by deployment isolation. Do not expose a shared unauthenticated editing
-service and call it a personal working repository.
+intended user can access it. Treat unauthenticated HTTP editing as suitable
+only for a controlled, isolated deployment; do not expose it publicly.
+This is operational guidance, **not** an additional VC implementation milestone
+or an acceptance gate for this document. See the
+[deferred security notes](deferred-security-considerations.md).
 
 ## GUI acceptance
 

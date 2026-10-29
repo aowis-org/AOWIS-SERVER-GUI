@@ -48,6 +48,9 @@ struct SourceProject
 
 struct SourceSnapshot
 {
+    // Identity of the DVMDB root that owns these independently mutable HEADs.
+    // This is graph/tracking metadata, not authorization or a profile label.
+    QString repository_id;
     QList<SourceProject> projects;
 };
 
@@ -64,7 +67,7 @@ public:
     void cancel();
 
 private:
-    enum class Step { Projects, Graph };
+    enum class Step { Repository, Projects, Graph };
     void nextRestRequest(quint64 generation);
     void complete(quint64 generation, const QString &error = QString());
     bool processRestDocument(const QByteArray &json, QString &error);

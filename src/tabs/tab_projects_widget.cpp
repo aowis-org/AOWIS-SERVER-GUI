@@ -132,6 +132,7 @@ struct ProjectsWidget::SourceSession
     HttpHealthMonitor *health = nullptr; // only remote sources have HTTP health monitoring
     QTimer *refresh = nullptr;
     SourceState state = SourceState::Checking;
+    QString repository_id;
     QString error;
     bool loading = false;
 };
@@ -1256,8 +1257,15 @@ void ProjectsWidget::loadSource(const QString &id)
             current->state = SourceState::Error;
             current->error = error;
         }
+        else if (!current->repository_id.isEmpty()
+                 && current->repository_id != snapshot.repository_id)
+        {
+            current->state = SourceState::Error;
+            current->error = tr("The database repository UUID changed; refusing to mix unrelated histories.");
+        }
         else
         {
+            current->repository_id = snapshot.repository_id;
             for (int index = this->projects.size() - 1; index >= 0; --index)
                 if (this->projects.at(index).database_backed
                     && this->projects.at(index).server_id == id)
@@ -1292,6 +1300,7 @@ void ProjectsWidget::loadSource(const QString &id)
         populateServerTree();
         updateEmptyState();
         updateConnectionStatus();
+        if (this->server_id == id) updateInspector();
         updateButtons();
     });
 }
@@ -1308,6 +1317,7 @@ void ProjectsWidget::applySourceSnapshot(const QString &source_id, const SourceS
         ProjectPreviewData project;
         project.id = source_id + QStringLiteral("|") + entry.id;
         project.backend_id = entry.id;
+        project.repository_id = snapshot.repository_id;
         project.server_id = source_id;
         project.name = entry.name;
         project.database_backed = true;
@@ -2200,6 +2210,9 @@ void ProjectsWidget::updateInspector()
             subtitle = server->connection_type == QStringLiteral("local")
                 ? tr("Embedded DVMDB") : tr("REST DVMDB");
             metadata = tr("Profile: %1").arg(server->id);
+            const SourceSession *session = this->source_sessions.value(server->id, nullptr);
+            if (session != nullptr && !session->repository_id.isEmpty())
+                metadata += tr("\nDVMDB repository UUIDv7: %1").arg(session->repository_id);
         }
     }
     else if (this->selection_kind == SelectionKind::Project && project != nullptr)
@@ -2211,6 +2224,8 @@ void ProjectsWidget::updateInspector()
         metadata = project->database_backed
             ? tr("DVMDB project ID: %1 (read-only)").arg(project->backend_id)
             : tr("Preview project ID: %1").arg(project->id);
+        if (project->database_backed && !project->repository_id.isEmpty())
+            metadata += tr("\nRepository UUIDv7: %1").arg(project->repository_id);
         if (!project->source_example_resource.isEmpty())
         {
             metadata += tr("\nSource: bundled example (%1)\n"
