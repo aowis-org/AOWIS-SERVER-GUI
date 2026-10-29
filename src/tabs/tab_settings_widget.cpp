@@ -3,6 +3,7 @@
 #include "settings/keyboard_shortcuts_settings_widget.h"
 #include "settings/map_settings_widget.h"
 #include "settings/units_settings_widget.h"
+#include "settings/personal_repository_settings_widget.h"
 
 #include <QFrame>
 #include <QHBoxLayout>
@@ -40,6 +41,10 @@ SettingsWidget::SettingsWidget(QWidget *parent)
     this->units_settings_page = new UnitsSettingsWidget(this->pages);
     this->table_of_contents->addItem(QStringLiteral("Units"));
     this->pages->addWidget(this->units_settings_page);
+
+    this->personal_repository_page = new PersonalRepositorySettingsWidget(this->pages);
+    this->table_of_contents->addItem(QStringLiteral("Personal Repository"));
+    this->pages->addWidget(this->personal_repository_page);
 
     connect(this->table_of_contents, &QListWidget::currentRowChanged,
             this, [this](int row)

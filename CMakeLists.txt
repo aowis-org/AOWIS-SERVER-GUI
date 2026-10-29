@@ -171,6 +171,8 @@ qt_add_executable(aowis-server-gui
     src/config/map_server_client_configuration.h
     src/config/project_server_profile_storage.cpp
     src/config/project_server_profile_storage.h
+    src/config/personal_repository_storage.cpp
+    src/config/personal_repository_storage.h
     src/config/shortcut_registry.cpp
     src/config/shortcut_registry.h
 
@@ -204,6 +206,9 @@ qt_add_executable(aowis-server-gui
     src/settings/map_settings_widget.h
     src/settings/units_settings_widget.cpp
     src/settings/units_settings_widget.h
+    src/settings/personal_repository_settings_widget.cpp
+    src/settings/personal_repository_settings_widget.h
+    src/services/personal_repository_monitor.h
 
     # Tabs
     src/tabs/tab_alarms_widget.cpp
@@ -683,6 +688,27 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
     target_link_libraries(aowis-project-source-writer-tests PRIVATE Qt6::Core Qt6::Network)
     add_test(NAME aowis-project-source-writer COMMAND aowis-project-source-writer-tests)
     set_tests_properties(aowis-project-source-writer PROPERTIES LABELS "aowis")
+
+    # VC-03: private working repository is independently configured and must
+    # verify its UUID and private role, never inherit the active shared source.
+    add_executable(aowis-personal-repository-settings-tests
+        tests/personal_repository_settings_test.cpp
+        src/settings/personal_repository_settings_widget.cpp
+        src/settings/personal_repository_settings_widget.h
+        src/services/personal_repository_monitor.h
+        src/config/personal_repository_storage.cpp
+        src/config/personal_repository_storage.h
+        src/config/project_server_profile_storage.cpp
+        src/config/project_server_profile_storage.h
+        src/config/gui_configuration.cpp)
+    target_include_directories(aowis-personal-repository-settings-tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(aowis-personal-repository-settings-tests PRIVATE
+        Qt6::Widgets Qt6::Network)
+    add_test(NAME aowis-personal-repository-settings
+        COMMAND aowis-personal-repository-settings-tests)
+    set_tests_properties(aowis-personal-repository-settings PROPERTIES
+        LABELS "aowis" ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
     # Projects uses a real nested dock: closing it must leave the graph
     # visible and selections must still synchronize while it is hidden.
