@@ -10,6 +10,7 @@
 #include <QTcpServer>
 #include <QTcpSocket>
 #include <QThread>
+#include <QUuid>
 
 #include <cstdio>
 #include <functional>
@@ -48,10 +49,25 @@ public:
     QTcpServer server;
     QString identity = repository_id;
     QString role = QStringLiteral("private");
+    bool is_source = false;
+    QString source_head = head_id;
+    QString bundle_head = head_id;
+    int provision_count = 0;
+    int bundle_export_count = 0;
+    int bundle_import_count = 0;
+    QJsonObject last_provision;
     int listing_count = 0;
     int creating_count = 0;
     int open_count = 0;
     QJsonObject last_create;
+
+    QByteArray bundlePayload() const
+    {
+        QByteArray result(96, '\0');
+        result.replace(0, 8, "AOWREV21");
+        result.replace(40, 16, QUuid(this->bundle_head).toRfc4122());
+        return result;
+    }
 
     bool listen()
     {
@@ -80,7 +96,41 @@ public:
                         buffer->mid(headers_end + 4, content_length)).object();
                     QJsonObject document;
                     int status = 200;
-                    if (request_line.startsWith("GET /dvmdb/v1/repository/tracking "))
+                    bool binary_response = false;
+                    if (request_line.startsWith("GET /dvmdb/v1/repository "))
+                    {
+                        document.insert(QStringLiteral("repositoryId"), this->identity);
+                    }
+                    else if (request_line.startsWith("GET /dvmdb/v1/projects/") &&
+                             request_line.contains("/head ") && this->is_source)
+                    {
+                        document.insert(QStringLiteral("id"), this->source_head);
+                    }
+                    else if (request_line.startsWith("GET /dvmdb/v1/projects/") &&
+                             request_line.contains("/bundle ") && this->is_source)
+                    {
+                        ++this->bundle_export_count;
+                        binary_response = true;
+                    }
+                    else if (request_line.startsWith("POST /dvmdb/v1/projects/clone-target ") &&
+                             !this->is_source)
+                    {
+                        ++this->provision_count;
+                        this->last_provision = request_body;
+                        document.insert(QStringLiteral("id"), project_id);
+                    }
+                    else if (request_line.startsWith("POST /dvmdb/v1/projects/") &&
+                             request_line.contains("/bundle ") && !this->is_source)
+                    {
+                        if (buffer->mid(headers_end + 4, content_length) == bundlePayload())
+                        {
+                            ++this->bundle_import_count;
+                            status = 201;
+                            document.insert(QStringLiteral("head"), head_id);
+                        }
+                        else status = 400;
+                    }
+                    else if (request_line.startsWith("GET /dvmdb/v1/repository/tracking "))
                     {
                         document.insert(QStringLiteral("repositoryId"), this->identity);
                         document.insert(QStringLiteral("role"), this->role);
@@ -109,9 +159,13 @@ public:
                         status = 404;
                         document.insert(QStringLiteral("error"), QStringLiteral("Not found"));
                     }
-                    const QByteArray payload = QJsonDocument(document).toJson(QJsonDocument::Compact);
+                    const QByteArray payload = binary_response ? bundlePayload() :
+                        QJsonDocument(document).toJson(QJsonDocument::Compact);
+                    const QByteArray contentType = binary_response ?
+                        QByteArray("application/vnd.aowis.revision-bundle-v2") : QByteArray("application/json");
                     socket->write("HTTP/1.1 " + QByteArray::number(status) +
-                                  " OK\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: "
+                                  " OK\r\nContent-Type: " + contentType +
+                                  "\r\nConnection: close\r\nContent-Length: "
                                   + QByteArray::number(payload.size()) + "\r\n\r\n" + payload);
                     socket->disconnectFromHost();
                 });
@@ -219,6 +273,55 @@ int main(int argc, char **argv)
     });
     if (!check(done && !error.isEmpty() && stub.creating_count == 2,
                "unconfigured personal repository silently used a source profile")) return 1;
+
+    // New GUI checkout: validate remote identity/HEAD, provision the same
+    // logical project UUID, and transfer a full revision bundle privately.
+    Stub source;
+    source.identity = different_repository;
+    source.role = QStringLiteral("shared");
+    source.is_source = true;
+    if (!check(source.listen(), "could not start shared source DVMDB fixture")) return 1;
+    done = false;
+    client.checkoutCommittedBranch(stub.target(), source.target().endpoint,
+        different_repository, project_id, QStringLiteral("Network test"),
+        QStringLiteral("main"), head_id,
+        [&](const QString &failure) { error = failure; done = true; });
+    if (!check(until(application, [&] { return done; }) && error.isEmpty() &&
+               source.bundle_export_count == 1 && stub.provision_count == 1 &&
+               stub.bundle_import_count == 1 &&
+               stub.last_provision.value(QStringLiteral("projectId")).toString() == project_id &&
+               stub.last_provision.value(QStringLiteral("name")).toString() == QStringLiteral("Network test"),
+               "checkout did not transfer the expected project, branch and HEAD")) return 1;
+    done = false;
+    client.checkoutCommittedBranch(stub.target(), source.target().endpoint,
+        repository_id, project_id, QStringLiteral("Network test"),
+        QStringLiteral("main"), head_id,
+        [&](const QString &failure) { error = failure; done = true; });
+    if (!check(until(application, [&] { return done; }) && !error.isEmpty() &&
+               stub.provision_count == 1 && stub.bundle_import_count == 1,
+               "checkout accepted a mismatched source repository identity")) return 1;
+    source.source_head = draft_id;
+    done = false;
+    client.checkoutCommittedBranch(stub.target(), source.target().endpoint,
+        different_repository, project_id, QStringLiteral("Network test"),
+        QStringLiteral("main"), head_id,
+        [&](const QString &failure) { error = failure; done = true; });
+    if (!check(until(application, [&] { return done; }) && !error.isEmpty() &&
+               stub.provision_count == 1 && stub.bundle_import_count == 1,
+               "checkout accepted a changed source HEAD")) return 1;
+
+    // A source commit during bundle export must not silently import a
+    // different immutable HEAD into the private repository.
+    source.source_head = head_id;
+    source.bundle_head = draft_id;
+    done = false;
+    client.checkoutCommittedBranch(stub.target(), source.target().endpoint,
+        different_repository, project_id, QStringLiteral("Network test"),
+        QStringLiteral("main"), head_id,
+        [&](const QString &failure) { error = failure; done = true; });
+    if (!check(until(application, [&] { return done; }) && !error.isEmpty() &&
+               stub.bundle_import_count == 1,
+               "checkout imported a bundle with the wrong immutable HEAD")) return 1;
 
     stub.identity = different_repository;
     done = false;

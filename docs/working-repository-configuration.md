@@ -53,6 +53,26 @@ This version-control configuration does not define access tokens, passwords,
 accounts or an authentication mechanism. Any future credential handling is
 separate [security backlog](deferred-security-considerations.md) work.
 
+## Committed branch checkout into a personal HTTP repository
+
+For a selected committed branch from a REST DVMDB source, the Projects
+working-copy dialog can explicitly copy that branch into the configured
+personal HTTP DVMDB without modifying the source. The GUI verifies the
+source repository UUID and currently selected HEAD, provisions the exact
+logical project UUID in the personal repository, transfers a full verified
+revision bundle, and requires the imported HEAD to match the selection.
+The bundle preserves the branch UUID and immutable revision ancestry, while
+the two repository roots retain independent UUIDs and writable branch HEADs.
+A matching local project can accept an idempotent full replay; conflicting
+local history is rejected rather than silently overwritten.
+
+This path handles committed REST branches up to 64 MiB per transfer.
+Unborn branches cannot use revision bundles, and native embedded/local
+sources need a separate checkout adapter. Neither checkout nor importing a
+bundle creates a working-copy draft; the user explicitly creates that draft
+at the imported HEAD afterward. The model editor Save and Commit operations
+require their own lifecycle integration.
+
 ## Startup and connectivity behavior
 
 1. Resolve the active user's working-repository selection *before* starting

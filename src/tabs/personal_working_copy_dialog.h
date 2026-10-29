@@ -16,12 +16,15 @@ class PersonalWorkingCopyDialog final : public QDialog
 public:
     PersonalWorkingCopyDialog(const QString &project_id, const QString &branch_id,
                               const QString &branch_name, const QString &head,
-                              const QString &source_repository_id, QWidget *parent = nullptr);
+                              const QString &source_repository_id,
+                              const QString &source_endpoint, const QString &project_name,
+                              QWidget *parent = nullptr);
 
 private:
     void refresh();
     void createDraft();
     void inspectDraft();
+    void checkoutBranch();
     void setBusy(bool busy);
     void showDraft(const PersonalWorkingCopyInfo &draft);
 
@@ -32,11 +35,14 @@ private:
     QString branch_name;
     QString head;
     QString source_repository_id;
+    QString source_endpoint;
+    QString project_name;
     QLabel *status = nullptr;
     QLabel *details = nullptr;
     QListWidget *drafts = nullptr;
     QPushButton *refresh_button = nullptr;
     QPushButton *create_button = nullptr;
+    QPushButton *checkout_button = nullptr;
     QPushButton *reopen_button = nullptr;
     bool busy = false;
 };

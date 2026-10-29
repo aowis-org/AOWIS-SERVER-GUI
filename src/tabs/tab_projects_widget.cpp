@@ -2699,9 +2699,14 @@ void ProjectsWidget::showWorkingCopies()
             tr("The selected project, branch or HEAD has no canonical UUIDv7 identity."));
         return;
     }
+    const ProjectServerProfile *source = nullptr;
+    for (const ProjectServerProfile &candidate : this->servers)
+        if (candidate.id == project->server_id) { source = &candidate; break; }
+    const QString source_endpoint = source != nullptr &&
+        source->connection_type == QStringLiteral("remote") ? source->endpoint : QString();
     PersonalWorkingCopyDialog dialog(project->backend_id,
         branch_uuid, branch->name, branch->head,
-        project->repository_id, this);
+        project->repository_id, source_endpoint, project->name, this);
     dialog.exec();
 }
 

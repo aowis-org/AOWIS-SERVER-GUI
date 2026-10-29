@@ -38,6 +38,14 @@ public:
                 DraftCompletion completion);
     void reopen(const PersonalRepositoryTarget &target, const QString &draft_id,
                 DraftCompletion completion);
+    // Committed REST branch only. Transfers a verified full UUIDv7 bundle into
+    // the personal repository; does not create a draft or commit.
+    using CheckoutCompletion = std::function<void(const QString &)>;
+    void checkoutCommittedBranch(const PersonalRepositoryTarget &target,
+        const QString &source_endpoint, const QString &source_repository_id,
+        const QString &project_id, const QString &project_name,
+        const QString &branch_name, const QString &expected_head,
+        CheckoutCompletion completion);
 
     static QString newSessionUuidV7();
 

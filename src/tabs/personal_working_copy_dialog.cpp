@@ -11,10 +11,12 @@
 PersonalWorkingCopyDialog::PersonalWorkingCopyDialog(
         const QString &project_id, const QString &branch_id,
         const QString &branch_name, const QString &head,
-        const QString &source_repository_id, QWidget *parent)
+        const QString &source_repository_id, const QString &source_endpoint,
+        const QString &project_name, QWidget *parent)
     : QDialog(parent), target(resolvePersonalRepositoryTarget()), client(this),
       project_id(project_id), branch_id(branch_id), branch_name(branch_name),
-      head(head), source_repository_id(source_repository_id)
+      head(head), source_repository_id(source_repository_id),
+      source_endpoint(source_endpoint), project_name(project_name)
 {
     setObjectName(QStringLiteral("projectsWorkingCopiesDialog"));
     setWindowTitle(tr("Personal working copies"));
@@ -30,8 +32,7 @@ PersonalWorkingCopyDialog::PersonalWorkingCopyDialog(
         && this->source_repository_id != this->target.repository_id)
     {
         QLabel *different = new QLabel(tr("Selected database and personal DVMDB are different repositories. "
-            "Draft creation requires an already checked-out project and matching branch "
-            "in the personal repository; this operation does not import or clone it."), this);
+            "Checkout the selected committed branch before creating its private draft."), this);
         different->setWordWrap(true);
         layout->addWidget(different);
     }
@@ -47,18 +48,21 @@ PersonalWorkingCopyDialog::PersonalWorkingCopyDialog(
     this->details->setWordWrap(true);
     this->details->setTextInteractionFlags(Qt::TextSelectableByMouse);
     layout->addWidget(this->details);
-    QLabel *scope = new QLabel(tr("VC-04 draft metadata only: model editor Save and Commit locally "
-                                 "are not yet connected. A project and branch must already exist "
-                                 "in the personal DVMDB; shared projects are not cloned implicitly."), this);
+    QLabel *scope = new QLabel(tr("Checkout transfers a committed branch to your personal DVMDB, "
+                                 "without changing the source. Unborn branch checkout, embedded "
+                                 "source transfer, model editor Save and local Commit are not yet connected."), this);
     scope->setWordWrap(true);
     layout->addWidget(scope);
     QHBoxLayout *actions = new QHBoxLayout();
     this->refresh_button = new QPushButton(tr("Refresh drafts"), this);
     this->refresh_button->setObjectName(QStringLiteral("projectsWorkingCopiesRefresh"));
+    this->checkout_button = new QPushButton(tr("Checkout branch privately"), this);
+    this->checkout_button->setObjectName(QStringLiteral("projectsWorkingCopiesCheckout"));
     this->create_button = new QPushButton(tr("Create draft at HEAD"), this);
     this->create_button->setObjectName(QStringLiteral("projectsWorkingCopiesCreate"));
     this->reopen_button = new QPushButton(tr("Reopen selected draft"), this);
     this->reopen_button->setObjectName(QStringLiteral("projectsWorkingCopiesReopen"));
+    actions->addWidget(this->checkout_button);
     actions->addWidget(this->refresh_button);
     actions->addWidget(this->create_button);
     actions->addWidget(this->reopen_button);
@@ -68,6 +72,8 @@ PersonalWorkingCopyDialog::PersonalWorkingCopyDialog(
     layout->addWidget(close);
     connect(this->refresh_button, &QPushButton::clicked, this,
             [this] { refresh(); });
+    connect(this->checkout_button, &QPushButton::clicked, this,
+            [this] { checkoutBranch(); });
     connect(this->create_button, &QPushButton::clicked, this,
             [this] { createDraft(); });
     connect(this->reopen_button, &QPushButton::clicked, this,
@@ -82,6 +88,7 @@ PersonalWorkingCopyDialog::PersonalWorkingCopyDialog(
             : tr("Configure a personal DVMDB in Settings → Personal Repository first."));
         this->create_button->setEnabled(false);
         this->refresh_button->setEnabled(false);
+        this->checkout_button->setEnabled(false);
     }
     else
     {
@@ -93,6 +100,10 @@ void PersonalWorkingCopyDialog::setBusy(bool busy)
 {
     this->busy = busy;
     this->refresh_button->setEnabled(!busy);
+    this->checkout_button->setEnabled(!busy && !this->head.isEmpty() &&
+        !this->source_endpoint.isEmpty() &&
+        this->source_repository_id != this->target.repository_id &&
+        this->target.kind == PersonalRepositoryTarget::Kind::Http);
     this->create_button->setEnabled(!busy);
     this->reopen_button->setEnabled(!busy && this->drafts->currentItem() != nullptr);
 }
@@ -182,4 +193,23 @@ void PersonalWorkingCopyDialog::showDraft(const PersonalWorkingCopyInfo &draft)
         .arg(draft.id, draft.session_id,
              draft.base_revision.isEmpty() ? tr("Unborn") : draft.base_revision,
              draft.generation, draft.dirty ? tr("Yes") : tr("None")));
+}
+
+void PersonalWorkingCopyDialog::checkoutBranch()
+{
+    setBusy(true);
+    this->status->setText(tr("Transferring committed branch into personal DVMDB…"));
+    this->client.checkoutCommittedBranch(this->target, this->source_endpoint,
+        this->source_repository_id, this->project_id, this->project_name,
+        this->branch_name, this->head, [this](const QString &error)
+    {
+        setBusy(false);
+        if (!error.isEmpty())
+        {
+            this->status->setText(tr("Checkout failed: %1").arg(error));
+            return;
+        }
+        this->status->setText(tr("Branch checked out to personal DVMDB. "
+                                 "You can now create a private draft at this HEAD."));
+    });
 }
