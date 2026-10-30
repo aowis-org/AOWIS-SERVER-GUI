@@ -64,9 +64,14 @@ public:
     bool is_source = false;
     QString source_head = head_id;
     QString bundle_head = head_id;
+    QString bundle_project = project_id;
+    QString bundle_branch = branch_id;
     int provision_count = 0;
     int bundle_export_count = 0;
     int bundle_import_count = 0;
+    int unborn_checkout_count = 0;
+    QJsonObject last_unborn_checkout;
+    bool source_has_origin = false;
     QJsonObject last_provision;
     int listing_count = 0;
     int creating_count = 0;
@@ -91,6 +96,8 @@ public:
     {
         QByteArray result(96, '\0');
         result.replace(0, 8, "AOWREV21");
+        result.replace(8, 16, QUuid(this->bundle_project).toRfc4122());
+        result.replace(24, 16, QUuid(this->bundle_branch).toRfc4122());
         result.replace(40, 16, QUuid(this->bundle_head).toRfc4122());
         return result;
     }
@@ -128,9 +135,25 @@ public:
                         document.insert(QStringLiteral("repositoryId"), this->identity);
                     }
                     else if (request_line.startsWith("GET /dvmdb/v1/projects/") &&
-                             request_line.contains("/head ") && this->is_source)
+                             request_line.contains("/branch-ids/"))
                     {
-                        document.insert(QStringLiteral("id"), this->source_head);
+                        // DVMDB's branch-by-UUIDv7 record (source and, after
+                        // import, the personal repository).
+                        const QByteArray requested = request_line.split(' ').value(1);
+                        if (!requested.endsWith(branch_id.toLatin1()))
+                        {
+                            status = 404;
+                            document.insert(QStringLiteral("error"), dvmdbError(
+                                QStringLiteral("not_found"), QStringLiteral("branch UUIDv7 not found")));
+                        }
+                        else
+                            document = QJsonObject{{QStringLiteral("branch"), QStringLiteral("main")},
+                                                   {QStringLiteral("branchId"), branch_id},
+                                                   {QStringLiteral("revision"), this->source_head.isEmpty()
+                                                       ? QJsonValue(QJsonValue::Null) : QJsonValue(this->source_head)},
+                                                   {QStringLiteral("originBranchId"), this->source_has_origin
+                                                       ? QJsonValue(draft_id) : QJsonValue(QJsonValue::Null)},
+                                                   {QStringLiteral("forkRevisionId"), QJsonValue(QJsonValue::Null)}};
                     }
                     else if (request_line.startsWith("GET /dvmdb/v1/projects/") &&
                              request_line.contains("/bundle ") && this->is_source)
@@ -144,6 +167,15 @@ public:
                         ++this->provision_count;
                         this->last_provision = request_body;
                         document.insert(QStringLiteral("id"), project_id);
+                    }
+                    else if (request_line.startsWith("POST /dvmdb/v1/projects/") &&
+                             request_line.contains("/unborn-checkout ") && !this->is_source)
+                    {
+                        ++this->unborn_checkout_count;
+                        this->last_unborn_checkout = request_body;
+                        document = QJsonObject{{QStringLiteral("branchId"), request_body.value(QStringLiteral("branchId"))},
+                            {QStringLiteral("branch"), request_body.value(QStringLiteral("name"))},
+                            {QStringLiteral("revision"), QJsonValue(QJsonValue::Null)}};
                     }
                     else if (request_line.startsWith("POST /dvmdb/v1/projects/") &&
                              request_line.contains("/bundle ") && !this->is_source)
@@ -172,6 +204,9 @@ public:
                         ++this->creating_count;
                         this->last_create = request_body;
                         document = draftRecord(request_body.value(QStringLiteral("sessionId")).toString());
+                        // DVMDB creates the draft under the caller-chosen id.
+                        document.insert(QStringLiteral("id"), request_body.value(QStringLiteral("id")));
+                        document.insert(QStringLiteral("branchId"), request_body.value(QStringLiteral("branchId")));
                         document.insert(QStringLiteral("baseRevision"), request_body.value(QStringLiteral("baseRevision")));
                         status = 201;
                     }
@@ -182,6 +217,32 @@ public:
                         document = QJsonObject{{QStringLiteral("token"), lease_token},
                             {QStringLiteral("generation"), QString::number(this->generation)},
                             {QStringLiteral("expiresAtMs"), QStringLiteral("1800000000000")}};
+                    }
+                    else if (request_line.startsWith("POST /dvmdb/v1/working-copies/") &&
+                             request_line.contains("/initialize-network "))
+                    {
+                        const QString network_id = request_body.value(QStringLiteral("networkId")).toString();
+                        if (request_body.value(QStringLiteral("sessionId")).toString() != this->lease_session ||
+                            request_body.value(QStringLiteral("fencingToken")).toString() != lease_token ||
+                            request_body.value(QStringLiteral("expectedGeneration")).toString()
+                                != QString::number(this->generation) || this->generation != 0)
+                        {
+                            status = 409;
+                            document.insert(QStringLiteral("error"), dvmdbError(
+                                QStringLiteral("conflict"), QStringLiteral("first network requires empty draft")));
+                        }
+                        else
+                        {
+                            this->generation = 1;
+                            this->saved_changes = QJsonArray{QJsonObject{
+                                {QStringLiteral("uuid"), network_id},
+                                {QStringLiteral("kind"), 100},
+                                {QStringLiteral("references"), QJsonArray{}},
+                                {QStringLiteral("payloadBase64"), QStringLiteral("AQID")}}};
+                            document = draftRecord(this->lease_session);
+                            document.insert(QStringLiteral("changes"), this->saved_changes);
+                            document.insert(QStringLiteral("events"), QJsonArray{});
+                        }
                     }
                     else if (request_line.startsWith("POST /dvmdb/v1/working-copies/") &&
                              request_line.contains("/save-events "))
@@ -387,6 +448,36 @@ int main(int argc, char **argv)
     Stub stub;
     if (!check(stub.listen(), "could not start private DVMDB fixture")) return 1;
     PersonalWorkingCopyClient client;
+    // Bootstrap a first network on an independent unborn draft. It must be
+    // represented as kind-100 candidate data, with no synthetic commit.
+    Stub bootstrap;
+    if (!check(bootstrap.listen(), "could not start unborn network bootstrap fixture")) return 1;
+    const QString network_id = PersonalWorkingCopyClient::newSessionUuidV7();
+    bool initialized = false;
+    QString init_error;
+    PersonalWorkingCopyInfo initial_draft;
+    const QString init_session = head_id;
+    bootstrap.lease_session = init_session;
+    client.initializeEmptyNetwork(bootstrap.target(), draft_id, init_session, lease_token,
+        QStringLiteral("0"), network_id, QStringLiteral("water network"),
+        [&](const PersonalWorkingCopyInfo &draft, const QString &failure)
+        { initial_draft = draft; init_error = failure; initialized = true; });
+    if (!check(until(application, [&] { return initialized; }) && init_error.isEmpty() &&
+               initial_draft.generation == QStringLiteral("1") &&
+               initial_draft.changes.size() == 1 &&
+               initial_draft.changes.first().uuid == network_id &&
+               initial_draft.changes.first().kind == 100 &&
+               initial_draft.events.isEmpty(),
+               "GUI first hydraulic network initialization did not persist an empty root")) return 1;
+    initialized = false;
+    client.initializeEmptyNetwork(bootstrap.target(), draft_id, init_session, lease_token,
+        QStringLiteral("0"), PersonalWorkingCopyClient::newSessionUuidV7(),
+        QStringLiteral("other network"),
+        [&](const PersonalWorkingCopyInfo &, const QString &failure)
+        { init_error = failure; initialized = true; });
+    if (!check(until(application, [&] { return initialized; }) && !init_error.isEmpty() &&
+               bootstrap.generation == 1,
+               "GUI first hydraulic network accepted a stale second initialization")) return 1;
     if (!check(DvmdbIdentity::isUuidV7(PersonalWorkingCopyClient::newSessionUuidV7()),
                "session generator did not produce UUIDv7")) return 1;
     bool done = false;
@@ -404,7 +495,7 @@ int main(int argc, char **argv)
 
     done = false;
     PersonalWorkingCopyInfo created;
-    client.create(stub.target(), project_id, QStringLiteral("main"), {},
+    client.create(stub.target(), project_id, branch_id, {},
         [&](const PersonalWorkingCopyInfo &draft, const QString &failure)
     {
         created = draft;
@@ -412,11 +503,25 @@ int main(int argc, char **argv)
         done = true;
     });
     if (!check(until(application, [&] { return done; }) && error.isEmpty()
-               && created.id == draft_id && created.base_revision.isEmpty()
+               && DvmdbIdentity::isUuidV7(created.id)
+               && created.id == stub.last_create.value(QStringLiteral("id")).toString()
+               && created.base_revision.isEmpty()
                && stub.last_create.value(QStringLiteral("baseRevision")).isNull()
                && DvmdbIdentity::isUuidV7(stub.last_create.value(QStringLiteral("sessionId")).toString())
-               && stub.last_create.value(QStringLiteral("branch")).toString() == QStringLiteral("main"),
+               && stub.last_create.value(QStringLiteral("branchId")).toString() == branch_id
+               && !stub.last_create.contains(QStringLiteral("branch")),
                "unborn draft create did not pin exact inputs")) return 1;
+    // Branch names are not identities: a name is refused before any request.
+    done = false;
+    const int creates_before_name = stub.creating_count;
+    client.create(stub.target(), project_id, QStringLiteral("main"), {},
+        [&](const PersonalWorkingCopyInfo &, const QString &failure)
+    {
+        error = failure;
+        done = true;
+    });
+    if (!check(done && !error.isEmpty() && stub.creating_count == creates_before_name,
+               "draft create accepted a branch name")) return 1;
     done = false;
     client.reopen(stub.target(), draft_id,
         [&](const PersonalWorkingCopyInfo &draft, const QString &failure)
@@ -430,7 +535,7 @@ int main(int argc, char **argv)
                "reopen did not load the saved draft by UUID")) return 1;
 
     done = false;
-    client.create(stub.target(), project_id, QStringLiteral("main"), head_id,
+    client.create(stub.target(), project_id, branch_id, head_id,
         [&](const PersonalWorkingCopyInfo &draft, const QString &failure)
     {
         created = draft;
@@ -444,7 +549,7 @@ int main(int argc, char **argv)
 
     done = false;
     PersonalRepositoryTarget absent;
-    client.create(absent, project_id, QStringLiteral("main"), head_id,
+    client.create(absent, project_id, branch_id, head_id,
         [&](const PersonalWorkingCopyInfo &, const QString &failure)
     {
         error = failure;
@@ -461,9 +566,9 @@ int main(int argc, char **argv)
     source.is_source = true;
     if (!check(source.listen(), "could not start shared source DVMDB fixture")) return 1;
     done = false;
-    client.checkoutCommittedBranch(stub.target(), source.target().endpoint,
+    client.checkoutBranchPrivately(stub.target(), source.target().endpoint,
         different_repository, project_id, QStringLiteral("Network test"),
-        QStringLiteral("main"), head_id,
+        branch_id, head_id,
         [&](const QString &failure) { error = failure; done = true; });
     if (!check(until(application, [&] { return done; }) && error.isEmpty() &&
                source.bundle_export_count == 1 && stub.provision_count == 1 &&
@@ -472,18 +577,18 @@ int main(int argc, char **argv)
                stub.last_provision.value(QStringLiteral("name")).toString() == QStringLiteral("Network test"),
                "checkout did not transfer the expected project, branch and HEAD")) return 1;
     done = false;
-    client.checkoutCommittedBranch(stub.target(), source.target().endpoint,
+    client.checkoutBranchPrivately(stub.target(), source.target().endpoint,
         repository_id, project_id, QStringLiteral("Network test"),
-        QStringLiteral("main"), head_id,
+        branch_id, head_id,
         [&](const QString &failure) { error = failure; done = true; });
     if (!check(until(application, [&] { return done; }) && !error.isEmpty() &&
                stub.provision_count == 1 && stub.bundle_import_count == 1,
                "checkout accepted a mismatched source repository identity")) return 1;
     source.source_head = draft_id;
     done = false;
-    client.checkoutCommittedBranch(stub.target(), source.target().endpoint,
+    client.checkoutBranchPrivately(stub.target(), source.target().endpoint,
         different_repository, project_id, QStringLiteral("Network test"),
-        QStringLiteral("main"), head_id,
+        branch_id, head_id,
         [&](const QString &failure) { error = failure; done = true; });
     if (!check(until(application, [&] { return done; }) && !error.isEmpty() &&
                stub.provision_count == 1 && stub.bundle_import_count == 1,
@@ -494,13 +599,64 @@ int main(int argc, char **argv)
     source.source_head = head_id;
     source.bundle_head = draft_id;
     done = false;
-    client.checkoutCommittedBranch(stub.target(), source.target().endpoint,
+    client.checkoutBranchPrivately(stub.target(), source.target().endpoint,
         different_repository, project_id, QStringLiteral("Network test"),
-        QStringLiteral("main"), head_id,
+        branch_id, head_id,
         [&](const QString &failure) { error = failure; done = true; });
     if (!check(until(application, [&] { return done; }) && !error.isEmpty() &&
                stub.bundle_import_count == 1,
                "checkout imported a bundle with the wrong immutable HEAD")) return 1;
+
+    // The exported name may meanwhile belong to another branch (rename and
+    // reuse): the bundle must carry exactly the pinned branch UUIDv7.
+    source.bundle_head = head_id;
+    source.bundle_branch = draft_id;
+    done = false;
+    client.checkoutBranchPrivately(stub.target(), source.target().endpoint,
+        different_repository, project_id, QStringLiteral("Network test"),
+        branch_id, head_id,
+        [&](const QString &failure) { error = failure; done = true; });
+    if (!check(until(application, [&] { return done; }) && !error.isEmpty() &&
+               stub.bundle_import_count == 1,
+               "checkout imported a bundle of a different branch")) return 1;
+    source.bundle_branch = branch_id;
+
+    // Unborn checkout has no bundle, no synthetic revision, and preserves the
+    // source branch UUIDv7. A second request is a safe retry.
+    Stub unborn_target;
+    unborn_target.source_head.clear();
+    if (!check(unborn_target.listen(), "could not start unborn personal target")) return 1;
+    source.source_head.clear();
+    const int exports_before_unborn = source.bundle_export_count;
+    done = false;
+    client.checkoutBranchPrivately(unborn_target.target(), source.target().endpoint,
+        different_repository, project_id, QStringLiteral("Network test"), branch_id, {},
+        [&](const QString &failure) { error = failure; done = true; });
+    if (!check(until(application, [&] { return done; }) && error.isEmpty() &&
+               unborn_target.provision_count == 1 && unborn_target.unborn_checkout_count == 1 &&
+               unborn_target.bundle_import_count == 0 &&
+               source.bundle_export_count == exports_before_unborn &&
+               unborn_target.last_unborn_checkout.value(QStringLiteral("branchId")) == branch_id &&
+               unborn_target.last_unborn_checkout.value(QStringLiteral("name")) == "main",
+               "unborn checkout did not preserve branch identity without a revision")) return 1;
+    done = false;
+    client.checkoutBranchPrivately(unborn_target.target(), source.target().endpoint,
+        different_repository, project_id, QStringLiteral("Network test"), branch_id, {},
+        [&](const QString &failure) { error = failure; done = true; });
+    if (!check(until(application, [&] { return done; }) && error.isEmpty() &&
+               unborn_target.unborn_checkout_count == 2 &&
+               source.bundle_export_count == exports_before_unborn,
+               "unborn checkout retry failed")) return 1;
+    source.source_has_origin = true;
+    done = false;
+    client.checkoutBranchPrivately(unborn_target.target(), source.target().endpoint,
+        different_repository, project_id, QStringLiteral("Network test"), branch_id, {},
+        [&](const QString &failure) { error = failure; done = true; });
+    if (!check(until(application, [&] { return done; }) && !error.isEmpty() &&
+               unborn_target.unborn_checkout_count == 2,
+               "unborn checkout silently discarded source fork provenance")) return 1;
+    source.source_has_origin = false;
+    source.source_head = head_id;
 
     // A model-record Save must use the exact fenced lease and generation.
     PersonalWorkingCopyLease lease;
@@ -907,7 +1063,7 @@ int main(int argc, char **argv)
 
     stub.identity = different_repository;
     done = false;
-    client.create(stub.target(), project_id, QStringLiteral("main"), head_id,
+    client.create(stub.target(), project_id, branch_id, head_id,
         [&](const PersonalWorkingCopyInfo &, const QString &failure)
     {
         error = failure;

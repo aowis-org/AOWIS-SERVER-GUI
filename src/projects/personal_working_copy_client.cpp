@@ -224,15 +224,7 @@ PersonalWorkingCopyClient::PersonalWorkingCopyClient(QObject *parent)
 
 QString PersonalWorkingCopyClient::newSessionUuidV7()
 {
-    QByteArray bytes(16, '\0');
-    const quint64 milliseconds = static_cast<quint64>(QDateTime::currentMSecsSinceEpoch());
-    for (int index = 0; index < 6; ++index)
-        bytes[index] = static_cast<char>((milliseconds >> (40 - 8 * index)) & 0xff);
-    for (int index = 6; index < 16; ++index)
-        bytes[index] = static_cast<char>(QRandomGenerator::global()->generate() & 0xff);
-    bytes[6] = static_cast<char>((static_cast<unsigned char>(bytes[6]) & 0x0f) | 0x70);
-    bytes[8] = static_cast<char>((static_cast<unsigned char>(bytes[8]) & 0x3f) | 0x80);
-    return QUuid::fromRfc4122(bytes).toString(QUuid::WithoutBraces);
+    return DvmdbIdentity::newUuidV7();
 }
 
 bool PersonalWorkingCopyClient::parseDraft(const QJsonObject &object,
@@ -435,27 +427,35 @@ void PersonalWorkingCopyClient::list(const PersonalRepositoryTarget &target,
 }
 
 void PersonalWorkingCopyClient::create(const PersonalRepositoryTarget &target,
-                                       const QString &project_id, const QString &branch,
+                                       const QString &project_id, const QString &branch_id,
                                        const QString &base_revision, DraftCompletion completion)
 {
-    if (!DvmdbIdentity::isUuidV7(project_id) || branch.trimmed().isEmpty()
+    if (!DvmdbIdentity::isUuidV7(project_id) || !DvmdbIdentity::isUuidV7(branch_id)
         || (!base_revision.isEmpty() && !DvmdbIdentity::isUuidV7(base_revision)))
     {
         completion({}, QStringLiteral("Invalid project, branch or checkout revision UUIDv7."));
         return;
     }
+    // Draft and session identities are fixed before sending: a resent
+    // request (lost response, or Qt < 6.10 replaying the POST) names the
+    // same draft, which DVMDB returns instead of creating a second one.
+    const QString draft_id = DvmdbIdentity::newUuidV7();
+    const QString session_id = newSessionUuidV7();
     request(target, "POST", QStringLiteral("/working-copies"),
-            QJsonObject{{QStringLiteral("projectId"), project_id},
-                        {QStringLiteral("branch"), branch},
+            QJsonObject{{QStringLiteral("id"), draft_id},
+                        {QStringLiteral("projectId"), project_id},
+                        {QStringLiteral("branchId"), branch_id},
                         {QStringLiteral("baseRevision"), base_revision.isEmpty()
                             ? QJsonValue(QJsonValue::Null) : QJsonValue(base_revision)},
-                        {QStringLiteral("sessionId"), newSessionUuidV7()}},
-            [completion = std::move(completion)](const QJsonObject &body,
-                                                 const QString &error)
+                        {QStringLiteral("sessionId"), session_id}},
+            [completion = std::move(completion), draft_id, project_id, branch_id,
+             base_revision, session_id](const QJsonObject &body, const QString &error)
     {
         if (!error.isEmpty()) { completion({}, error); return; }
         PersonalWorkingCopyInfo draft;
-        if (!parseDraft(body, draft))
+        if (!parseDraft(body, draft) || draft.id != draft_id || draft.project_id != project_id
+            || draft.branch_id != branch_id || draft.base_revision != base_revision
+            || draft.session_id != session_id)
         {
             completion({}, QStringLiteral("Invalid created-draft response."));
             return;
@@ -516,6 +516,57 @@ void PersonalWorkingCopyClient::acquireLease(
             return;
         }
         completion(lease, {});
+    });
+}
+
+void PersonalWorkingCopyClient::initializeEmptyNetwork(
+    const PersonalRepositoryTarget &target, const QString &draft_id,
+    const QString &session_id, const QString &fencing_token,
+    const QString &expected_generation, const QString &network_id,
+    const QString &name, DraftCompletion completion)
+{
+    bool generation_valid = false;
+    const qulonglong expected = expected_generation.toULongLong(&generation_valid);
+    if (!DvmdbIdentity::isUuidV7(draft_id) ||
+        !DvmdbIdentity::isUuidV7(session_id) ||
+        !DvmdbIdentity::isUuidV7(fencing_token) ||
+        !DvmdbIdentity::isUuidV7(network_id) || !decimal(expected_generation) ||
+        !generation_valid || expected == std::numeric_limits<qulonglong>::max() ||
+        name.trimmed().isEmpty() || name.size() > 255)
+    {
+        completion({}, QStringLiteral("Invalid first-network initialization request."));
+        return;
+    }
+    request(target, "POST", QStringLiteral("/working-copies/") + draft_id
+                + QStringLiteral("/initialize-network"),
+            QJsonObject{{QStringLiteral("sessionId"), session_id},
+                        {QStringLiteral("fencingToken"), fencing_token},
+                        {QStringLiteral("expectedGeneration"), expected_generation},
+                        {QStringLiteral("networkId"), network_id},
+                        {QStringLiteral("name"), name}},
+            [completion = std::move(completion), draft_id, network_id, expected]
+            (const QJsonObject &response, const QString &error)
+    {
+        if (!error.isEmpty())
+        {
+            completion({}, error + QStringLiteral(
+                " Reopen the draft before retrying initialization; the first network may already exist."));
+            return;
+        }
+        PersonalWorkingCopyInfo draft;
+        if (!parseDraft(response, draft) || draft.id != draft_id ||
+            !draft.base_revision.isEmpty() || !draft.dirty ||
+            draft.generation != QString::number(expected + 1) ||
+            draft.changes.size() != 1 ||
+            draft.changes.first().uuid != network_id ||
+            draft.changes.first().deleted || draft.changes.first().kind != 100 ||
+            !draft.changes.first().references.isEmpty() ||
+            !draft.events.isEmpty())
+        {
+            completion({}, QStringLiteral("Invalid first-network draft response. Reopen before retrying."));
+            return;
+        }
+        completion(draft, {});
     });
 }
 
@@ -904,20 +955,21 @@ void PersonalWorkingCopyClient::releaseLease(
     });
 }
 
-void PersonalWorkingCopyClient::checkoutCommittedBranch(
+void PersonalWorkingCopyClient::checkoutBranchPrivately(
     const PersonalRepositoryTarget &target, const QString &source_endpoint,
     const QString &source_repository_id, const QString &project_id,
-    const QString &project_name, const QString &branch_name,
+    const QString &project_name, const QString &branch_id,
     const QString &expected_head, CheckoutCompletion completion)
 {
     if (target.kind != PersonalRepositoryTarget::Kind::Http ||
         !DvmdbIdentity::isUuidV7(source_repository_id) ||
         !DvmdbIdentity::isUuidV7(project_id) ||
-        !DvmdbIdentity::isUuidV7(expected_head) ||
-        project_name.trimmed().isEmpty() || branch_name.trimmed().isEmpty() ||
+        !DvmdbIdentity::isUuidV7(branch_id) ||
+        (!expected_head.isEmpty() && !DvmdbIdentity::isUuidV7(expected_head)) ||
+        project_name.trimmed().isEmpty() ||
         source_repository_id == target.repository_id)
     {
-        completion(QStringLiteral("Committed checkout requires two distinct HTTP DVMDB "
+        completion(QStringLiteral("Checkout requires two distinct HTTP DVMDB "
                                   "repositories and valid project, branch and HEAD identities."));
         return;
     }
@@ -937,7 +989,7 @@ void PersonalWorkingCopyClient::checkoutCommittedBranch(
     QNetworkReply *sourceIdentity = this->manager.get(identify);
     connect(sourceIdentity, &QNetworkReply::finished, this,
         [this, sourceIdentity, sourceRoot, source_repository_id, target,
-         project_id, project_name, branch_name, expected_head,
+         project_id, project_name, branch_id, expected_head,
          completion = std::move(completion)]() mutable
     {
         const QByteArray identityBytes = sourceIdentity->readAll();
@@ -950,36 +1002,92 @@ void PersonalWorkingCopyClient::checkoutCommittedBranch(
             completion(QStringLiteral("Source repository UUID changed or is unavailable."));
             return;
         }
-        // Check the source's HEAD before transferring. Verify the imported
-        // HEAD again afterward: a concurrent source commit is never silently
-        // treated as the revision selected in the Projects graph.
-        const QString branchPath = QStringLiteral("/projects/") + project_id +
-            QStringLiteral("/branches/") +
-            QString::fromLatin1(QUrl::toPercentEncoding(branch_name));
-        QNetworkRequest headRequest(QUrl(sourceRoot + branchPath + QStringLiteral("/head")));
-        headRequest.setTransferTimeout(10000);
-        QNetworkReply *headReply = this->manager.get(headRequest);
-        connect(headReply, &QNetworkReply::finished, this,
-            [this, headReply, sourceRoot, branchPath, target, project_id,
-             project_name, expected_head, completion = std::move(completion)]() mutable
+        // Pin the branch by UUIDv7 (DG-01): its current, possibly renamed,
+        // name and HEAD. A concurrent source commit is never silently treated
+        // as the revision selected in the Projects graph.
+        QNetworkRequest branchRequest(QUrl(sourceRoot + QStringLiteral("/projects/") + project_id +
+                                           QStringLiteral("/branch-ids/") + branch_id));
+        branchRequest.setTransferTimeout(10000);
+        QNetworkReply *branchReply = this->manager.get(branchRequest);
+        connect(branchReply, &QNetworkReply::finished, this,
+            [this, branchReply, sourceRoot, target, project_id, project_name, branch_id,
+             expected_head, completion = std::move(completion)]() mutable
         {
-            const QByteArray headBytes = headReply->readAll();
-            const bool headOk = headReply->error() == QNetworkReply::NoError &&
-                headReply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt() == 200;
-            headReply->deleteLater();
-            if (!headOk || QJsonDocument::fromJson(headBytes).object()
-                    .value(QStringLiteral("id")).toString() != expected_head)
+            const QJsonObject branch = QJsonDocument::fromJson(branchReply->readAll()).object();
+            const bool branchOk = branchReply->error() == QNetworkReply::NoError &&
+                branchReply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt() == 200;
+            branchReply->deleteLater();
+            const QString branch_name = branch.value(QStringLiteral("branch")).toString();
+            if (!branchOk || branch.value(QStringLiteral("branchId")).toString() != branch_id ||
+                branch_name.isEmpty())
+            {
+                completion(QStringLiteral("Source branch is not available by its UUIDv7."));
+                return;
+            }
+            const QJsonValue sourceRevision = branch.value(QStringLiteral("revision"));
+            if ((expected_head.isEmpty() && !sourceRevision.isNull()) ||
+                (!expected_head.isEmpty() && sourceRevision.toString() != expected_head))
             {
                 completion(QStringLiteral("Source branch HEAD changed. Refresh Projects before checkout."));
                 return;
             }
+            // A source branch forked from another unborn branch cannot be
+            // faithfully recreated in isolation: preserve provenance or fail.
+            if (expected_head.isEmpty() &&
+                (!branch.value(QStringLiteral("originBranchId")).isNull() ||
+                 !branch.value(QStringLiteral("forkRevisionId")).isNull()))
+            {
+                completion(QStringLiteral("Unborn checkout requires a root branch with no fork provenance."));
+                return;
+            }
+            const QString branchPath = QStringLiteral("/projects/") + project_id +
+                QStringLiteral("/branches/") +
+                QString::fromLatin1(QUrl::toPercentEncoding(branch_name));
             request(target, "POST", QStringLiteral("/projects/clone-target"),
                 QJsonObject{{QStringLiteral("projectId"), project_id},
                             {QStringLiteral("name"), project_name}},
-                [this, sourceRoot, branchPath, target, expected_head,
+                [this, sourceRoot, branchPath, branch_name, target, project_id, branch_id, expected_head,
                  completion = std::move(completion)](const QJsonObject &, const QString &error) mutable
             {
                 if (!error.isEmpty()) { completion(QStringLiteral("Private project provisioning failed: ") + error); return; }
+                if (expected_head.isEmpty())
+                {
+                    // No revision exists to bundle. Reproduce the verified
+                    // unborn root branch identity in the empty clone target.
+                    request(target, "POST", QStringLiteral("/projects/") + project_id +
+                                QStringLiteral("/unborn-checkout"),
+                        QJsonObject{{QStringLiteral("branchId"), branch_id},
+                                    {QStringLiteral("name"), branch_name}},
+                        [this, target, project_id, branch_id,
+                         completion = std::move(completion)](const QJsonObject &created,
+                                                              const QString &error) mutable
+                    {
+                        if (!error.isEmpty() ||
+                            created.value(QStringLiteral("branchId")).toString() != branch_id ||
+                            !created.value(QStringLiteral("revision")).isNull())
+                        {
+                            completion(QStringLiteral("Private unborn checkout failed: ") +
+                                       (error.isEmpty() ? QStringLiteral("invalid response") : error));
+                            return;
+                        }
+                        request(target, "GET", QStringLiteral("/projects/") + project_id +
+                                    QStringLiteral("/branch-ids/") + branch_id, {},
+                            [branch_id, completion = std::move(completion)]
+                            (const QJsonObject &local, const QString &readError) mutable
+                        {
+                            if (!readError.isEmpty() ||
+                                local.value(QStringLiteral("branchId")).toString() != branch_id ||
+                                !local.value(QStringLiteral("revision")).isNull())
+                            {
+                                completion(QStringLiteral("Private unborn branch identity or HEAD "
+                                                          "does not match the selected source."));
+                                return;
+                            }
+                            completion(QString());
+                        });
+                    });
+                    return;
+                }
                 QNetworkRequest exportRequest(QUrl(sourceRoot + branchPath + QStringLiteral("/bundle")));
                 exportRequest.setTransferTimeout(60000);
                 QNetworkReply *download = this->manager.get(exportRequest);
@@ -990,7 +1098,7 @@ void PersonalWorkingCopyClient::checkoutCommittedBranch(
                     if (received > maxCheckoutBytes || total > maxCheckoutBytes) download->abort();
                 });
                 connect(download, &QNetworkReply::finished, this,
-                    [this, download, branchPath, target, expected_head,
+                    [this, download, branchPath, target, project_id, branch_id, expected_head,
                      completion = std::move(completion)]() mutable
                 {
                     const QByteArray bundle = download->readAll();
@@ -1006,17 +1114,22 @@ void PersonalWorkingCopyClient::checkoutCommittedBranch(
                         completion(QStringLiteral("Revision bundle download failed or exceeded 64 MiB: ") + fetchError);
                         return;
                     }
-                    // AOWREV21/23 full bundles carry the immutable tip UUID
-                    // at offset 40. Never import a later HEAD than the one
-                    // the user selected, even if source advances mid-export.
-                    const QString exportedHead = bundle.size() >= 96 &&
-                        (bundle.startsWith("AOWREV21") || bundle.startsWith("AOWREV23"))
-                        ? QUuid::fromRfc4122(bundle.mid(40, 16)).toString(QUuid::WithoutBraces)
-                        : QString();
-                    if (exportedHead != expected_head)
+                    // AOWREV21/23 full bundles carry the project UUID at offset
+                    // 8, the branch UUID at 24 and the immutable tip at 40.
+                    // The name used to export may have been renamed or reused
+                    // since the lookup above: accept only the pinned branch at
+                    // the selected HEAD.
+                    const bool fullBundle = bundle.size() >= 96 &&
+                        (bundle.startsWith("AOWREV21") || bundle.startsWith("AOWREV23"));
+                    const std::function<QString(int)> uuidAt = [&bundle](int offset)
                     {
-                        completion(QStringLiteral("Exported branch HEAD differs from the selected revision. "
-                                                  "Refresh Projects before checkout."));
+                        return QUuid::fromRfc4122(bundle.mid(offset, 16)).toString(QUuid::WithoutBraces);
+                    };
+                    if (!fullBundle || uuidAt(8) != project_id || uuidAt(24) != branch_id ||
+                        uuidAt(40) != expected_head)
+                    {
+                        completion(QStringLiteral("Exported bundle is not the selected branch at the selected "
+                                                  "revision. Refresh Projects before checkout."));
                         return;
                     }
                     QNetworkRequest upload(QUrl(endpointRoot(target.endpoint) + branchPath +
@@ -1026,7 +1139,8 @@ void PersonalWorkingCopyClient::checkoutCommittedBranch(
                                      QStringLiteral("application/vnd.aowis.revision-bundle-v2"));
                     QNetworkReply *imported = this->manager.post(upload, bundle);
                     connect(imported, &QNetworkReply::finished, this,
-                        [imported, expected_head, completion = std::move(completion)]() mutable
+                        [this, imported, target, project_id, branch_id, expected_head,
+                         completion = std::move(completion)]() mutable
                     {
                         const QByteArray response = imported->readAll();
                         const int status = imported->attribute(
@@ -1036,14 +1150,23 @@ void PersonalWorkingCopyClient::checkoutCommittedBranch(
                         const QString failure = responseError(imported, response);
                         imported->deleteLater();
                         if (!success) { completion(QStringLiteral("Private bundle import failed: ") + failure); return; }
-                        if (QJsonDocument::fromJson(response).object()
-                                .value(QStringLiteral("head")).toString() != expected_head)
+                        // Confirm by identity what the personal repository now
+                        // holds: the same branch UUIDv7 at the selected HEAD.
+                        request(target, "GET", QStringLiteral("/projects/") + project_id +
+                                    QStringLiteral("/branch-ids/") + branch_id, {},
+                            [branch_id, expected_head, completion = std::move(completion)]
+                            (const QJsonObject &local, const QString &error) mutable
                         {
-                            completion(QStringLiteral("Imported HEAD differs from selected revision. "
-                                                      "Refresh Projects before creating a draft."));
-                            return;
-                        }
-                        completion(QString());
+                            if (!error.isEmpty() ||
+                                local.value(QStringLiteral("branchId")).toString() != branch_id ||
+                                local.value(QStringLiteral("revision")).toString() != expected_head)
+                            {
+                                completion(QStringLiteral("Imported branch differs from the selected branch "
+                                                          "or revision. Refresh Projects before creating a draft."));
+                                return;
+                            }
+                            completion(QString());
+                        });
                     });
                 });
             });

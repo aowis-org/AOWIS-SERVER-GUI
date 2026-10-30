@@ -2728,7 +2728,9 @@ void ProjectsWidget::createBranch()
     {
         const ProjectServerProfile *server = currentServer();
         if (server == nullptr) return;
-        QString from_branch;
+        // The source is identified by its branch UUIDv7 (DG-01): a name may
+        // be renamed or reused while this request is on its way.
+        const ProjectPreviewBranch *source_branch = nullptr;
         QString from_revision;
         const QString origin = this->creation_source->currentData().toString();
         if (origin.startsWith(QStringLiteral("branch:")))
@@ -2736,9 +2738,9 @@ void ProjectsWidget::createBranch()
             for (const ProjectPreviewBranch &candidate : project->branches)
                 if (candidate.id == origin.mid(7))
                 {
-                    from_branch = candidate.name;
+                    source_branch = &candidate;
                     // Pin the HEAD shown in the inspector. Sending only the
-                    // branch name would allow a concurrent HEAD advance to
+                    // branch would allow a concurrent HEAD advance to
                     // silently change the selected immutable fork point.
                     from_revision = candidate.head;
                     break;
@@ -2747,34 +2749,38 @@ void ProjectsWidget::createBranch()
         else if (origin.startsWith(QStringLiteral("revision:")))
         {
             from_revision = origin.mid(9);
-            from_branch = sourceBranchForRevision(*project, from_revision, QString());
-            if (from_branch.isEmpty())
+            const QString source_name = sourceBranchForRevision(*project, from_revision, QString());
+            for (const ProjectPreviewBranch &candidate : project->branches)
+                if (!source_name.isEmpty() && candidate.name == source_name)
+                {
+                    source_branch = &candidate;
+                    break;
+                }
+            if (source_branch == nullptr)
             {
                 this->creation_error->setText(tr("The selected revision is not reachable from any branch."));
                 updateButtons();
                 return;
             }
         }
-        else if (!project->branches.isEmpty()) return;
-        if (!from_branch.isEmpty())
+        if (source_branch == nullptr) return;
+        if (source_branch->head.isEmpty())
         {
-            bool committed_source = false;
-            for (const ProjectPreviewBranch &candidate : project->branches)
-                if (candidate.name == from_branch && !candidate.head.isEmpty())
-                {
-                    committed_source = true;
-                    break;
-                }
-            if (!committed_source)
-            {
-                this->creation_error->setText(
-                    tr("Commit the source branch before creating another database branch."));
-                updateButtons();
-                return;
-            }
+            this->creation_error->setText(
+                tr("Commit the source branch before creating another database branch."));
+            updateButtons();
+            return;
+        }
+        // Database branch IDs are "<GUI project id>:<branch UUIDv7>".
+        const QString from_branch_id = source_branch->id.mid(project->id.size() + 1);
+        if (!DvmdbIdentity::isUuidV7(from_branch_id))
+        {
+            this->creation_error->setText(tr("The source branch has no UUIDv7 identity."));
+            updateButtons();
+            return;
         }
         const QString project_id = project->backend_id;
-        this->source_writer->createBranch(*server, project_id, name, from_branch, from_revision,
+        this->source_writer->createBranch(*server, project_id, name, from_branch_id, from_revision,
             [this, project_id, name](const QString &id, const QString &error)
             {
                 finishSourceWrite(id, error, project_id, id.isEmpty() ? name : id);

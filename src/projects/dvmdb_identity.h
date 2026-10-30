@@ -1,6 +1,10 @@
 #pragma once
 
+#include <QByteArray>
+#include <QDateTime>
+#include <QRandomGenerator>
 #include <QString>
+#include <QUuid>
 
 // DVMDB transport identities. Domain-object UUIDv7s identify logical
 // revisions/branches; legacy SHA-256 values remain readable until the backend
@@ -57,6 +61,24 @@ inline RevisionFormat revisionFormat(const QString &value)
 inline QString shortLabel(const QString &value)
 {
     return isUuidV7(value) ? value.right(12) : value.left(12);
+}
+
+// A new UUIDv7 (RFC 9562: 48-bit Unix milliseconds, version 7, variant 10,
+// 74 random bits) in canonical lowercase form. Clients choose the identity of
+// what they create, so a repeated creation request (lost response, or a Qt
+// before 6.10 resending a POST on a dropped connection) names the same object
+// and DVMDB answers it idempotently instead of creating a second one.
+inline QString newUuidV7()
+{
+    QByteArray bytes(16, '\0');
+    const quint64 milliseconds = static_cast<quint64>(QDateTime::currentMSecsSinceEpoch());
+    for (int index = 0; index < 6; ++index)
+        bytes[index] = static_cast<char>((milliseconds >> (40 - 8 * index)) & 0xff);
+    for (int index = 6; index < 16; ++index)
+        bytes[index] = static_cast<char>(QRandomGenerator::system()->generate() & 0xff);
+    bytes[6] = static_cast<char>((static_cast<unsigned char>(bytes[6]) & 0x0f) | 0x70);
+    bytes[8] = static_cast<char>((static_cast<unsigned char>(bytes[8]) & 0x3f) | 0x80);
+    return QUuid::fromRfc4122(bytes).toString(QUuid::WithoutBraces);
 }
 
 inline QString revisionFormatName(const QString &value)

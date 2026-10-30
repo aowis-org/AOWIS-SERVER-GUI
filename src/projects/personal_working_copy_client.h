@@ -86,8 +86,10 @@ public:
     explicit PersonalWorkingCopyClient(QObject *parent = nullptr);
 
     void list(const PersonalRepositoryTarget &target, ListCompletion completion);
+    // The branch is addressed by UUIDv7 (DG-01). The client chooses the new
+    // draft's UUIDv7, so a resent request returns the same draft.
     void create(const PersonalRepositoryTarget &target, const QString &project_id,
-                const QString &branch, const QString &base_revision,
+                const QString &branch_id, const QString &base_revision,
                 DraftCompletion completion);
     void reopen(const PersonalRepositoryTarget &target, const QString &draft_id,
                 DraftCompletion completion);
@@ -96,6 +98,16 @@ public:
     // must be resolved by reopen(), never by blindly replaying a batch.
     void acquireLease(const PersonalRepositoryTarget &target, const QString &draft_id,
                       const QString &session_id, int seconds, LeaseCompletion completion);
+    // Create the first hydraulic network in an unborn private draft. The
+    // DVMDB server owns the native manifest bytes. This does not commit or
+    // advance HEAD. On an uncertain response, reopen before proceeding; the
+    // same request is safely retryable by the same fenced writer.
+    void initializeEmptyNetwork(const PersonalRepositoryTarget &target,
+                                const QString &draft_id, const QString &session_id,
+                                const QString &fencing_token,
+                                const QString &expected_generation,
+                                const QString &network_id, const QString &name,
+                                DraftCompletion completion);
     void saveChanges(const PersonalRepositoryTarget &target, const QString &draft_id,
                      const QString &session_id, const QString &fencing_token,
                      const QString &expected_generation,
@@ -152,13 +164,15 @@ public:
                       const QString &session_id, const QString &fencing_token,
                       Completion completion);
 
-    // Committed REST branch only. Transfers a verified full UUIDv7 bundle into
-    // the personal repository; does not create a draft or commit.
+    // Checkout a pinned source branch into a distinct private HTTP repository.
+    // A committed branch transfers a verified full bundle. An unborn root branch
+    // is provisioned with its original UUID and null HEAD, without a bundle.
+    // Neither path creates a draft or a commit.
     using CheckoutCompletion = std::function<void(const QString &)>;
-    void checkoutCommittedBranch(const PersonalRepositoryTarget &target,
+    void checkoutBranchPrivately(const PersonalRepositoryTarget &target,
         const QString &source_endpoint, const QString &source_repository_id,
         const QString &project_id, const QString &project_name,
-        const QString &branch_name, const QString &expected_head,
+        const QString &branch_id, const QString &expected_head,
         CheckoutCompletion completion);
 
     static QString newSessionUuidV7();

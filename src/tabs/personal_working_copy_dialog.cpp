@@ -32,7 +32,7 @@ PersonalWorkingCopyDialog::PersonalWorkingCopyDialog(
         && this->source_repository_id != this->target.repository_id)
     {
         QLabel *different = new QLabel(tr("Selected database and personal DVMDB are different repositories. "
-            "Checkout the selected committed branch before creating its private draft."), this);
+            "Checkout the selected branch before creating its private draft."), this);
         different->setWordWrap(true);
         layout->addWidget(different);
     }
@@ -48,8 +48,8 @@ PersonalWorkingCopyDialog::PersonalWorkingCopyDialog(
     this->details->setWordWrap(true);
     this->details->setTextInteractionFlags(Qt::TextSelectableByMouse);
     layout->addWidget(this->details);
-    QLabel *scope = new QLabel(tr("Checkout transfers a committed branch to your personal DVMDB, "
-                                 "without changing the source. Unborn branch checkout, embedded "
+    QLabel *scope = new QLabel(tr("Checkout copies the selected branch into your personal DVMDB "
+                                 "without changing the source or creating a commit. Embedded "
                                  "source transfer, model editor Save and local Commit are not yet connected."), this);
     scope->setWordWrap(true);
     layout->addWidget(scope);
@@ -100,7 +100,7 @@ void PersonalWorkingCopyDialog::setBusy(bool busy)
 {
     this->busy = busy;
     this->refresh_button->setEnabled(!busy);
-    this->checkout_button->setEnabled(!busy && !this->head.isEmpty() &&
+    this->checkout_button->setEnabled(!busy &&
         !this->source_endpoint.isEmpty() &&
         this->source_repository_id != this->target.repository_id &&
         this->target.kind == PersonalRepositoryTarget::Kind::Http);
@@ -140,7 +140,7 @@ void PersonalWorkingCopyDialog::createDraft()
 {
     setBusy(true);
     this->status->setText(tr("Creating durable private draft…"));
-    this->client.create(this->target, this->project_id, this->branch_name, this->head,
+    this->client.create(this->target, this->project_id, this->branch_id, this->head,
                         [this](const PersonalWorkingCopyInfo &draft, const QString &error)
     {
         setBusy(false);
@@ -200,10 +200,12 @@ void PersonalWorkingCopyDialog::showDraft(const PersonalWorkingCopyInfo &draft)
 void PersonalWorkingCopyDialog::checkoutBranch()
 {
     setBusy(true);
-    this->status->setText(tr("Transferring committed branch into personal DVMDB…"));
-    this->client.checkoutCommittedBranch(this->target, this->source_endpoint,
+    this->status->setText(this->head.isEmpty()
+        ? tr("Checking out unborn branch into personal DVMDB…")
+        : tr("Transferring committed branch into personal DVMDB…"));
+    this->client.checkoutBranchPrivately(this->target, this->source_endpoint,
         this->source_repository_id, this->project_id, this->project_name,
-        this->branch_name, this->head, [this](const QString &error)
+        this->branch_id, this->head, [this](const QString &error)
     {
         setBusy(false);
         if (!error.isEmpty())

@@ -1,4 +1,5 @@
 #include "projects/project_source_writer.h"
+#include "projects/dvmdb_identity.h"
 
 #include <QCoreApplication>
 #include <QElapsedTimer>
@@ -41,7 +42,7 @@ int main(int argc, char **argv)
     QList<QJsonObject> request_bodies;
     const QString root_revision = QStringLiteral("018f84c0-0000-7000-8000-000000000001");
     const QString branch_revision = QStringLiteral("018f84c0-0000-7000-8000-000000000002");
-    const QString branch_identity = QStringLiteral("018f84c0-0000-7000-8000-000000000003");
+    const QString main_identity = QStringLiteral("018f84c0-0000-7000-8000-000000000003");
     const QString project_identity = QStringLiteral("018f84c0-0000-7000-8000-000000000004");
     QObject::connect(&server, &QTcpServer::newConnection, &server, [&]
     {
@@ -51,7 +52,7 @@ int main(int argc, char **argv)
             const std::shared_ptr<QByteArray> buffer = std::make_shared<QByteArray>();
             QObject::connect(socket, &QTcpSocket::readyRead, socket,
                 [socket, buffer, &requested_paths, &request_bodies, branch_revision,
-                 branch_identity, project_identity]
+                 project_identity]
             {
                 buffer->append(socket->readAll());
                 const qsizetype marker = buffer->indexOf("\r\n\r\n");
@@ -69,9 +70,10 @@ int main(int argc, char **argv)
                 request_bodies.append(json.object());
                 QByteArray payload;
                 int status = 201;
+                // Like DVMDB, answer with the caller-chosen identities.
                 if (path == "/dvmdb/v1/projects")
                     payload = QJsonDocument(QJsonObject{
-                        {QStringLiteral("id"), project_identity},
+                        {QStringLiteral("id"), json.object().value(QStringLiteral("id"))},
                         {QStringLiteral("name"), QStringLiteral("Water Project")}}).toJson(QJsonDocument::Compact);
                 else if (path == QStringLiteral("/dvmdb/v1/projects/%1/branches")
                     .arg(project_identity).toUtf8()
@@ -79,7 +81,7 @@ int main(int argc, char **argv)
                     payload = QJsonDocument(QJsonObject{
                         {QStringLiteral("id"), branch_revision},
                         {QStringLiteral("branch"), json.object().value(QStringLiteral("name"))},
-                        {QStringLiteral("branchId"), branch_identity}}).toJson(QJsonDocument::Compact);
+                        {QStringLiteral("branchId"), json.object().value(QStringLiteral("id"))}}).toJson(QJsonDocument::Compact);
                 else
                 {
                     status = 409;
@@ -112,8 +114,10 @@ int main(int argc, char **argv)
     });
     if (!require(writer.isBusy(), "writer must be busy during POST")) return 1;
     if (!require(waitUntil(app, [&] { return done; }), "project POST did not finish")) return 1;
-    if (!require(!writer.isBusy() && failure.isEmpty() && created == project_identity,
-                 "project POST did not return the persisted ID")) return 1;
+    // The writer chose the project UUIDv7 (idempotent creation on resend).
+    if (!require(!writer.isBusy() && failure.isEmpty() && DvmdbIdentity::isUuidV7(created)
+                 && request_bodies.first().value(QStringLiteral("id")).toString() == created,
+                 "project POST did not use and return a caller-chosen UUIDv7")) return 1;
     if (!require(requested_paths.size() == 1 && requested_paths.first() == QStringLiteral("/dvmdb/v1/projects")
                  && request_bodies.first().value(QStringLiteral("name")) == QStringLiteral("Water Project")
                  && request_bodies.first().value(QStringLiteral("unborn")).isBool()
@@ -122,7 +126,7 @@ int main(int argc, char **argv)
 
     done = false;
     writer.createBranch(profile, project_identity, QStringLiteral("feature"),
-                        QStringLiteral("main"), root_revision,
+                        main_identity, root_revision,
                         [&](const QString &id, const QString &error)
     {
         created = id;
@@ -130,11 +134,13 @@ int main(int argc, char **argv)
         done = true;
     });
     if (!require(waitUntil(app, [&] { return done; }), "branch POST did not finish")) return 1;
-    if (!require(failure.isEmpty() && created == branch_identity
+    if (!require(failure.isEmpty() && DvmdbIdentity::isUuidV7(created)
+        && request_bodies.last().value(QStringLiteral("id")).toString() == created
         && requested_paths.size() == 2
         && requested_paths.last() == QStringLiteral("/dvmdb/v1/projects/%1/branches").arg(project_identity)
         && request_bodies.last().value(QStringLiteral("name")) == QStringLiteral("feature")
-        && request_bodies.last().value(QStringLiteral("fromBranch")) == QStringLiteral("main")
+        && request_bodies.last().value(QStringLiteral("fromBranchId")) == main_identity
+        && !request_bodies.last().contains(QStringLiteral("fromBranch"))
         && request_bodies.last().value(QStringLiteral("revision")) == root_revision,
         "branch-from-revision POST does not match DVMDB contract")) return 1;
 
@@ -142,8 +148,9 @@ int main(int argc, char **argv)
     // arbitrary UTF-8 branch labels, including spaces, over the REST boundary.
     const QString historical_name = QString::fromUtf8("Prüfung Süd 2026");
     done = false;
+    const QString first_branch = created;
     writer.createBranch(profile, project_identity, historical_name,
-                        QStringLiteral("main"), root_revision,
+                        main_identity, root_revision,
                         [&](const QString &id, const QString &error)
     {
         created = id;
@@ -151,16 +158,16 @@ int main(int argc, char **argv)
         done = true;
     });
     if (!require(waitUntil(app, [&] { return done; }), "historical UTF-8 branch POST did not finish")) return 1;
-    if (!require(failure.isEmpty() && created == branch_identity
+    if (!require(failure.isEmpty() && DvmdbIdentity::isUuidV7(created) && created != first_branch
                  && requested_paths.size() == 3
                  && request_bodies.last().value(QStringLiteral("name")) == historical_name
-                 && request_bodies.last().value(QStringLiteral("fromBranch")) == QStringLiteral("main")
+                 && request_bodies.last().value(QStringLiteral("fromBranchId")) == main_identity
                  && request_bodies.last().value(QStringLiteral("revision")) == root_revision,
                  "historical fork lost its exact revision or UTF-8 branch name")) return 1;
 
     done = false;
     writer.createBranch(profile, project_identity, QStringLiteral("duplicate"),
-                        QStringLiteral("main"), {}, [&](const QString &id, const QString &error)
+                        main_identity, {}, [&](const QString &id, const QString &error)
     {
         created = id;
         failure = error;
@@ -174,12 +181,22 @@ int main(int argc, char **argv)
     const int before_rejected = requested_paths.size();
     done = false;
     writer.createBranch(profile, project_identity, QStringLiteral("badsha"),
-                        QStringLiteral("main"), QString(64, QLatin1Char('a')),
+                        main_identity, QString(64, QLatin1Char('a')),
                         [&](const QString &, const QString &error)
     { failure = error; done = true; });
     if (!require(done && failure.contains(QStringLiteral("UUIDv7"))
         && requested_paths.size() == before_rejected,
         "legacy SHA revision was sent to the canonical UUIDv7 writer")) return 1;
+
+    // A branch name is not an identity: the source must be a UUIDv7.
+    const int before_named_source = requested_paths.size();
+    done = false;
+    writer.createBranch(profile, project_identity, QStringLiteral("named"),
+                        QStringLiteral("main"), {}, [&](const QString &, const QString &error)
+    { failure = error; done = true; });
+    if (!require(done && failure.contains(QStringLiteral("UUIDv7"))
+        && requested_paths.size() == before_named_source,
+        "branch source given by name reached DVMDB")) return 1;
 
     const int before_missing_source = requested_paths.size();
     done = false;
