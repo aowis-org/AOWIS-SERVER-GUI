@@ -1,5 +1,8 @@
 #include "projects/personal_working_copy_client.h"
 #include "projects/dvmdb_identity.h"
+#include "projects/personal_edit_queue.h"
+
+#include <aowis/model/edit/model_edit_transaction.h>
 
 #include <QCoreApplication>
 #include <QElapsedTimer>
@@ -10,6 +13,7 @@
 #include <QTcpServer>
 #include <QTcpSocket>
 #include <QThread>
+#include <QTemporaryDir>
 #include <QUuid>
 
 #include <cstdio>
@@ -64,6 +68,11 @@ public:
     QJsonObject last_create;
     QJsonObject last_save;
     QJsonArray saved_changes;
+    QJsonArray saved_events;
+    int event_save_count = 0;
+    bool drop_next_event_acknowledgement = false;
+    bool reject_next_event_save = false;
+    bool corrupt_event_reopen = false;
     QString lease_session;
     int save_count = 0;
     int release_count = 0;
@@ -168,6 +177,60 @@ public:
                             {QStringLiteral("expiresAtMs"), QStringLiteral("1800000000000")}};
                     }
                     else if (request_line.startsWith("POST /dvmdb/v1/working-copies/") &&
+                             request_line.contains("/save-events "))
+                    {
+                        ++this->event_save_count;
+                        const QString expected = request_body.value(QStringLiteral("expectedGeneration")).toString();
+                        if (this->reject_next_event_save || expected != QString::number(this->generation) ||
+                            request_body.value(QStringLiteral("fencingToken")).toString() != lease_token)
+                        {
+                            this->reject_next_event_save = false;
+                            status = 409;
+                            document.insert(QStringLiteral("error"), QStringLiteral("stale event writer"));
+                        }
+                        else
+                        {
+                            bool duplicate = false;
+                            for (const QJsonValue &encoded : request_body.value(QStringLiteral("events")).toArray())
+                            {
+                                const std::optional<aowis::model::ModelEditTransaction> decoded =
+                                    aowis::model::ModelEditTransactionCodec::decode(
+                                        QByteArray::fromBase64(encoded.toString().toLatin1()));
+                                for (const QJsonValue &existing : this->saved_events)
+                                    if (existing.toObject().value(QStringLiteral("id")).toString() ==
+                                        decoded->transactionId.toString(QUuid::WithoutBraces))
+                                        duplicate = true;
+                            }
+                            if (duplicate)
+                            {
+                                status = 409;
+                                document.insert(QStringLiteral("error"), QStringLiteral("event already persisted"));
+                            }
+                            else
+                            {
+                            this->saved_changes = request_body.value(QStringLiteral("changes")).toArray();
+                            QJsonArray accepted;
+                            for (const QJsonValue &value : request_body.value(QStringLiteral("events")).toArray())
+                            {
+                                const QByteArray bytes = QByteArray::fromBase64(value.toString().toLatin1());
+                                const std::optional<aowis::model::ModelEditTransaction> event =
+                                    aowis::model::ModelEditTransactionCodec::decode(bytes);
+                                const QString id = event->transactionId.toString(QUuid::WithoutBraces);
+                                accepted.append(id);
+                                this->saved_events.append(QJsonObject{
+                                    {QStringLiteral("id"), id},
+                                    {QStringLiteral("payloadBase64"), value.toString()}});
+                            }
+                            ++this->generation;
+                            document = QJsonObject{
+                                {QStringLiteral("id"), draft_id},
+                                {QStringLiteral("generation"), QString::number(this->generation)},
+                                {QStringLiteral("eventCount"), QString::number(this->saved_events.size())},
+                                {QStringLiteral("acceptedEventIds"), accepted}};
+                            }
+                        }
+                    }
+                    else if (request_line.startsWith("POST /dvmdb/v1/working-copies/") &&
                              request_line.contains("/save "))
                     {
                         this->last_save = request_body;
@@ -205,6 +268,15 @@ public:
                         ++this->open_count;
                         document = draftRecord(QString());
                         document.insert(QStringLiteral("changes"), this->saved_changes);
+                        document.insert(QStringLiteral("events"), this->saved_events);
+                        if (this->corrupt_event_reopen && !this->saved_events.isEmpty())
+                        {
+                            QJsonArray tampered = this->saved_events;
+                            QJsonObject modified = tampered.last().toObject();
+                            modified.insert(QStringLiteral("payloadBase64"), QStringLiteral("not-base64!!"));
+                            tampered.replace(tampered.size() - 1, modified);
+                            document.insert(QStringLiteral("events"), tampered);
+                        }
                         if (this->malformed_overlay)
                             document.insert(QStringLiteral("changes"), QJsonArray{
                                 QJsonObject{{QStringLiteral("uuid"), entity_id},
@@ -216,6 +288,14 @@ public:
                     {
                         status = 404;
                         document.insert(QStringLiteral("error"), QStringLiteral("Not found"));
+                    }
+                    if (request_line.startsWith("POST /dvmdb/v1/working-copies/") &&
+                        request_line.contains("/save-events ") &&
+                        this->drop_next_event_acknowledgement && status == 200)
+                    {
+                        this->drop_next_event_acknowledgement = false;
+                        socket->disconnectFromHost();
+                        return;
                     }
                     if (request_line.startsWith("POST /dvmdb/v1/working-copies/") &&
                         request_line.contains("/save ") &&
@@ -254,7 +334,8 @@ public:
             {QStringLiteral("baseRevision"), QJsonValue(QJsonValue::Null)},
             {QStringLiteral("sessionId"), session.isEmpty() ? head_id : session},
             {QStringLiteral("generation"), QString::number(this->generation)},
-            {QStringLiteral("dirty"), this->generation != 0}};
+            {QStringLiteral("dirty"), this->generation != 0},
+            {QStringLiteral("eventCount"), QString::number(this->saved_events.size())}};
     }
 
     PersonalRepositoryTarget target() const
@@ -537,6 +618,133 @@ int main(int argc, char **argv)
     if (!check(done && !error.isEmpty() && !recovered &&
                stub.open_count == reads_before_invalid && stub.save_count == 2,
                "invalid Save incorrectly triggered recovery or another write")) return 1;
+
+    // Atomic MODEL event journal: small ACK, exact transaction identity,
+    // dropped ACK recovery, and local queue removal only after verification.
+    aowis::model::ModelEditTransaction event;
+    event.transactionId = QUuid(PersonalWorkingCopyClient::newSessionUuidV7());
+    event.operation = QStringLiteral("hydraulic.pipe.diameter");
+    aowis::model::ModelEntityEdit edit;
+    edit.entityId = QUuid(entity_id);
+    edit.entityType = QStringLiteral("HydraulicLinkPipe");
+    edit.after = update.payload;
+    event.edits.append(edit);
+    const QByteArray encoded = aowis::model::ModelEditTransactionCodec::encode(event);
+    if (!check(!encoded.isEmpty(), "could not encode MODEL edit event")) return 1;
+    update.references.clear();
+    done = false;
+    PersonalWorkingCopyEventSaveResult journal_ack;
+    recovered = true;
+    client.saveEventsRecovering(stub.target(), draft_id, head_id, lease.token,
+        QStringLiteral("2"), {update}, {encoded},
+        [&](const PersonalWorkingCopyEventSaveResult &result, bool from_recovery, const QString &failure)
+    {
+        journal_ack = result;
+        recovered = from_recovery;
+        error = failure;
+        done = true;
+    });
+    if (!check(until(application, [&] { return done; }) && error.isEmpty() && !recovered &&
+               journal_ack.generation == QStringLiteral("3") &&
+               journal_ack.accepted_ids == QStringList{event.transactionId.toString(QUuid::WithoutBraces)} &&
+               stub.event_save_count == 1 && stub.saved_events.size() == 1,
+               "atomic event Save did not confirm ordered journal IDs")) return 1;
+
+    QTemporaryDir queue_root;
+    if (!check(queue_root.isValid(), "could not create temporary queue root")) return 1;
+    PersonalEditQueue queue;
+    QString queue_error;
+    if (!check(queue.open(queue_root.path(), QUuid(repository_id), QUuid(draft_id), &queue_error),
+               "could not open durable editing queue")) return 1;
+    aowis::model::ModelEditTransaction queued_event = event;
+    queued_event.transactionId = QUuid(PersonalWorkingCopyClient::newSessionUuidV7());
+    queued_event.edits.first().after = QByteArray("post reconnect bytes");
+    update.payload = *queued_event.edits.first().after;
+    const QByteArray queued_bytes = aowis::model::ModelEditTransactionCodec::encode(queued_event);
+    if (!check(queue.append(queued_bytes, &queue_error) && queue.pending().size() == 1,
+               "could not persist queued editing event")) return 1;
+    done = false;
+    client.flushOldestQueuedEvent(stub.target(), queue, head_id, head_id, lease.token,
+        QStringLiteral("3"), {update},
+        [&](const QString &, bool, const QString &failure)
+    {
+        error = failure;
+        done = true;
+    });
+    if (!check(done && !error.isEmpty() && queue.pending().size() == 1 &&
+               stub.event_save_count == 1,
+               "wrong draft target was not rejected before queue replay")) return 1;
+    stub.drop_next_event_acknowledgement = true;
+    done = false;
+    QString next_generation;
+    recovered = false;
+    client.flushOldestQueuedEvent(stub.target(), queue, draft_id, head_id, lease.token,
+        QStringLiteral("3"), {update},
+        [&](const QString &next, bool from_recovery, const QString &failure)
+    {
+        next_generation = next;
+        recovered = from_recovery;
+        error = failure;
+        done = true;
+    });
+    if (!check(until(application, [&] { return done; }) && error.isEmpty() && recovered &&
+               next_generation == QStringLiteral("4") && queue.pending().isEmpty() &&
+               stub.event_save_count == 2 && stub.saved_events.size() == 2,
+               "dropped atomic Save acknowledgement did not recover without duplicate writes")) return 1;
+
+    // A crash after server persistence but before deleting the local file
+    // leaves the exact last event queued. Reopen confirms it without replay.
+    if (!check(queue.append(queued_bytes) && queue.pending().size() == 1,
+               "could not simulate a pre-acknowledgement GUI crash")) return 1;
+    done = false;
+    recovered = false;
+    client.flushOldestQueuedEvent(stub.target(), queue, draft_id, head_id, lease.token,
+        QStringLiteral("4"), {update},
+        [&](const QString &next, bool from_recovery, const QString &failure)
+    {
+        next_generation = next;
+        recovered = from_recovery;
+        error = failure;
+        done = true;
+    });
+    if (!check(until(application, [&] { return done; }) && error.isEmpty() && recovered &&
+               next_generation == QStringLiteral("4") && queue.pending().isEmpty() &&
+               stub.saved_events.size() == 2 && stub.generation == 4,
+               "restart replay did not confirm existing journal without duplicate write")) return 1;
+
+    // Refused server writes cannot acknowledge/remove queued local work.
+    queued_event.transactionId = QUuid(PersonalWorkingCopyClient::newSessionUuidV7());
+    queued_event.edits.first().after = QByteArray("still pending");
+    update.payload = *queued_event.edits.first().after;
+    if (!check(queue.append(aowis::model::ModelEditTransactionCodec::encode(queued_event)),
+               "failed to enqueue rejection test")) return 1;
+    stub.reject_next_event_save = true;
+    done = false;
+    client.flushOldestQueuedEvent(stub.target(), queue, draft_id, head_id, lease.token,
+        QStringLiteral("4"), {update},
+        [&](const QString &, bool, const QString &failure)
+    {
+        error = failure;
+        done = true;
+    });
+    if (!check(until(application, [&] { return done; }) && !error.isEmpty() &&
+               queue.pending().size() == 1 && stub.saved_events.size() == 2,
+               "rejected server event incorrectly erased the local queue")) return 1;
+    // A candidate payload unrelated to the journal must be rejected locally.
+    update.payload = QByteArray("unrelated candidate");
+    const int saves_before_mismatch = stub.event_save_count;
+    done = false;
+    client.flushOldestQueuedEvent(stub.target(), queue, draft_id, head_id, lease.token,
+        QStringLiteral("4"), {update},
+        [&](const QString &, bool, const QString &failure)
+    {
+        error = failure;
+        done = true;
+    });
+    if (!check(done && !error.isEmpty() && queue.pending().size() == 1 &&
+               stub.event_save_count == saves_before_mismatch,
+               "mismatched event/model records were transmitted")) return 1;
+    queue.close();
 
     done = false;
     client.releaseLease(stub.target(), draft_id, head_id, lease.token,

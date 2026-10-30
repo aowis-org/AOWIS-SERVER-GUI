@@ -1,8 +1,12 @@
 #include "projects/personal_working_copy_client.h"
 #include "projects/dvmdb_identity.h"
+#include "projects/personal_edit_queue.h"
+
+#include <aowis/model/edit/model_edit_transaction.h>
 
 #include <QDateTime>
 #include <QHash>
+#include <QMap>
 #include <QSet>
 #include <QUuid>
 #include <limits>
@@ -50,6 +54,58 @@ bool decimal(const QString &value)
     for (const QChar digit : value)
         if (digit < QLatin1Char('0') || digit > QLatin1Char('9')) return false;
     return true;
+}
+
+QJsonArray encodeChanges(const QList<PersonalWorkingCopyChange> &changes)
+{
+    QJsonArray batch;
+    for (const PersonalWorkingCopyChange &change : changes)
+    {
+        if (change.deleted)
+        {
+            batch.append(QJsonObject{{QStringLiteral("uuid"), change.uuid},
+                                     {QStringLiteral("delete"), true}});
+            continue;
+        }
+        QJsonArray references;
+        for (const QString &reference : change.references)
+            references.append(reference);
+        batch.append(QJsonObject{{QStringLiteral("uuid"), change.uuid},
+                                 {QStringLiteral("kind"), static_cast<int>(change.kind)},
+                                 {QStringLiteral("references"), references},
+                                 {QStringLiteral("payloadBase64"),
+                                  QString::fromLatin1(change.payload.toBase64())}});
+    }
+    return batch;
+}
+
+bool matchingChanges(const QList<PersonalWorkingCopyChange> &stored,
+                     const QList<PersonalWorkingCopyChange> &sent)
+{
+    for (const PersonalWorkingCopyChange &change : sent)
+    {
+        bool found = false;
+        for (const PersonalWorkingCopyChange &item : stored)
+        {
+            if (item.uuid != change.uuid) continue;
+            if (item.deleted != change.deleted ||
+                (!item.deleted && (item.kind != change.kind ||
+                 item.references != change.references || item.payload != change.payload)))
+                return false;
+            found = true;
+            break;
+        }
+        if (!found) return false;
+    }
+    return true;
+}
+
+bool decimalValue(const QString &value, qulonglong &number)
+{
+    if (!decimal(value)) return false;
+    bool ok = false;
+    number = value.toULongLong(&ok);
+    return ok;
 }
 
 QString validateSaveRequest(const QString &draft_id, const QString &session_id,
@@ -157,6 +213,44 @@ bool PersonalWorkingCopyClient::parseDraft(const QJsonObject &object,
                 change.payload = decoded.decoded;
             }
             draft.changes.append(change);
+        }
+    }
+    draft.events.clear();
+    draft.event_count = object.value(QStringLiteral("eventCount")).toString();
+    if (object.contains(QStringLiteral("eventCount")))
+    {
+        qulonglong count = 0;
+        if (!decimalValue(draft.event_count, count)) return false;
+        if (object.contains(QStringLiteral("events")) &&
+            static_cast<qulonglong>(object.value(QStringLiteral("events")).toArray().size()) != count)
+            return false;
+    }
+    if (object.contains(QStringLiteral("events")))
+    {
+        if (!object.value(QStringLiteral("events")).isArray()) return false;
+        const QJsonArray journal = object.value(QStringLiteral("events")).toArray();
+        if (journal.size() > 10000) return false;
+        QSet<QString> identities;
+        for (const QJsonValue &value : journal)
+        {
+            if (!value.isObject()) return false;
+            const QJsonObject item = value.toObject();
+            if (item.size() != 2 || !item.value(QStringLiteral("id")).isString() ||
+                !item.value(QStringLiteral("payloadBase64")).isString()) return false;
+            const QString id = item.value(QStringLiteral("id")).toString();
+            const QByteArray text = item.value(QStringLiteral("payloadBase64")).toString().toLatin1();
+            const QByteArray::FromBase64Result decoded = QByteArray::fromBase64Encoding(
+                text, QByteArray::AbortOnBase64DecodingErrors);
+            if (!DvmdbIdentity::isUuidV7(id) || identities.contains(id) || !decoded ||
+                decoded.decoded.toBase64() != text) return false;
+            QString codec_error;
+            const std::optional<aowis::model::ModelEditTransaction> event =
+                aowis::model::ModelEditTransactionCodec::decode(decoded.decoded, &codec_error);
+            if (!event.has_value() ||
+                event->transactionId.toString(QUuid::WithoutBraces) != id)
+                return false;
+            identities.insert(id);
+            draft.events.append({id, decoded.decoded});
         }
     }
     return true;
@@ -477,6 +571,208 @@ void PersonalWorkingCopyClient::saveChangesRecovering(
             }
             completion(persisted, true, QString());
         });
+    });
+}
+
+void PersonalWorkingCopyClient::saveEventsRecovering(
+    const PersonalRepositoryTarget &target, const QString &draft_id,
+    const QString &session_id, const QString &fencing_token,
+    const QString &expected_generation,
+    const QList<PersonalWorkingCopyChange> &changes,
+    const QList<QByteArray> &encoded_events, EventSaveCompletion completion)
+{
+    const QString invalid = validateSaveRequest(draft_id, session_id, fencing_token,
+                                                expected_generation, changes);
+    qulonglong expected = 0;
+    if (!invalid.isEmpty() || !decimalValue(expected_generation, expected) ||
+        expected == std::numeric_limits<qulonglong>::max() ||
+        encoded_events.isEmpty() || encoded_events.size() > 128)
+    {
+        completion({}, false, invalid.isEmpty()
+            ? QStringLiteral("Invalid event batch or generation.") : invalid);
+        return;
+    }
+    QStringList ids;
+    QSet<QString> seen;
+    QJsonArray events;
+    for (const QByteArray &encoded : encoded_events)
+    {
+        QString codec_error;
+        const std::optional<aowis::model::ModelEditTransaction> event =
+            aowis::model::ModelEditTransactionCodec::decode(encoded, &codec_error);
+        if (!event.has_value())
+        {
+            completion({}, false, QStringLiteral("Invalid MODEL event: %1").arg(codec_error));
+            return;
+        }
+        const QString id = event->transactionId.toString(QUuid::WithoutBraces);
+        if (!DvmdbIdentity::isUuidV7(id) || seen.contains(id))
+        {
+            completion({}, false, QStringLiteral("Duplicate or invalid event UUIDv7."));
+            return;
+        }
+        seen.insert(id);
+        ids.append(id);
+        events.append(QString::fromLatin1(encoded.toBase64()));
+    }
+    request(target, "POST", QStringLiteral("/working-copies/") + draft_id
+                + QStringLiteral("/save-events"),
+            QJsonObject{{QStringLiteral("sessionId"), session_id},
+                        {QStringLiteral("fencingToken"), fencing_token},
+                        {QStringLiteral("expectedGeneration"), expected_generation},
+                        {QStringLiteral("changes"), encodeChanges(changes)},
+                        {QStringLiteral("events"), events}},
+            [this, target, draft_id, expected, ids, encoded_events, changes,
+             completion = std::move(completion)](const QJsonObject &reply, const QString &error)
+    {
+        const QString next = QString::number(expected + 1);
+        if (error.isEmpty())
+        {
+            const QJsonValue accepted = reply.value(QStringLiteral("acceptedEventIds"));
+            QStringList returned;
+            if (accepted.isArray())
+                for (const QJsonValue &value : accepted.toArray())
+                    returned.append(value.isString() ? value.toString() : QString());
+            qulonglong event_count = 0;
+            if (reply.value(QStringLiteral("id")).toString() == draft_id &&
+                reply.value(QStringLiteral("generation")).toString() == next &&
+                decimalValue(reply.value(QStringLiteral("eventCount")).toString(), event_count) &&
+                event_count >= static_cast<qulonglong>(ids.size()) && returned == ids)
+            {
+                completion({draft_id, next, QString::number(event_count), ids}, false, {});
+                return;
+            }
+        }
+        // A response can be lost even after an fsynced transaction. Reopen
+        // once, never resend, and require exactly the next generation and an
+        // exact ordered suffix of persisted event identities AND bytes.
+        reopen(target, draft_id,
+               [draft_id, expected, ids, encoded_events, changes,
+                completion = std::move(completion), error]
+               (const PersonalWorkingCopyInfo &draft, const QString &reopen_error)
+        {
+            const qsizetype offset = draft.events.size() - encoded_events.size();
+            bool matches = reopen_error.isEmpty() && draft.id == draft_id &&
+                draft.generation == QString::number(expected + 1) &&
+                offset >= 0 && matchingChanges(draft.changes, changes);
+            if (matches)
+                for (qsizetype index = 0; index < encoded_events.size(); ++index)
+                    if (draft.events.at(offset + index).id != ids.at(index) ||
+                        draft.events.at(offset + index).encoded != encoded_events.at(index))
+                    {
+                        matches = false;
+                        break;
+                    }
+            if (!matches)
+            {
+                completion({}, false, QStringLiteral(
+                    "Event Save not confirmed: %1. Keep queued events until journal and candidate match.")
+                    .arg(!reopen_error.isEmpty() ? reopen_error : error));
+                return;
+            }
+            completion({draft_id, draft.generation,
+                        QString::number(draft.events.size()), ids}, true, {});
+        });
+    });
+}
+
+void PersonalWorkingCopyClient::flushOldestQueuedEvent(
+    const PersonalRepositoryTarget &target, PersonalEditQueue &queue,
+    const QString &draft_id, const QString &session_id,
+    const QString &fencing_token, const QString &expected_generation,
+    const QList<PersonalWorkingCopyChange> &changes,
+    QueueFlushCompletion completion)
+{
+    if (!queue.isOpen() || queue.pending().isEmpty())
+    {
+        completion({}, false, QStringLiteral("No open personal edit queue with pending events."));
+        return;
+    }
+    if (target.repository_id != queue.repositoryId().toString(QUuid::WithoutBraces) ||
+        draft_id != queue.draftId().toString(QUuid::WithoutBraces))
+    {
+        completion({}, false, QStringLiteral("Editing queue repository or draft does not match Save target."));
+        return;
+    }
+    const PersonalEditQueue::Entry first = queue.pending().first();
+    QString codec_error;
+    const std::optional<aowis::model::ModelEditTransaction> event =
+        aowis::model::ModelEditTransactionCodec::decode(first.encoded_transaction, &codec_error);
+    if (!event.has_value() || event->transactionId != first.transaction_id)
+    {
+        completion({}, false, QStringLiteral("Local editing event failed integrity check."));
+        return;
+    }
+    // Every reversible entity edit must be present with the exact resulting
+    // bytes. Additional typed internal model records (membership chunks) are
+    // allowed but must be supplied by the caller's canonical model adapter.
+    for (const aowis::model::ModelEntityEdit &edit : event->edits)
+    {
+        const QString uuid = edit.entityId.toString(QUuid::WithoutBraces);
+        bool found = false;
+        for (const PersonalWorkingCopyChange &change : changes)
+            if (change.uuid == uuid && change.deleted == !edit.after.has_value() &&
+                (change.deleted || change.payload == *edit.after))
+            {
+                found = true;
+                break;
+            }
+        if (!found)
+        {
+            completion({}, false, QStringLiteral(
+                "Candidate record missing or mismatched for editing event entity %1.").arg(uuid));
+            return;
+        }
+    }
+    saveEventsRecovering(target, draft_id, session_id, fencing_token,
+                         expected_generation, changes, {first.encoded_transaction},
+                         [this, target, draft_id, changes, &queue, first,
+                          completion = std::move(completion)]
+                         (const PersonalWorkingCopyEventSaveResult &result,
+                          bool recovered, const QString &failure)
+    {
+        if (!failure.isEmpty())
+        {
+            // After a GUI restart the local queue can still contain the
+            // last event that DVMDB already acknowledged. A new lease then
+            // reports the *current* generation, so expected+1 recovery alone
+            // cannot recognize the old write. Confirm the exact journal tail
+            // and candidate bytes before retiring it locally.
+            reopen(target, draft_id, [&queue, first, changes,
+                   completion = std::move(completion), failure]
+                   (const PersonalWorkingCopyInfo &draft, const QString &reopen_error)
+            {
+                const QString id = first.transaction_id.toString(QUuid::WithoutBraces);
+                const bool confirmed = reopen_error.isEmpty() &&
+                    !draft.events.isEmpty() && draft.events.last().id == id &&
+                    draft.events.last().encoded == first.encoded_transaction &&
+                    matchingChanges(draft.changes, changes);
+                if (!confirmed)
+                {
+                    completion({}, false, failure);
+                    return;
+                }
+                QString queue_error;
+                if (!queue.acknowledgePersisted(first.transaction_id, &queue_error))
+                {
+                    completion({}, true, QStringLiteral(
+                        "Recovered DVMDB event, but local queue removal failed: %1")
+                        .arg(queue_error));
+                    return;
+                }
+                completion(draft.generation, true, {});
+            });
+            return;
+        }
+        QString queue_error;
+        if (!queue.acknowledgePersisted(first.transaction_id, &queue_error))
+        {
+            completion({}, recovered, QStringLiteral(
+                "DVMDB saved the event, but its local queue acknowledgement failed: %1")
+                .arg(queue_error));
+            return;
+        }
+        completion(result.generation, recovered, {});
     });
 }
 

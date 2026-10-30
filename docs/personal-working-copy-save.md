@@ -62,3 +62,27 @@ plus its draft overlay into `HydraulicData`. Only after that can Save/autosave
 be hooked to real editor changes. The model network UUID and draft base must
 be verified rather than guessed. This is a VC-04 integration prerequisite,
 not a security or separate roadmap milestone.
+
+## Atomic MODEL event journal and local queue synchronization (VC-04)
+
+DVMDB's `/save-events` operation atomically publishes a batch of MODEL event
+frames and candidate typed model records. The GUI `saveEventsRecovering()`
+checks exact IDs, generation and journal count in its small acknowledgement.
+On an unknown outcome it reopens the authoritative draft and compares the
+ordered journal tail and exact changed candidate records. It never retries
+an uncertain write automatically. `flushOldestQueuedEvent()` sends the
+oldest `PersonalEditQueue` event together with a caller-provided typed model
+batch, verifies the event's after-images against those records, and deletes
+the local queued event only after that atomic confirmation. A GUI restart
+between DVMDB acceptance and local deletion is reconciled against the last
+persisted journal event. Failed or ambiguous confirmation preserves the
+queue. This workflow must remain serialized per draft, and the open queue
+must outlive the callback.
+
+The next integration is NOT another networking transport. Implement a
+canonical editor-to-model-record adapter that builds correct kind IDs,
+references and network membership changes for every logical edit, hydrate
+the actual checked-out revision with its draft candidate, and bind the GUI
+editor session to the durable queue. Global capture remains disabled because
+network-wide settings and bulk imports need equivalent coverage. No draft
+Save is a Commit or a Publish.

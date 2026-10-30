@@ -136,6 +136,8 @@ bool PersonalEditQueue::open(const QString &root, const QUuid &repository_id,
     if (!QDir().mkpath(path))
         return fail(error, QStringLiteral("Cannot create personal editing queue directory"));
     this->directory_ = QFileInfo(path).absoluteFilePath();
+    this->repository_id_ = repository_id;
+    this->draft_id_ = draft_id;
     this->lock_ = std::make_unique<QLockFile>(QDir(this->directory_).filePath(QStringLiteral(".queue.lock")));
     if (!this->lock_->tryLock(0))
     {
@@ -156,6 +158,8 @@ void PersonalEditQueue::close()
         this->lock_->unlock();
     this->lock_.reset();
     this->directory_.clear();
+    this->repository_id_ = QUuid();
+    this->draft_id_ = QUuid();
     this->entries_.clear();
     this->next_sequence_ = 1;
     this->pending_bytes_ = 0;
@@ -288,4 +292,14 @@ bool PersonalEditQueue::isOpen() const
 QString PersonalEditQueue::directoryPath() const
 {
     return this->directory_;
+}
+
+QUuid PersonalEditQueue::repositoryId() const
+{
+    return this->repository_id_;
+}
+
+QUuid PersonalEditQueue::draftId() const
+{
+    return this->draft_id_;
 }

@@ -184,6 +184,8 @@ qt_add_executable(aowis-server-gui
     src/network/hydraulic_edit_transaction_capture.h
     src/projects/personal_edit_queue.cpp
     src/projects/personal_edit_queue.h
+    src/projects/hydraulic_draft_event_adapter.cpp
+    src/projects/hydraulic_draft_event_adapter.h
     src/network/hydraulic_entity_table_widget.cpp
     src/network/hydraulic_entity_table_widget.h
     src/network/hydraulic_network_editor.cpp
@@ -723,6 +725,8 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
         tests/personal_working_copy_client_test.cpp
         src/projects/personal_working_copy_client.cpp
         src/projects/personal_working_copy_client.h
+        src/projects/personal_edit_queue.cpp
+        src/projects/personal_edit_queue.h
         src/config/personal_repository_storage.cpp
         src/config/personal_repository_storage.h
         src/config/project_server_profile_storage.cpp
@@ -731,7 +735,7 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
     target_include_directories(aowis-personal-working-copy-client-tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_link_libraries(aowis-personal-working-copy-client-tests PRIVATE
-        Qt6::Core Qt6::Gui Qt6::Network)
+        Qt6::Core Qt6::Gui Qt6::Network AOWIS::ServerModel)
     add_test(NAME aowis-personal-working-copy-client
         COMMAND aowis-personal-working-copy-client-tests)
     set_tests_properties(aowis-personal-working-copy-client PROPERTIES LABELS "aowis")
@@ -748,6 +752,8 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
         src/projects/project_source_writer.h
         src/projects/personal_working_copy_client.cpp
         src/projects/personal_working_copy_client.h
+        src/projects/personal_edit_queue.cpp
+        src/projects/personal_edit_queue.h
         src/tabs/personal_working_copy_dialog.cpp
         src/tabs/personal_working_copy_dialog.h
         src/config/personal_repository_storage.cpp
@@ -765,7 +771,7 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
         src/config/shortcut_registry.h)
     target_include_directories(aowis-projects-inspector-dock-tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src)
-    target_link_libraries(aowis-projects-inspector-dock-tests PRIVATE Qt6::Widgets Qt6::Network)
+    target_link_libraries(aowis-projects-inspector-dock-tests PRIVATE Qt6::Widgets Qt6::Network AOWIS::ServerModel)
     add_test(NAME aowis-projects-inspector-dock
         COMMAND aowis-projects-inspector-dock-tests)
     set_tests_properties(aowis-projects-inspector-dock PROPERTIES
@@ -782,6 +788,8 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
         src/projects/project_source_writer.h
         src/projects/personal_working_copy_client.cpp
         src/projects/personal_working_copy_client.h
+        src/projects/personal_edit_queue.cpp
+        src/projects/personal_edit_queue.h
         src/tabs/personal_working_copy_dialog.cpp
         src/tabs/personal_working_copy_dialog.h
         src/config/personal_repository_storage.cpp
@@ -799,7 +807,7 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
         src/config/shortcut_registry.h)
     target_include_directories(aowis-projects-multi-source-tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src)
-    target_link_libraries(aowis-projects-multi-source-tests PRIVATE Qt6::Widgets Qt6::Network)
+    target_link_libraries(aowis-projects-multi-source-tests PRIVATE Qt6::Widgets Qt6::Network AOWIS::ServerModel)
     add_test(NAME aowis-projects-multi-source COMMAND aowis-projects-multi-source-tests)
     set_tests_properties(aowis-projects-multi-source PROPERTIES
         LABELS "aowis" ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
@@ -1387,10 +1395,12 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
         src/network/hydraulic_data.h
         src/projects/personal_edit_queue.cpp
         src/projects/personal_edit_queue.h
+        src/projects/hydraulic_draft_event_adapter.cpp
+        src/projects/hydraulic_draft_event_adapter.h
     )
     set_target_properties(aowis-hydraulic-edit-transaction-tests PROPERTIES AUTOMOC ON)
     target_link_libraries(aowis-hydraulic-edit-transaction-tests PRIVATE
-        aowis-hydraulic-test-support AOWIS::ServerEpanet Qt6::Core Qt6::Gui)
+        aowis-hydraulic-test-support AOWIS::ServerEpanet Qt6::Core Qt6::Gui Qt6::Network)
     add_test(NAME aowis-hydraulic-edit-transaction
         COMMAND aowis-hydraulic-edit-transaction-tests)
     set_tests_properties(aowis-hydraulic-edit-transaction PROPERTIES LABELS "aowis")

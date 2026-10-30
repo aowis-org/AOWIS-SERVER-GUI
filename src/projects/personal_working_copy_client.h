@@ -23,6 +23,12 @@ struct PersonalWorkingCopyChange
     QByteArray payload;
 };
 
+struct PersonalWorkingCopyEvent
+{
+    QString id;
+    QByteArray encoded;
+};
+
 struct PersonalWorkingCopyInfo
 {
     QString id;
@@ -33,6 +39,8 @@ struct PersonalWorkingCopyInfo
     QString generation; // decimal, not a lossy JSON number
     bool dirty = false;
     QList<PersonalWorkingCopyChange> changes; // populated by reopen(), not list()
+    QString event_count; // decimal journal count, when supplied by server
+    QList<PersonalWorkingCopyEvent> events; // populated by reopen(), not list()
 };
 
 struct PersonalWorkingCopyLease
@@ -40,6 +48,16 @@ struct PersonalWorkingCopyLease
     QString token;
     QString generation;
     QString expires_at_ms;
+};
+
+class PersonalEditQueue;
+
+struct PersonalWorkingCopyEventSaveResult
+{
+    QString draft_id;
+    QString generation;
+    QString event_count;
+    QStringList accepted_ids;
 };
 
 class PersonalWorkingCopyClient final : public QObject
@@ -80,6 +98,33 @@ public:
                                const QString &expected_generation,
                                const QList<PersonalWorkingCopyChange> &changes,
                                RecoveringSaveCompletion completion);
+
+    // Send logical MODEL transactions and typed model records atomically to the
+    // private journal. Validate exact IDs, generation and count in the small
+    // acknowledgement. For lost/malformed responses, reopen and compare the
+    // authoritative last journal batch and candidate bytes before confirming.
+    // Never resend an uncertain batch automatically.
+    using EventSaveCompletion = std::function<void(
+        const PersonalWorkingCopyEventSaveResult &, bool recovered, const QString &)>;
+    void saveEventsRecovering(const PersonalRepositoryTarget &target,
+                             const QString &draft_id, const QString &session_id,
+                             const QString &fencing_token, const QString &expected_generation,
+                             const QList<PersonalWorkingCopyChange> &changes,
+                             const QList<QByteArray> &encoded_events,
+                             EventSaveCompletion completion);
+
+    // Drain precisely the oldest durable local event. The caller supplies a
+    // matching typed candidate-record batch; only an authoritative DVMDB
+    // journal acknowledgement permits deleting the local event. The queue
+    // must remain alive and open until completion; call serially per draft.
+    using QueueFlushCompletion = std::function<void(
+        const QString &next_generation, bool recovered, const QString &)>;
+    void flushOldestQueuedEvent(const PersonalRepositoryTarget &target,
+                               PersonalEditQueue &queue, const QString &draft_id,
+                               const QString &session_id, const QString &fencing_token,
+                               const QString &expected_generation,
+                               const QList<PersonalWorkingCopyChange> &changes,
+                               QueueFlushCompletion completion);
 
     void releaseLease(const PersonalRepositoryTarget &target, const QString &draft_id,
                       const QString &session_id, const QString &fencing_token,

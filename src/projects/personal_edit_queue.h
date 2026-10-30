@@ -48,12 +48,16 @@ public:
     QList<Entry> pending() const;
     bool isOpen() const;
     QString directoryPath() const;
+    QUuid repositoryId() const;
+    QUuid draftId() const;
 
 private:
     bool readExisting(QString *error);
     static QString fileName(quint64 sequence, const QUuid &id);
 
     QString directory_;
+    QUuid repository_id_;
+    QUuid draft_id_;
     std::unique_ptr<QLockFile> lock_;
     QList<Entry> entries_;
     quint64 next_sequence_ = 1;

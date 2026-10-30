@@ -2,6 +2,7 @@
 #include "network/hydraulic_edit_transaction_capture.h"
 #include "network/hydraulic_network_editor.h"
 #include "projects/personal_edit_queue.h"
+#include "projects/hydraulic_draft_event_adapter.h"
 #include "test_harness.h"
 
 #include <aowis/model/edit/model_edit_transaction.h>
@@ -11,6 +12,8 @@
 #include <QObject>
 #include <QTemporaryDir>
 #include <aowis/model/uuid.h>
+
+#include <utility>
 
 namespace
 {
@@ -266,6 +269,218 @@ void testCascadingNodeDeletionIsOneTransaction()
                             "delete event preserves all reversible before/after images");
 }
 
+void testOrderedHydraulicDraftRecordMapping()
+{
+    HydraulicData data;
+    // A checked-out hydraulic model always has a persistent network identity.
+    // An empty HydraulicData instance is only an editor scratch model and is
+    // intentionally rejected by MODEL's dependency validator.
+    NetworkHydraulic initial_network;
+    initial_network.uuid = createUuidV7();
+    initial_network.id = QStringLiteral("draft-adapter-regression");
+    data.replaceNetworkHydraulic(std::move(initial_network), {});
+    const QUuid a = data.addJunction(coordinate(50.0, 8.0));
+    const QUuid b = data.addJunction(coordinate(50.1, 8.1));
+    const QUuid pipe = data.addPipe(a, b, {});
+    test_harness.expectTrue(!a.isNull() && !b.isNull() && !pipe.isNull(),
+                            "initial hydraulic model exists without history capture");
+    if (pipe.isNull())
+        return;
+    NetworkHydraulic staged = data.networkHydraulic();
+    QList<QByteArray> events;
+    QObject::connect(&data, &HydraulicData::signalLogicalEditRecorded, &data,
+                     [&events](const QByteArray &bytes) { events.append(bytes); });
+    data.setLogicalEditCaptureEnabled(true);
+    test_harness.expectTrue(data.setNodeId(a, QStringLiteral("A-draft")),
+                            "renaming real junction emits a MODEL event");
+    test_harness.expectTrue(data.setPipeDiameterMm(pipe, 225.0),
+                            "changing real pipe diameter emits a MODEL event");
+    test_harness.expectTrue(events.size() == 2, "two logical edits captured in order");
+    if (events.size() != 2)
+        return;
+
+    QList<PersonalWorkingCopyChange> records;
+    QString error;
+    const bool first_prepared = HydraulicDraftEventAdapter::prepare(
+        events.at(0), staged, records, &error);
+    const QByteArray first_message =
+        (QStringLiteral("first event maps to a canonical DVMDB model record: ") + error).toUtf8();
+    test_harness.expectTrue(first_prepared, first_message.constData());
+    if (!first_prepared)
+        return;
+    test_harness.expectTrue(records.size() == 1 &&
+                            records.at(0).uuid == a.toString(QUuid::WithoutBraces) &&
+                            records.at(0).kind == 1 && records.at(0).references.isEmpty(),
+                            "junction uses native DVMDB kind and no outgoing entity references");
+    const QByteArray first_payload = records.isEmpty() ? QByteArray() : records.first().payload;
+    const bool second_prepared = HydraulicDraftEventAdapter::prepare(
+        events.at(1), staged, records, &error);
+    const QByteArray second_message =
+        (QStringLiteral("second event maps after advancing the staged candidate: ") + error).toUtf8();
+    test_harness.expectTrue(second_prepared, second_message.constData());
+    if (!second_prepared)
+        return;
+    QStringList endpoints{a.toString(QUuid::WithoutBraces), b.toString(QUuid::WithoutBraces)};
+    endpoints.sort(Qt::CaseSensitive);
+    test_harness.expectTrue(records.size() == 1 &&
+                            records.at(0).uuid == pipe.toString(QUuid::WithoutBraces) &&
+                            records.at(0).kind == 4 && records.at(0).references == endpoints,
+                            "pipe's canonical references are sorted endpoint UUIDs");
+    test_harness.expectTrue(aowis::model::ModelCodec<NetworkHydraulic>::encode(staged) ==
+                            aowis::model::ModelCodec<NetworkHydraulic>::encode(data.networkHydraulic()),
+                            "ordered event replay reaches the exact edited network");
+
+    QByteArray corrupted = events.at(1);
+    corrupted[corrupted.size() - 1] = static_cast<char>(
+        corrupted.at(corrupted.size() - 1) ^ 1);
+    NetworkHydraulic corrupted_staged = staged;
+    test_harness.expectTrue(!HydraulicDraftEventAdapter::prepare(
+                                corrupted, corrupted_staged, records, &error) && !error.isEmpty(),
+                            "corrupt event digest fails before any candidate update");
+
+    NetworkHydraulic stale = staged;
+    const QList<PersonalWorkingCopyChange> old_records = records;
+    test_harness.expectTrue(!HydraulicDraftEventAdapter::prepare(events.at(0), stale, records, &error) &&
+                            !error.isEmpty(),
+                            "replayed stale event is rejected, not applied twice");
+    test_harness.expectTrue(records.size() == old_records.size() &&
+                            !records.isEmpty() && !old_records.isEmpty() &&
+                            records.first().payload == old_records.first().payload &&
+                            aowis::model::ModelCodec<NetworkHydraulic>::encode(stale) ==
+                            aowis::model::ModelCodec<NetworkHydraulic>::encode(staged),
+                            "failed replay leaves candidate model and caller records untouched");
+
+    // A new member also needs a DVMDB membership-chunk update; the adapter
+    // must not silently acknowledge a record that a revision loader cannot see.
+    const QUuid added = data.addJunction(coordinate(50.3, 8.3));
+    test_harness.expectTrue(!added.isNull() && events.size() == 3,
+                            "entity creation is recorded as a reversible event");
+    if (events.size() == 3)
+    {
+        test_harness.expectTrue(!HydraulicDraftEventAdapter::prepare(events.at(2), staged, records, &error) &&
+                                error.contains(QStringLiteral("membership")),
+                                "new entities cannot bypass DVMDB network membership");
+    }
+    test_harness.expectTrue(!first_payload.isEmpty(), "first record contains canonical MODEL bytes");
+}
+
+void testHydraulicDraftMembershipIntents()
+{
+    HydraulicData data;
+    NetworkHydraulic initial;
+    initial.uuid = createUuidV7();
+    initial.id = QStringLiteral("membership-regression");
+    data.replaceNetworkHydraulic(std::move(initial), {});
+    const QUuid first = data.addJunction(coordinate(50.0, 8.0));
+    const QUuid second = data.addJunction(coordinate(50.1, 8.1));
+    const QUuid pipe = data.addPipe(first, second, {});
+    const QUuid demand = data.addDemandPoint(coordinate(50.02, 8.02));
+    if (first.isNull() || second.isNull() || pipe.isNull() || demand.isNull() ||
+        !data.attachDemandPointToPipe(demand, pipe, 0.5))
+    {
+        test_harness.expectTrue(false, "base hydraulic model for membership test is valid");
+        return;
+    }
+    NetworkHydraulic staged = data.networkHydraulic();
+    QList<QByteArray> events;
+    QObject::connect(&data, &HydraulicData::signalLogicalEditRecorded, &data,
+                     [&events](const QByteArray &bytes) { events.append(bytes); });
+    data.setLogicalEditCaptureEnabled(true);
+
+    const QUuid new_junction = data.addJunction(coordinate(50.3, 8.3));
+    test_harness.expectTrue(!new_junction.isNull() && events.size() == 1,
+                            "junction creation is one logical transaction");
+    if (events.size() != 1)
+        return;
+    QList<PersonalWorkingCopyChange> records;
+    QList<HydraulicDraftMembershipEdit> membership;
+    QString error;
+    const bool created = HydraulicDraftEventAdapter::prepareWithMembership(
+        events.first(), staged, records, membership, &error);
+    const QByteArray created_message =
+        (QStringLiteral("membership insertion prepares: ") + error).toUtf8();
+    test_harness.expectTrue(created, created_message.constData());
+    if (!created)
+        return;
+    test_harness.expectTrue(records.size() == 1 &&
+                            !records.first().deleted && records.first().kind == 1 &&
+                            records.first().uuid == new_junction.toString(QUuid::WithoutBraces) &&
+                            !records.first().payload.isEmpty(),
+                            "created entity has one canonical insert record");
+    test_harness.expectTrue(membership.size() == 1 && membership.first().inserted &&
+                            membership.first().network_id == staged.uuid &&
+                            membership.first().entity_id == new_junction &&
+                            membership.first().kind == 1 &&
+                            membership.first().collection_index == 9,
+                            "insertion carries network ownership and canonical collection ordinal");
+    test_harness.expectTrue(aowis::model::ModelCodec<NetworkHydraulic>::encode(staged) ==
+                            aowis::model::ModelCodec<NetworkHydraulic>::encode(data.networkHydraulic()),
+                            "prepared insertion advances exactly to the editor model");
+
+    // Entity-only /save-events cannot materialize the membership chunks.
+    NetworkHydraulic incomplete = data.networkHydraulic();
+    incomplete.nodes_junctions.removeLast();
+    QList<PersonalWorkingCopyChange> sentinel;
+    PersonalWorkingCopyChange old;
+    old.uuid = QStringLiteral("sentinel");
+    sentinel.append(old);
+    const QByteArray before_incomplete = aowis::model::ModelCodec<NetworkHydraulic>::encode(incomplete);
+    test_harness.expectTrue(!HydraulicDraftEventAdapter::prepare(
+                                events.first(), incomplete, sentinel, &error) &&
+                            error.contains(QStringLiteral("membership")),
+                            "record-only API refuses to acknowledge insertion");
+    test_harness.expectTrue(aowis::model::ModelCodec<NetworkHydraulic>::encode(incomplete) ==
+                            before_incomplete && sentinel.size() == 1 &&
+                            sentinel.first().uuid == QStringLiteral("sentinel"),
+                            "refused insertion leaves staged state and records intact");
+
+    // One deletion cascades to the pipe while changing the demand attachment;
+    // both memberships and the dependent entity update remain one event.
+    test_harness.expectTrue(data.deleteJunction(first),
+                            "cascading deletion succeeds in the hydraulic editor");
+    test_harness.expectTrue(events.size() == 2,
+                            "cascading deletion produces exactly one additional event");
+    if (events.size() != 2)
+        return;
+    const bool deleted = HydraulicDraftEventAdapter::prepareWithMembership(
+        events.last(), staged, records, membership, &error);
+    const QByteArray deleted_message =
+        (QStringLiteral("cascading membership removal prepares: ") + error).toUtf8();
+    test_harness.expectTrue(deleted, deleted_message.constData());
+    if (!deleted)
+        return;
+    bool removed_junction = false;
+    bool removed_pipe = false;
+    bool updated_demand = false;
+    for (const PersonalWorkingCopyChange &record : records)
+    {
+        if (record.uuid == first.toString(QUuid::WithoutBraces))
+            removed_junction = record.deleted && record.kind == 1;
+        else if (record.uuid == pipe.toString(QUuid::WithoutBraces))
+            removed_pipe = record.deleted && record.kind == 4;
+        else if (record.uuid == demand.toString(QUuid::WithoutBraces))
+            updated_demand = !record.deleted && record.kind == 7 &&
+                             !record.payload.isEmpty();
+    }
+    test_harness.expectTrue(records.size() == 3 && removed_junction &&
+                            removed_pipe && updated_demand,
+                            "one event includes both tombstones and related attachment update");
+    bool membership_junction = false;
+    bool membership_pipe = false;
+    for (const HydraulicDraftMembershipEdit &intent : membership)
+    {
+        if (intent.entity_id == first)
+            membership_junction = !intent.inserted && intent.collection_index == 9;
+        if (intent.entity_id == pipe)
+            membership_pipe = !intent.inserted && intent.collection_index == 12;
+    }
+    test_harness.expectTrue(membership.size() == 2 && membership_junction && membership_pipe,
+                            "only removed members have membership delete intents");
+    test_harness.expectTrue(aowis::model::ModelCodec<NetworkHydraulic>::encode(staged) ==
+                            aowis::model::ModelCodec<NetworkHydraulic>::encode(data.networkHydraulic()),
+                            "cascading operation replays exactly against staged model");
+}
+
 void testCapturedOperationsEnterDurableQueue()
 {
     QTemporaryDir root;
@@ -314,6 +529,8 @@ int main(int argc, char **argv)
     test_harness.runCase("HydraulicData logical operations", testHydraulicDataLogicalOperations);
     test_harness.runCase("Hydraulic property capture and no-op", testPropertyCaptureAndNoop);
     test_harness.runCase("Cascading node deletion", testCascadingNodeDeletionIsOneTransaction);
+    test_harness.runCase("Hydraulic event to canonical DVMDB records", testOrderedHydraulicDraftRecordMapping);
+    test_harness.runCase("Hydraulic membership intent mapping", testHydraulicDraftMembershipIntents);
     test_harness.runCase("Capture to durable offline queue", testCapturedOperationsEnterDurableQueue);
     return test_harness.finish();
 }
