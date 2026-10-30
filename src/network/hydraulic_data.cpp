@@ -75,6 +75,70 @@ void updateWaterAgeLinkMinimumMaximum(const WaterQualitySimulationResult &result
 
 }
 
+// A scoped edit groups one property command into one reversible MODEL event.
+// It records only the touched UUID and compares canonical images at scope exit;
+// a failed operation or no-op produces no transaction.
+class HydraulicData::EditScope final
+{
+public:
+    EditScope(HydraulicData &owner, QString operation, const QUuid &entity_uuid)
+        : owner_(owner),
+          capture_(std::move(operation)),
+          enabled_(owner.logical_edit_capture_enabled)
+    {
+        if (this->enabled_ && !entity_uuid.isNull())
+            this->capture_.watch(this->owner_.network_hydraulic, entity_uuid);
+    }
+
+    ~EditScope()
+    {
+        if (this->enabled_ && this->owner_.logical_edit_capture_enabled)
+            this->owner_.publishCapturedEdit(this->capture_);
+    }
+
+    void watchNodeDeletionDependents(const QUuid &node_uuid)
+    {
+        if (!this->enabled_ || node_uuid.isNull())
+            return;
+        QSet<QUuid> deleted_pipes;
+        for (const HydraulicLinkPipe &pipe : this->owner_.network_hydraulic.links_pipes)
+        {
+            if (pipe.node_uuid_from != node_uuid && pipe.node_uuid_to != node_uuid)
+                continue;
+            deleted_pipes.insert(pipe.uuid);
+            this->capture_.watch(this->owner_.network_hydraulic, pipe.uuid);
+        }
+        for (const HydraulicLinkPump &pump : this->owner_.network_hydraulic.links_pumps)
+        {
+            if (pump.node_uuid_from == node_uuid || pump.node_uuid_to == node_uuid)
+                this->capture_.watch(this->owner_.network_hydraulic, pump.uuid);
+        }
+        for (const HydraulicLinkValve &valve : this->owner_.network_hydraulic.links_valves)
+        {
+            if (valve.node_uuid_from == node_uuid || valve.node_uuid_to == node_uuid)
+                this->capture_.watch(this->owner_.network_hydraulic, valve.uuid);
+        }
+        for (const HydraulicDemandPoint &point : this->owner_.network_hydraulic.demand_points)
+        {
+            const bool linked_to_deleted_pipe =
+                point.attachment.type == HydraulicDemandPointAttachmentType::Pipe &&
+                deleted_pipes.contains(point.attachment.pipe_uuid);
+            const bool linked_to_deleted_junction =
+                (point.attachment.type == HydraulicDemandPointAttachmentType::Junction &&
+                 point.attachment.junction_uuid == node_uuid) ||
+                (point.attachment.type == HydraulicDemandPointAttachmentType::Pipe &&
+                 point.attachment.pipe_assigned_junction_uuid == node_uuid);
+            if (linked_to_deleted_pipe || linked_to_deleted_junction)
+                this->capture_.watch(this->owner_.network_hydraulic, point.uuid);
+        }
+    }
+
+private:
+    HydraulicData &owner_;
+    HydraulicEditTransactionCapture capture_;
+    bool enabled_;
+};
+
 HydraulicData::HydraulicData(QObject *parent)
     : QObject{parent},
       network_editor(this->network_hydraulic)
@@ -2201,6 +2265,7 @@ QUuid HydraulicData::addValve(const QUuid &node_uuid_from, const QUuid &node_uui
 
 bool HydraulicData::setNodeId(const QUuid &uuid, const QString &id)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setNodeId"), uuid);
     if (!this->network_editor.setNodeId(uuid, id))
         return false;
     refreshNetworkRenderSnapshotIds();
@@ -2209,12 +2274,14 @@ bool HydraulicData::setNodeId(const QUuid &uuid, const QString &id)
 
 bool HydraulicData::setNodeModelRole(const QUuid &uuid, EntityModelRole model_role)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setNodeModelRole"), uuid);
     return emitNodeChangedIfSuccessful(
         uuid, this->network_editor.setNodeModelRole(uuid, model_role));
 }
 
 bool HydraulicData::setNodeDateAdded(const QUuid &uuid, const std::optional<QDate> &date_added)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setNodeDateAdded"), uuid);
     return emitNodeChangedIfSuccessful(
         uuid, this->network_editor.setNodeDateAdded(uuid, date_added));
 }
@@ -2222,12 +2289,14 @@ bool HydraulicData::setNodeDateAdded(const QUuid &uuid, const std::optional<QDat
 bool HydraulicData::setNodeDateInstalled(const QUuid &uuid,
                                            const std::optional<QDate> &date_installed)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setNodeDateInstalled"), uuid);
     return emitNodeChangedIfSuccessful(
         uuid, this->network_editor.setNodeDateInstalled(uuid, date_installed));
 }
 
 bool HydraulicData::setNodeEnabled(const QUuid &uuid, bool enabled)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setNodeEnabled"), uuid);
     return emitNodeChangedIfSuccessful(uuid, this->network_editor.setNodeEnabled(uuid, enabled));
 }
 
@@ -2265,6 +2334,7 @@ bool HydraulicData::setNodeCoordinate(const QUuid &uuid, const CoordinateWGS84 &
 
 bool HydraulicData::setLinkId(const QUuid &uuid, const QString &id)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setLinkId"), uuid);
     if (!this->network_editor.setLinkId(uuid, id))
         return false;
     refreshNetworkRenderSnapshotIds();
@@ -2273,6 +2343,7 @@ bool HydraulicData::setLinkId(const QUuid &uuid, const QString &id)
 
 bool HydraulicData::setLinkModelRole(const QUuid &uuid, EntityModelRole model_role)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setLinkModelRole"), uuid);
     return emitLinkChangedIfSuccessful(
         uuid, this->network_editor.setLinkModelRole(uuid, model_role));
 }
@@ -2280,6 +2351,7 @@ bool HydraulicData::setLinkModelRole(const QUuid &uuid, EntityModelRole model_ro
 bool HydraulicData::setLinkDateAdded(const QUuid &uuid,
                                      const std::optional<QDate> &date_added)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setLinkDateAdded"), uuid);
     return emitLinkChangedIfSuccessful(
         uuid, this->network_editor.setLinkDateAdded(uuid, date_added));
 }
@@ -2287,17 +2359,20 @@ bool HydraulicData::setLinkDateAdded(const QUuid &uuid,
 bool HydraulicData::setLinkDateInstalled(const QUuid &uuid,
                                          const std::optional<QDate> &date_installed)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setLinkDateInstalled"), uuid);
     return emitLinkChangedIfSuccessful(
         uuid, this->network_editor.setLinkDateInstalled(uuid, date_installed));
 }
 
 bool HydraulicData::setLinkEnabled(const QUuid &uuid, bool enabled)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setLinkEnabled"), uuid);
     return emitLinkChangedIfSuccessful(uuid, this->network_editor.setLinkEnabled(uuid, enabled));
 }
 
 bool HydraulicData::setDemandPointId(const QUuid &uuid, const QString &id)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setDemandPointId"), uuid);
     if (!this->network_editor.setDemandPointId(uuid, id))
         return false;
 
@@ -2309,6 +2384,7 @@ bool HydraulicData::setDemandPointId(const QUuid &uuid, const QString &id)
 
 bool HydraulicData::setDemandPointModelRole(const QUuid &uuid, EntityModelRole model_role)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setDemandPointModelRole"), uuid);
     if (!this->network_editor.setDemandPointModelRole(uuid, model_role))
         return false;
 
@@ -2320,6 +2396,7 @@ bool HydraulicData::setDemandPointModelRole(const QUuid &uuid, EntityModelRole m
 bool HydraulicData::setDemandPointDateAdded(
     const QUuid &uuid, const std::optional<QDate> &date_added)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setDemandPointDateAdded"), uuid);
     if (!this->network_editor.setDemandPointDateAdded(uuid, date_added))
         return false;
 
@@ -2331,6 +2408,7 @@ bool HydraulicData::setDemandPointDateAdded(
 bool HydraulicData::setDemandPointDateInstalled(
     const QUuid &uuid, const std::optional<QDate> &date_installed)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setDemandPointDateInstalled"), uuid);
     if (!this->network_editor.setDemandPointDateInstalled(uuid, date_installed))
         return false;
 
@@ -2341,6 +2419,7 @@ bool HydraulicData::setDemandPointDateInstalled(
 
 bool HydraulicData::setDemandPointEnabled(const QUuid &uuid, bool enabled)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setDemandPointEnabled"), uuid);
     if (!this->network_editor.setDemandPointEnabled(uuid, enabled))
         return false;
 
@@ -2351,6 +2430,7 @@ bool HydraulicData::setDemandPointEnabled(const QUuid &uuid, bool enabled)
 
 bool HydraulicData::setDemandPointDescription(const QUuid &uuid, const QString &description)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setDemandPointDescription"), uuid);
     if (!this->network_editor.setDemandPointDescription(uuid, description))
         return false;
 
@@ -2361,6 +2441,7 @@ bool HydraulicData::setDemandPointDescription(const QUuid &uuid, const QString &
 
 bool HydraulicData::setDemandPointComment(const QUuid &uuid, const QString &comment)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setDemandPointComment"), uuid);
     if (!this->network_editor.setDemandPointComment(uuid, comment))
         return false;
 
@@ -2371,6 +2452,7 @@ bool HydraulicData::setDemandPointComment(const QUuid &uuid, const QString &comm
 
 bool HydraulicData::setDemandPointTags(const QUuid &uuid, const QStringList &tags)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setDemandPointTags"), uuid);
     if (!this->network_editor.setDemandPointTags(uuid, tags))
         return false;
 
@@ -2382,6 +2464,7 @@ bool HydraulicData::setDemandPointTags(const QUuid &uuid, const QStringList &tag
 bool HydraulicData::setDemandPointCoordinate(
     const QUuid &uuid, const CoordinateWGS84 &coordinate)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setDemandPointCoordinate"), uuid);
     const std::optional<HydraulicDemandPoint> demand_point = this->network_editor.demandPoint(uuid);
     if (!demand_point.has_value())
         return false;
@@ -2397,6 +2480,7 @@ bool HydraulicData::setDemandPointCoordinate(
 
 bool HydraulicData::addDemandPointDemand(const QUuid &uuid, const HydraulicDemand &demand)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.addDemandPointDemand"), uuid);
     if (!this->network_editor.addDemandPointDemand(uuid, demand))
         return false;
 
@@ -2407,6 +2491,7 @@ bool HydraulicData::addDemandPointDemand(const QUuid &uuid, const HydraulicDeman
 
 bool HydraulicData::removeDemandPointDemand(const QUuid &uuid, int demand_index)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.removeDemandPointDemand"), uuid);
     if (!this->network_editor.removeDemandPointDemand(uuid, demand_index))
         return false;
 
@@ -2418,6 +2503,7 @@ bool HydraulicData::removeDemandPointDemand(const QUuid &uuid, int demand_index)
 bool HydraulicData::setDemandPointDemandCategoryName(
     const QUuid &uuid, int demand_index, const QString &category_name)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setDemandPointDemandCategoryName"), uuid);
     if (!this->network_editor.setDemandPointDemandCategoryName(uuid, demand_index, category_name))
         return false;
 
@@ -2429,6 +2515,7 @@ bool HydraulicData::setDemandPointDemandCategoryName(
 bool HydraulicData::setDemandPointDemandBaseDemandM3PerH(
     const QUuid &uuid, int demand_index, double base_demand_m3_per_h)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setDemandPointDemandBaseDemandM3PerH"), uuid);
     if (!this->network_editor.setDemandPointDemandBaseDemandM3PerH(
             uuid, demand_index, base_demand_m3_per_h))
         return false;
@@ -2441,6 +2528,7 @@ bool HydraulicData::setDemandPointDemandBaseDemandM3PerH(
 bool HydraulicData::setDemandPointDemandPatternMode(
     const QUuid &uuid, int demand_index, HydraulicTimePatternMode pattern_mode)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setDemandPointDemandPatternMode"), uuid);
     if (!this->network_editor.setDemandPointDemandPatternMode(uuid, demand_index, pattern_mode))
         return false;
 
@@ -2452,6 +2540,7 @@ bool HydraulicData::setDemandPointDemandPatternMode(
 bool HydraulicData::setDemandPointDemandPatternUuid(
     const QUuid &uuid, int demand_index, const QUuid &pattern_uuid)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setDemandPointDemandPatternUuid"), uuid);
     if (!this->network_editor.setDemandPointDemandPatternUuid(uuid, demand_index, pattern_uuid))
         return false;
 
@@ -2463,6 +2552,7 @@ bool HydraulicData::setDemandPointDemandPatternUuid(
 bool HydraulicData::setDemandPointDemandSourceMethod(
     const QUuid &uuid, int demand_index, HydraulicDemandSourceMethod source_method)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setDemandPointDemandSourceMethod"), uuid);
     if (!this->network_editor.setDemandPointDemandSourceMethod(uuid, demand_index, source_method))
         return false;
 
@@ -2474,6 +2564,7 @@ bool HydraulicData::setDemandPointDemandSourceMethod(
 bool HydraulicData::setDemandPointDemandNote(
     const QUuid &uuid, int demand_index, const QString &note)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setDemandPointDemandNote"), uuid);
     if (!this->network_editor.setDemandPointDemandNote(uuid, demand_index, note))
         return false;
 
@@ -2484,6 +2575,7 @@ bool HydraulicData::setDemandPointDemandNote(
 
 bool HydraulicData::addDemandPointMeter(const QUuid &uuid)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.addDemandPointMeter"), uuid);
     if (!this->network_editor.addDemandPointMeter(uuid))
         return false;
 
@@ -2494,6 +2586,7 @@ bool HydraulicData::addDemandPointMeter(const QUuid &uuid)
 
 bool HydraulicData::setDemandPointMeter(const QUuid &uuid, const WaterMeter &meter)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setDemandPointMeter"), uuid);
     if (!this->network_editor.setDemandPointMeter(uuid, meter))
         return false;
 
@@ -2504,6 +2597,7 @@ bool HydraulicData::setDemandPointMeter(const QUuid &uuid, const WaterMeter &met
 
 bool HydraulicData::removeDemandPointMeter(const QUuid &uuid)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.removeDemandPointMeter"), uuid);
     if (!this->network_editor.removeDemandPointMeter(uuid))
         return false;
 
@@ -2515,6 +2609,7 @@ bool HydraulicData::removeDemandPointMeter(const QUuid &uuid)
 bool HydraulicData::attachDemandPointToPipe(
     const QUuid &uuid, const QUuid &pipe_uuid, double pipe_position)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.attachDemandPointToPipe"), uuid);
     if (!this->network_editor.attachDemandPointToPipe(uuid, pipe_uuid, pipe_position))
         return false;
 
@@ -2526,6 +2621,7 @@ bool HydraulicData::attachDemandPointToPipe(
 bool HydraulicData::setDemandPointPipeAllocationMode(
     const QUuid &uuid, HydraulicDemandPointPipeAllocationMode allocation_mode)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setDemandPointPipeAllocationMode"), uuid);
     if (!this->network_editor.setDemandPointPipeAllocationMode(uuid, allocation_mode))
         return false;
 
@@ -2537,6 +2633,7 @@ bool HydraulicData::setDemandPointPipeAllocationMode(
 bool HydraulicData::setDemandPointPipeAssignedJunction(
     const QUuid &uuid, const QUuid &junction_uuid)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setDemandPointPipeAssignedJunction"), uuid);
     if (!this->network_editor.setDemandPointPipeAssignedJunction(uuid, junction_uuid))
         return false;
 
@@ -2548,6 +2645,7 @@ bool HydraulicData::setDemandPointPipeAssignedJunction(
 bool HydraulicData::attachDemandPointToJunction(
     const QUuid &uuid, const QUuid &junction_uuid)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.attachDemandPointToJunction"), uuid);
     if (!this->network_editor.attachDemandPointToJunction(uuid, junction_uuid))
         return false;
 
@@ -2558,6 +2656,7 @@ bool HydraulicData::attachDemandPointToJunction(
 
 bool HydraulicData::clearDemandPointAttachment(const QUuid &uuid)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.clearDemandPointAttachment"), uuid);
     if (!this->network_editor.clearDemandPointAttachment(uuid))
         return false;
 
@@ -2569,6 +2668,7 @@ bool HydraulicData::clearDemandPointAttachment(const QUuid &uuid)
 bool HydraulicData::setJunctionElevationInputType(
     const QUuid &uuid, HydraulicNodeElevationInputType input_type)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setJunctionElevationInputType"), uuid);
     return emitNodeChangedIfSuccessful(
         uuid, this->network_editor.setJunctionElevationInputType(uuid, input_type),
         NetworkChange::Geometry);
@@ -2589,6 +2689,7 @@ bool HydraulicData::setJunctionElevationM(const QUuid &uuid, double elevation_m)
 
 bool HydraulicData::setJunctionTerrainElevationM(const QUuid &uuid, double terrain_elevation_m)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setJunctionTerrainElevationM"), uuid);
     return emitNodeChangedIfSuccessful(
         uuid, this->network_editor.setJunctionTerrainElevationM(uuid, terrain_elevation_m),
         NetworkChange::Geometry);
@@ -2596,6 +2697,7 @@ bool HydraulicData::setJunctionTerrainElevationM(const QUuid &uuid, double terra
 
 bool HydraulicData::setJunctionElevationOffsetM(const QUuid &uuid, double elevation_offset_m)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setJunctionElevationOffsetM"), uuid);
     return emitNodeChangedIfSuccessful(
         uuid, this->network_editor.setJunctionElevationOffsetM(uuid, elevation_offset_m),
         NetworkChange::Geometry);
@@ -2604,12 +2706,14 @@ bool HydraulicData::setJunctionElevationOffsetM(const QUuid &uuid, double elevat
 bool HydraulicData::addJunctionDemand(const QUuid &uuid,
                                       const HydraulicDemand &demand)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.addJunctionDemand"), uuid);
     return emitNodeChangedIfSuccessful(
         uuid, this->network_editor.addJunctionDemand(uuid, demand));
 }
 
 bool HydraulicData::removeJunctionDemand(const QUuid &uuid, int demand_index)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.removeJunctionDemand"), uuid);
     return emitNodeChangedIfSuccessful(
         uuid, this->network_editor.removeJunctionDemand(uuid, demand_index));
 }
@@ -2617,6 +2721,7 @@ bool HydraulicData::removeJunctionDemand(const QUuid &uuid, int demand_index)
 bool HydraulicData::setJunctionDemandCategoryName(const QUuid &uuid, int demand_index,
                                                   const QString &category_name)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setJunctionDemandCategoryName"), uuid);
     return emitNodeChangedIfSuccessful(
         uuid, this->network_editor.setJunctionDemandCategoryName(
                   uuid, demand_index, category_name));
@@ -2625,6 +2730,7 @@ bool HydraulicData::setJunctionDemandCategoryName(const QUuid &uuid, int demand_
 bool HydraulicData::setJunctionDemandBaseDemandM3PerH(
     const QUuid &uuid, int demand_index, double base_demand_m3_per_h)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setJunctionDemandBaseDemandM3PerH"), uuid);
     return emitNodeChangedIfSuccessful(
         uuid, this->network_editor.setJunctionDemandBaseDemandM3PerH(
                   uuid, demand_index, base_demand_m3_per_h));
@@ -2633,6 +2739,7 @@ bool HydraulicData::setJunctionDemandBaseDemandM3PerH(
 bool HydraulicData::setJunctionDemandPatternMode(
     const QUuid &uuid, int demand_index, HydraulicTimePatternMode pattern_mode)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setJunctionDemandPatternMode"), uuid);
     return emitNodeChangedIfSuccessful(
         uuid, this->network_editor.setJunctionDemandPatternMode(
                   uuid, demand_index, pattern_mode));
@@ -2641,6 +2748,7 @@ bool HydraulicData::setJunctionDemandPatternMode(
 bool HydraulicData::setJunctionDemandPatternUuid(const QUuid &uuid, int demand_index,
                                                  const QUuid &pattern_uuid)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setJunctionDemandPatternUuid"), uuid);
     return emitNodeChangedIfSuccessful(
         uuid, this->network_editor.setJunctionDemandPatternUuid(
                   uuid, demand_index, pattern_uuid));
@@ -2649,6 +2757,7 @@ bool HydraulicData::setJunctionDemandPatternUuid(const QUuid &uuid, int demand_i
 bool HydraulicData::setJunctionDemandSourceMethod(
     const QUuid &uuid, int demand_index, HydraulicDemandSourceMethod source_method)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setJunctionDemandSourceMethod"), uuid);
     return emitNodeChangedIfSuccessful(
         uuid, this->network_editor.setJunctionDemandSourceMethod(
                   uuid, demand_index, source_method));
@@ -2657,55 +2766,65 @@ bool HydraulicData::setJunctionDemandSourceMethod(
 bool HydraulicData::setJunctionDemandNote(const QUuid &uuid, int demand_index,
                                           const QString &note)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setJunctionDemandNote"), uuid);
     return emitNodeChangedIfSuccessful(
         uuid, this->network_editor.setJunctionDemandNote(uuid, demand_index, note));
 }
 
 bool HydraulicData::setJunctionEmitterCoefficient(const QUuid &uuid, double coefficient)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setJunctionEmitterCoefficient"), uuid);
     return emitNodeChangedIfSuccessful(
         uuid, this->network_editor.setJunctionEmitterCoefficient(uuid, coefficient));
 }
 
 bool HydraulicData::setJunctionEmitterPressureExponent(const QUuid &uuid, double pressure_exponent)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setJunctionEmitterPressureExponent"), uuid);
     return emitNodeChangedIfSuccessful(
         uuid, this->network_editor.setJunctionEmitterPressureExponent(uuid, pressure_exponent));
 }
 
 bool HydraulicData::setNodeInitialChemicalConcentrationMgPerL(const QUuid &uuid, double value_mg_per_l)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setNodeInitialChemicalConcentrationMgPerL"), uuid);
     return emitNodeChangedIfSuccessful(uuid, this->network_editor.setNodeInitialChemicalConcentrationMgPerL(uuid, value_mg_per_l));
 }
 
 bool HydraulicData::setNodeInitialWaterAgeH(const QUuid &uuid, double value_h)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setNodeInitialWaterAgeH"), uuid);
     return emitNodeChangedIfSuccessful(uuid, this->network_editor.setNodeInitialWaterAgeH(uuid, value_h));
 }
 
 bool HydraulicData::setNodeQualitySourceType(const QUuid &uuid, HydraulicNodeQualitySourceType source_type)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setNodeQualitySourceType"), uuid);
     return emitNodeChangedIfSuccessful(uuid, this->network_editor.setNodeQualitySourceType(uuid, source_type));
 }
 
 bool HydraulicData::setNodeQualitySourceChemicalConcentrationMgPerL(const QUuid &uuid, double value_mg_per_l)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setNodeQualitySourceChemicalConcentrationMgPerL"), uuid);
     return emitNodeChangedIfSuccessful(uuid, this->network_editor.setNodeQualitySourceChemicalConcentrationMgPerL(uuid, value_mg_per_l));
 }
 
 bool HydraulicData::setNodeQualitySourceMassFlowMgPerMin(const QUuid &uuid, double value_mg_per_min)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setNodeQualitySourceMassFlowMgPerMin"), uuid);
     return emitNodeChangedIfSuccessful(uuid, this->network_editor.setNodeQualitySourceMassFlowMgPerMin(uuid, value_mg_per_min));
 }
 
 bool HydraulicData::setNodeQualitySourcePatternUuid(const QUuid &uuid, const QUuid &pattern_uuid)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setNodeQualitySourcePatternUuid"), uuid);
     return emitNodeChangedIfSuccessful(uuid, this->network_editor.setNodeQualitySourcePatternUuid(uuid, pattern_uuid));
 }
 
 bool HydraulicData::setReservoirHeadInputType(
     const QUuid &uuid, HydraulicNodeElevationInputType input_type)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setReservoirHeadInputType"), uuid);
     return emitNodeChangedIfSuccessful(
         uuid, this->network_editor.setReservoirHeadInputType(uuid, input_type),
         NetworkChange::Geometry);
@@ -2713,6 +2832,7 @@ bool HydraulicData::setReservoirHeadInputType(
 
 bool HydraulicData::setReservoirHeadM(const QUuid &uuid, double hydraulic_head_m)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setReservoirHeadM"), uuid);
     return emitNodeChangedIfSuccessful(
         uuid, this->network_editor.setReservoirHeadM(uuid, hydraulic_head_m),
         NetworkChange::Geometry);
@@ -2721,6 +2841,7 @@ bool HydraulicData::setReservoirHeadM(const QUuid &uuid, double hydraulic_head_m
 bool HydraulicData::setReservoirTerrainElevationM(const QUuid &uuid,
                                                   double terrain_elevation_m)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setReservoirTerrainElevationM"), uuid);
     return emitNodeChangedIfSuccessful(
         uuid, this->network_editor.setReservoirTerrainElevationM(
                   uuid, terrain_elevation_m),
@@ -2729,6 +2850,7 @@ bool HydraulicData::setReservoirTerrainElevationM(const QUuid &uuid,
 
 bool HydraulicData::setReservoirHeadOffsetM(const QUuid &uuid, double hydraulic_head_offset_m)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setReservoirHeadOffsetM"), uuid);
     return emitNodeChangedIfSuccessful(
         uuid, this->network_editor.setReservoirHeadOffsetM(uuid, hydraulic_head_offset_m),
         NetworkChange::Geometry);
@@ -2736,12 +2858,14 @@ bool HydraulicData::setReservoirHeadOffsetM(const QUuid &uuid, double hydraulic_
 
 bool HydraulicData::setReservoirHeadPatternMode(const QUuid &uuid, HydraulicTimePatternMode pattern_mode)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setReservoirHeadPatternMode"), uuid);
     return emitNodeChangedIfSuccessful(
         uuid, this->network_editor.setReservoirHeadPatternMode(uuid, pattern_mode));
 }
 
 bool HydraulicData::setReservoirHeadPatternUuid(const QUuid &uuid, const QUuid &pattern_uuid)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setReservoirHeadPatternUuid"), uuid);
     return emitNodeChangedIfSuccessful(
         uuid, this->network_editor.setReservoirHeadPatternUuid(uuid, pattern_uuid));
 }
@@ -2749,6 +2873,7 @@ bool HydraulicData::setReservoirHeadPatternUuid(const QUuid &uuid, const QUuid &
 bool HydraulicData::setTankElevationInputType(
     const QUuid &uuid, HydraulicNodeTankElevationInputType input_type)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setTankElevationInputType"), uuid);
     return emitNodeChangedIfSuccessful(
         uuid, this->network_editor.setTankElevationInputType(uuid, input_type),
         NetworkChange::Geometry);
@@ -2756,6 +2881,7 @@ bool HydraulicData::setTankElevationInputType(
 
 bool HydraulicData::setTankBottomElevationM(const QUuid &uuid, double bottom_elevation_m)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setTankBottomElevationM"), uuid);
     return emitNodeChangedIfSuccessful(
         uuid, this->network_editor.setTankBottomElevationM(uuid, bottom_elevation_m),
         NetworkChange::Geometry);
@@ -2763,6 +2889,7 @@ bool HydraulicData::setTankBottomElevationM(const QUuid &uuid, double bottom_ele
 
 bool HydraulicData::setTankTerrainElevationM(const QUuid &uuid, double terrain_elevation_m)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setTankTerrainElevationM"), uuid);
     return emitNodeChangedIfSuccessful(
         uuid, this->network_editor.setTankTerrainElevationM(uuid, terrain_elevation_m),
         NetworkChange::Geometry);
@@ -2770,6 +2897,7 @@ bool HydraulicData::setTankTerrainElevationM(const QUuid &uuid, double terrain_e
 
 bool HydraulicData::setTankBottomOffsetM(const QUuid &uuid, double bottom_offset_m)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setTankBottomOffsetM"), uuid);
     return emitNodeChangedIfSuccessful(
         uuid, this->network_editor.setTankBottomOffsetM(uuid, bottom_offset_m),
         NetworkChange::Geometry);
@@ -2777,18 +2905,21 @@ bool HydraulicData::setTankBottomOffsetM(const QUuid &uuid, double bottom_offset
 
 bool HydraulicData::setTankWaterLevelInitialM(const QUuid &uuid, double water_level_initial_m)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setTankWaterLevelInitialM"), uuid);
     return emitNodeChangedIfSuccessful(
         uuid, this->network_editor.setTankWaterLevelInitialM(uuid, water_level_initial_m));
 }
 
 bool HydraulicData::setTankWaterLevelMinimumM(const QUuid &uuid, double water_level_minimum_m)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setTankWaterLevelMinimumM"), uuid);
     return emitNodeChangedIfSuccessful(
         uuid, this->network_editor.setTankWaterLevelMinimumM(uuid, water_level_minimum_m));
 }
 
 bool HydraulicData::setTankWaterLevelMaximumM(const QUuid &uuid, double water_level_maximum_m)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setTankWaterLevelMaximumM"), uuid);
     return emitNodeChangedIfSuccessful(
         uuid, this->network_editor.setTankWaterLevelMaximumM(uuid, water_level_maximum_m));
 }
@@ -2796,18 +2927,21 @@ bool HydraulicData::setTankWaterLevelMaximumM(const QUuid &uuid, double water_le
 bool HydraulicData::setTankGeometryInputType(
     const QUuid &uuid, HydraulicNodeTankGeometryInputType input_type)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setTankGeometryInputType"), uuid);
     return emitNodeChangedIfSuccessful(
         uuid, this->network_editor.setTankGeometryInputType(uuid, input_type));
 }
 
 bool HydraulicData::setTankDiameterM(const QUuid &uuid, double diameter_m)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setTankDiameterM"), uuid);
     return emitNodeChangedIfSuccessful(
         uuid, this->network_editor.setTankDiameterM(uuid, diameter_m));
 }
 
 bool HydraulicData::setTankCrossSectionAreaM2(const QUuid &uuid, double cross_section_area_m2)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setTankCrossSectionAreaM2"), uuid);
     return emitNodeChangedIfSuccessful(
         uuid, this->network_editor.setTankCrossSectionAreaM2(uuid, cross_section_area_m2));
 }
@@ -2815,6 +2949,7 @@ bool HydraulicData::setTankCrossSectionAreaM2(const QUuid &uuid, double cross_se
 bool HydraulicData::setTankVolumeAtMaximumLevelM3(
     const QUuid &uuid, double volume_at_maximum_level_m3)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setTankVolumeAtMaximumLevelM3"), uuid);
     return emitNodeChangedIfSuccessful(
         uuid, this->network_editor.setTankVolumeAtMaximumLevelM3(
                   uuid, volume_at_maximum_level_m3));
@@ -2822,45 +2957,53 @@ bool HydraulicData::setTankVolumeAtMaximumLevelM3(
 
 bool HydraulicData::setTankMinimumVolumeM3(const QUuid &uuid, double minimum_volume_m3)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setTankMinimumVolumeM3"), uuid);
     return emitNodeChangedIfSuccessful(
         uuid, this->network_editor.setTankMinimumVolumeM3(uuid, minimum_volume_m3));
 }
 
 bool HydraulicData::setTankVolumeCurveUuid(const QUuid &uuid, const QUuid &volume_curve_uuid)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setTankVolumeCurveUuid"), uuid);
     return emitNodeChangedIfSuccessful(
         uuid, this->network_editor.setTankVolumeCurveUuid(uuid, volume_curve_uuid));
 }
 
 bool HydraulicData::setTankCanOverflow(const QUuid &uuid, bool can_overflow)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setTankCanOverflow"), uuid);
     return emitNodeChangedIfSuccessful(
         uuid, this->network_editor.setTankCanOverflow(uuid, can_overflow));
 }
 
 bool HydraulicData::setTankQualityMixingModel(const QUuid &uuid, HydraulicNodeTankMixingModel mixing_model)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setTankQualityMixingModel"), uuid);
     return emitNodeChangedIfSuccessful(uuid, this->network_editor.setTankQualityMixingModel(uuid, mixing_model));
 }
 
 bool HydraulicData::setTankQualityMixingFraction(const QUuid &uuid, double mixing_fraction)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setTankQualityMixingFraction"), uuid);
     return emitNodeChangedIfSuccessful(uuid, this->network_editor.setTankQualityMixingFraction(uuid, mixing_fraction));
 }
 
 bool HydraulicData::setTankOverrideBulkReaction(const QUuid &uuid, bool override_bulk_reaction)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setTankOverrideBulkReaction"), uuid);
     return emitNodeChangedIfSuccessful(uuid, this->network_editor.setTankOverrideBulkReaction(uuid, override_bulk_reaction));
 }
 
 bool HydraulicData::setTankBulkReactionCoefficient(const QUuid &uuid, double coefficient)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setTankBulkReactionCoefficient"), uuid);
     return emitNodeChangedIfSuccessful(uuid, this->network_editor.setTankBulkReactionCoefficient(uuid, coefficient));
 }
 
 bool HydraulicData::setPipeInitialStatus(
     const QUuid &uuid, HydraulicLinkPipeInitialStatus initial_status)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setPipeInitialStatus"), uuid);
     return emitLinkChangedIfSuccessful(
         uuid, this->network_editor.setPipeInitialStatus(uuid, initial_status));
 }
@@ -2880,12 +3023,14 @@ bool HydraulicData::setPipeDiameterMm(const QUuid &uuid, double diameter_mm)
 bool HydraulicData::setPipeMeasuredLengthM(
     const QUuid &uuid, const std::optional<double> &length_measured_m)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setPipeMeasuredLengthM"), uuid);
     return emitLinkChangedIfSuccessful(
         uuid, this->network_editor.setPipeMeasuredLengthM(uuid, length_measured_m));
 }
 
 bool HydraulicData::setPipeMaterialUuid(const QUuid &uuid, const QUuid &material_uuid)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setPipeMaterialUuid"), uuid);
     return emitLinkChangedIfSuccessful(
         uuid, this->network_editor.setPipeMaterialUuid(uuid, material_uuid));
 }
@@ -2893,30 +3038,35 @@ bool HydraulicData::setPipeMaterialUuid(const QUuid &uuid, const QUuid &material
 bool HydraulicData::setPipeRoughnessMode(
     const QUuid &uuid, HydraulicPipeRoughnessMode roughness_mode)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setPipeRoughnessMode"), uuid);
     return emitLinkChangedIfSuccessful(
         uuid, this->network_editor.setPipeRoughnessMode(uuid, roughness_mode));
 }
 
 bool HydraulicData::setPipeRoughnessHw(const QUuid &uuid, double roughness_hazen_williams)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setPipeRoughnessHw"), uuid);
     return emitLinkChangedIfSuccessful(
         uuid, this->network_editor.setPipeRoughnessHw(uuid, roughness_hazen_williams));
 }
 
 bool HydraulicData::setPipeRoughnessDwMm(const QUuid &uuid, double roughness_darcy_weisbach_mm)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setPipeRoughnessDwMm"), uuid);
     return emitLinkChangedIfSuccessful(
         uuid, this->network_editor.setPipeRoughnessDwMm(uuid, roughness_darcy_weisbach_mm));
 }
 
 bool HydraulicData::setPipeRoughnessCm(const QUuid &uuid, double roughness_chezy_manning)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setPipeRoughnessCm"), uuid);
     return emitLinkChangedIfSuccessful(
         uuid, this->network_editor.setPipeRoughnessCm(uuid, roughness_chezy_manning));
 }
 
 bool HydraulicData::setPipeMinorLoss(const QUuid &uuid, double minor_loss_coefficient)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setPipeMinorLoss"), uuid);
     return emitLinkChangedIfSuccessful(
         uuid, this->network_editor.setPipeMinorLoss(uuid, minor_loss_coefficient));
 }
@@ -2924,6 +3074,7 @@ bool HydraulicData::setPipeMinorLoss(const QUuid &uuid, double minor_loss_coeffi
 bool HydraulicData::setPipeOverrideBulkReaction(
     const QUuid &uuid, bool override_bulk_reaction)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setPipeOverrideBulkReaction"), uuid);
     return emitLinkChangedIfSuccessful(
         uuid, this->network_editor.setPipeOverrideBulkReaction(uuid, override_bulk_reaction));
 }
@@ -2931,35 +3082,41 @@ bool HydraulicData::setPipeOverrideBulkReaction(
 bool HydraulicData::setPipeOverrideWallReaction(
     const QUuid &uuid, bool override_wall_reaction)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setPipeOverrideWallReaction"), uuid);
     return emitLinkChangedIfSuccessful(
         uuid, this->network_editor.setPipeOverrideWallReaction(uuid, override_wall_reaction));
 }
 
 bool HydraulicData::setPipeBulkReactionCoefficient(const QUuid &uuid, double coefficient)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setPipeBulkReactionCoefficient"), uuid);
     return emitLinkChangedIfSuccessful(uuid, this->network_editor.setPipeBulkReactionCoefficient(uuid, coefficient));
 }
 
 bool HydraulicData::setPipeWallReactionCoefficient(const QUuid &uuid, double coefficient)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setPipeWallReactionCoefficient"), uuid);
     return emitLinkChangedIfSuccessful(uuid, this->network_editor.setPipeWallReactionCoefficient(uuid, coefficient));
 }
 
 bool HydraulicData::setPumpDefinitionType(
     const QUuid &uuid, HydraulicLinkPumpDefinitionType definition_type)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setPumpDefinitionType"), uuid);
     return emitLinkChangedIfSuccessful(
         uuid, this->network_editor.setPumpDefinitionType(uuid, definition_type));
 }
 
 bool HydraulicData::setPumpConstantPowerKw(const QUuid &uuid, double constant_power_kw)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setPumpConstantPowerKw"), uuid);
     return emitLinkChangedIfSuccessful(
         uuid, this->network_editor.setPumpConstantPowerKw(uuid, constant_power_kw));
 }
 
 bool HydraulicData::setPumpInitialSpeed(const QUuid &uuid, double initial_speed_ratio)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setPumpInitialSpeed"), uuid);
     return emitLinkChangedIfSuccessful(
         uuid, this->network_editor.setPumpInitialSpeed(uuid, initial_speed_ratio));
 }
@@ -2967,6 +3124,7 @@ bool HydraulicData::setPumpInitialSpeed(const QUuid &uuid, double initial_speed_
 bool HydraulicData::setPumpInitialStatus(
     const QUuid &uuid, HydraulicLinkPumpInitialStatus initial_status)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setPumpInitialStatus"), uuid);
     return emitLinkChangedIfSuccessful(
         uuid, this->network_editor.setPumpInitialStatus(uuid, initial_status));
 }
@@ -2974,6 +3132,7 @@ bool HydraulicData::setPumpInitialStatus(
 bool HydraulicData::setPumpSpeedPatternUuid(
     const QUuid &uuid, const QUuid &speed_pattern_uuid)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setPumpSpeedPatternUuid"), uuid);
     return emitLinkChangedIfSuccessful(
         uuid, this->network_editor.setPumpSpeedPatternUuid(uuid, speed_pattern_uuid));
 }
@@ -2981,6 +3140,7 @@ bool HydraulicData::setPumpSpeedPatternUuid(
 QUuid HydraulicData::addPumpSimpleControl(
     const QUuid &pump_uuid, HydraulicControlSimpleType type, const QUuid &trigger_node_uuid)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.addPumpSimpleControl"), pump_uuid);
     const QUuid control_uuid = this->network_editor.addPumpSimpleControl(
         pump_uuid, type, trigger_node_uuid);
     if (control_uuid.isNull())
@@ -2994,6 +3154,7 @@ QUuid HydraulicData::addPumpSimpleControl(
 bool HydraulicData::setPumpSimpleControl(
     const QUuid &pump_uuid, const HydraulicControlSimple &control)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setPumpSimpleControl"), pump_uuid);
     return emitLinkChangedIfSuccessful(
         pump_uuid, this->network_editor.setPumpSimpleControl(pump_uuid, control));
 }
@@ -3001,6 +3162,7 @@ bool HydraulicData::setPumpSimpleControl(
 bool HydraulicData::removePumpSimpleControl(
     const QUuid &pump_uuid, const QUuid &control_uuid)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.removePumpSimpleControl"), pump_uuid);
     return emitLinkChangedIfSuccessful(
         pump_uuid, this->network_editor.removePumpSimpleControl(pump_uuid, control_uuid));
 }
@@ -3009,6 +3171,7 @@ bool HydraulicData::setPumpEfficiencyInput(
     const QUuid &uuid, HydraulicLinkPumpEfficiencyInputType input_type,
     const QUuid &efficiency_curve_uuid)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setPumpEfficiencyInput"), uuid);
     return emitLinkChangedIfSuccessful(
         uuid, this->network_editor.setPumpEfficiencyInput(
                   uuid, input_type, efficiency_curve_uuid));
@@ -3017,6 +3180,7 @@ bool HydraulicData::setPumpEfficiencyInput(
 bool HydraulicData::setPumpEnergyPricePerKwh(
     const QUuid &uuid, double energy_price_per_kw_h)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setPumpEnergyPricePerKwh"), uuid);
     return emitLinkChangedIfSuccessful(
         uuid, this->network_editor.setPumpEnergyPricePerKwh(
                   uuid, energy_price_per_kw_h));
@@ -3026,6 +3190,7 @@ bool HydraulicData::setPumpEnergyPriceInput(
     const QUuid &uuid, HydraulicLinkPumpEnergyPriceInputType input_type,
     const QUuid &price_pattern_uuid)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setPumpEnergyPriceInput"), uuid);
     return emitLinkChangedIfSuccessful(
         uuid, this->network_editor.setPumpEnergyPriceInput(
                   uuid, input_type, price_pattern_uuid));
@@ -3033,6 +3198,7 @@ bool HydraulicData::setPumpEnergyPriceInput(
 
 bool HydraulicData::setValveType(const QUuid &uuid, HydraulicLinkValveType type)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setValveType"), uuid);
     return emitLinkChangedIfSuccessful(
         uuid, this->network_editor.setValveType(uuid, type));
 }
@@ -3040,6 +3206,7 @@ bool HydraulicData::setValveType(const QUuid &uuid, HydraulicLinkValveType type)
 bool HydraulicData::setValveSettingPressureHeadM(
     const QUuid &uuid, double setting_pressure_head_m)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setValveSettingPressureHeadM"), uuid);
     return emitLinkChangedIfSuccessful(
         uuid, this->network_editor.setValveSettingPressureHeadM(uuid, setting_pressure_head_m));
 }
@@ -3047,6 +3214,7 @@ bool HydraulicData::setValveSettingPressureHeadM(
 bool HydraulicData::setValveSettingFlowM3PerH(
     const QUuid &uuid, double setting_flow_m3_per_h)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setValveSettingFlowM3PerH"), uuid);
     return emitLinkChangedIfSuccessful(
         uuid, this->network_editor.setValveSettingFlowM3PerH(uuid, setting_flow_m3_per_h));
 }
@@ -3054,6 +3222,7 @@ bool HydraulicData::setValveSettingFlowM3PerH(
 bool HydraulicData::setValveSettingLossCoefficient(
     const QUuid &uuid, double setting_loss_coefficient)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setValveSettingLossCoefficient"), uuid);
     return emitLinkChangedIfSuccessful(
         uuid, this->network_editor.setValveSettingLossCoefficient(uuid, setting_loss_coefficient));
 }
@@ -3061,6 +3230,7 @@ bool HydraulicData::setValveSettingLossCoefficient(
 bool HydraulicData::setValveSettingPositionPercent(
     const QUuid &uuid, double setting_position_percent)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setValveSettingPositionPercent"), uuid);
     return emitLinkChangedIfSuccessful(
         uuid, this->network_editor.setValveSettingPositionPercent(uuid, setting_position_percent));
 }
@@ -3068,6 +3238,7 @@ bool HydraulicData::setValveSettingPositionPercent(
 bool HydraulicData::setValveHeadLossCurveUuid(
     const QUuid &uuid, const QUuid &head_loss_curve_uuid)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setValveHeadLossCurveUuid"), uuid);
     return emitLinkChangedIfSuccessful(
         uuid, this->network_editor.setValveHeadLossCurveUuid(uuid, head_loss_curve_uuid));
 }
@@ -3075,6 +3246,7 @@ bool HydraulicData::setValveHeadLossCurveUuid(
 bool HydraulicData::setValveCharacteristicCurveUuid(
     const QUuid &uuid, const QUuid &characteristic_curve_uuid)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setValveCharacteristicCurveUuid"), uuid);
     return emitLinkChangedIfSuccessful(
         uuid, this->network_editor.setValveCharacteristicCurveUuid(uuid, characteristic_curve_uuid));
 }
@@ -3082,18 +3254,21 @@ bool HydraulicData::setValveCharacteristicCurveUuid(
 bool HydraulicData::setValveInitialStatus(
     const QUuid &uuid, HydraulicLinkValveInitialStatus initial_status)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setValveInitialStatus"), uuid);
     return emitLinkChangedIfSuccessful(
         uuid, this->network_editor.setValveInitialStatus(uuid, initial_status));
 }
 
 bool HydraulicData::setValveDiameterMm(const QUuid &uuid, double diameter_mm)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setValveDiameterMm"), uuid);
     return emitLinkChangedIfSuccessful(
         uuid, this->network_editor.setValveDiameterMm(uuid, diameter_mm));
 }
 
 bool HydraulicData::setValveMinorLoss(const QUuid &uuid, double minor_loss_coefficient)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setValveMinorLoss"), uuid);
     return emitLinkChangedIfSuccessful(
         uuid, this->network_editor.setValveMinorLoss(uuid, minor_loss_coefficient));
 }
@@ -3101,6 +3276,7 @@ bool HydraulicData::setValveMinorLoss(const QUuid &uuid, double minor_loss_coeff
 bool HydraulicData::setPipeVertexCoordinate(const QUuid &pipe_uuid, int vertex_index,
                                             const CoordinateWGS84 &coordinate)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setPipeVertexCoordinate"), pipe_uuid);
     const std::optional<HydraulicLinkPipe> pipe = this->network_editor.pipe(pipe_uuid);
     if (!pipe.has_value() || vertex_index < 0 || vertex_index >= pipe->vertices.size())
         return false;
@@ -3116,6 +3292,7 @@ bool HydraulicData::setPipeVertexCoordinate(const QUuid &pipe_uuid, int vertex_i
 bool HydraulicData::setPipeVertices(const QUuid &pipe_uuid,
                                     const QList<CoordinateWGS84> &intermediate_vertices)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setPipeVertices"), pipe_uuid);
     if (!this->network_editor.setPipeVertices(pipe_uuid, intermediate_vertices))
         return false;
 
@@ -3126,6 +3303,7 @@ bool HydraulicData::setPipeVertices(const QUuid &pipe_uuid,
 bool HydraulicData::setPumpCenterCoordinate(const QUuid &pump_uuid,
                                             const CoordinateWGS84 &coordinate)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setPumpCenterCoordinate"), pump_uuid);
     const std::optional<HydraulicLinkPump> pump = this->network_editor.pump(pump_uuid);
     if (!pump.has_value())
         return false;
@@ -3147,6 +3325,7 @@ bool HydraulicData::setPumpCenterCoordinate(const QUuid &pump_uuid,
 bool HydraulicData::setValveCenterCoordinate(const QUuid &valve_uuid,
                                              const CoordinateWGS84 &coordinate)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.setValveCenterCoordinate"), valve_uuid);
     const std::optional<HydraulicLinkValve> valve = this->network_editor.valve(valve_uuid);
     if (!valve.has_value())
         return false;
@@ -3424,6 +3603,8 @@ bool HydraulicData::undoPipeSplit(const QUuid &first_pipe_uuid, const QUuid &sec
 
 bool HydraulicData::deleteJunction(const QUuid &uuid)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.deleteJunction"), uuid);
+    edit_scope.watchNodeDeletionDependents(uuid);
     const bool was_source_trace_origin = this->source_trace_origin_node_uuid == uuid;
     const bool successful = this->network_editor.deleteJunction(uuid);
     if (successful)
@@ -3442,6 +3623,8 @@ bool HydraulicData::deleteJunction(const QUuid &uuid)
 
 bool HydraulicData::deleteReservoir(const QUuid &uuid)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.deleteReservoir"), uuid);
+    edit_scope.watchNodeDeletionDependents(uuid);
     const bool was_source_trace_origin = this->source_trace_origin_node_uuid == uuid;
     const bool successful = this->network_editor.deleteReservoir(uuid);
     if (successful)
@@ -3460,6 +3643,8 @@ bool HydraulicData::deleteReservoir(const QUuid &uuid)
 
 bool HydraulicData::deleteTank(const QUuid &uuid)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.deleteTank"), uuid);
+    edit_scope.watchNodeDeletionDependents(uuid);
     const bool was_source_trace_origin = this->source_trace_origin_node_uuid == uuid;
     const bool successful = this->network_editor.deleteTank(uuid);
     if (successful)
@@ -3478,6 +3663,7 @@ bool HydraulicData::deleteTank(const QUuid &uuid)
 
 bool HydraulicData::deleteDemandPoint(const QUuid &uuid)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.deleteDemandPoint"), uuid);
     const bool successful = this->network_editor.deleteDemandPoint(uuid);
     if (successful)
     {
@@ -3514,6 +3700,7 @@ bool HydraulicData::deletePipe(const QUuid &uuid)
 
 bool HydraulicData::deletePump(const QUuid &uuid)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.deletePump"), uuid);
     const bool successful = this->network_editor.deletePump(uuid);
     if (successful)
     {
@@ -3525,6 +3712,7 @@ bool HydraulicData::deletePump(const QUuid &uuid)
 
 bool HydraulicData::deleteValve(const QUuid &uuid)
 {
+    EditScope edit_scope(*this, QStringLiteral("hydraulic.deleteValve"), uuid);
     const bool successful = this->network_editor.deleteValve(uuid);
     if (successful)
     {

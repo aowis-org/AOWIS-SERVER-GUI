@@ -458,6 +458,8 @@ public:
     bool deleteValve(const QUuid &uuid);
 
 private:
+    class EditScope;
+
     enum class NetworkChange
     {
         Visual,

@@ -14,19 +14,25 @@ editing until every mutation path has complete coverage, a durable local queue,
 and a working-copy recovery procedure. Until then it is a regression/testing
 hook, not proof that the editor is connected to DVMDB.
 
-The first covered actions are entity creation (hydraulic junction/reservoir/tank,
-demand point, pipe/pump/valve), pipe diameter, junction elevation, node movement,
-geometry batch, pipe split/rejoin, and pipe deletion. Split and deletion include
-relevant demand-point attachment changes; geometry batches include moved pipe
-endpoints. A successful operation emits `signalLogicalEditRecorded` with exactly
+Entity creation (junction/reservoir/tank, demand point, pipe/pump/valve),
+property changes on hydraulic nodes/links/demand points, pump controls, demand
+allocations, geometry changes, pipe split/rejoin, and entity deletion now emit
+reversible events. A scoped capture mechanism watches the affected entity before
+each property mutation and compares its canonical bytes afterward. Node deletion
+also captures the cascading removal of connected links and cleared demand-point
+attachments in **one** event. Pipe split/rejoin and geometry batches keep their
+explicit multi-entity capture boundaries. No-op and failed edits are not journaled. A successful operation emits `signalLogicalEditRecorded` with exactly
 one encoded reversible MODEL transaction; a no-op or failed operation emits
 nothing. A capture failure emits `signalLogicalEditCaptureFailed` and disables
 capture. Signals themselves are **not** a persistence acknowledgment.
 
-Property editors, additional topology operations, bulk imports, and hydraulic
-options require capture integration before enabling the working-copy editor.
-Do not silently treat uncovered mutations as saved. Handle source-model changes
-and the full set of persistent object types before connecting automatic saving.
+This is still **capture only**, not durability: no draft has been bound, no durable
+pending queue exists, and DVMDB cannot yet atomically persist the event journal
+with the candidate overlay. Network-wide hydraulic options (including headloss
+formula), bulk imports, external mutation paths, and other persistent model
+objects still require explicit journal coverage. Do not silently treat an
+uncovered mutation as saved, or enable capture as a general production autosave
+feature until those boundaries are closed.
 
 ## Next integration
 
