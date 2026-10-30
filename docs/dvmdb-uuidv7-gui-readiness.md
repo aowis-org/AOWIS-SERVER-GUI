@@ -36,7 +36,7 @@ Only a successful expected-HEAD commit creates a new immutable revision.
 
 ## Verification
 
-The acceptance suite covers empty project, first commit, independent
+The complete acceptance suite must cover empty project, first commit, independent
 branching, shared immutable ancestry, multi-user optimistic conflicts,
 three-way merge, pagination, reload, replication and native/REST equivalence.
 All resulting graph cards and inspector actions follow

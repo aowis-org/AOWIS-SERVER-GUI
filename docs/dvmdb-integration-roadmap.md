@@ -61,7 +61,7 @@ being implemented.
 | **DG-01: repository-qualified branch refs** | VC-03, VC-06 | The same logical project/branch retains its UUIDv7 across repositories; each repository has an independent HEAD under `(repositoryId, projectId, branchId)`. Display local HEAD and shared/tracking HEAD separately. New logical branches get new UUIDv7s, preserved on first remote provisioning. Match by UUID plus repository, never by label alone. |
 | **DG-02: draft/session concurrency** | VC-04 | Create a distinct UUIDv7 working copy per session by default. On deliberate reopen, acquire exclusive expiring writer lease, fencing token and persisted generation; each Save supplies all three. Show read-only/lease-expired/takeover states, and never discard a saved draft on crash. |
 | **DG-03: uncertain Commit/Publish** | VC-05, VC-07 | Generate and persist a UUIDv7 operation ID and payload digest for each action; on timeout/disconnect, query its authoritative pending/succeeded/rejected status and retry only with identical ID/payload. Never silently issue a second Commit/Publish. |
-| **DG-04: existing repositories** | VC-01, VC-11 | Preserve old committed R0 and all original UUIDs in existing projects; new projects alone begin unborn. Show migrated/unsupported status explicitly; never secretly delete historical commits, rewrite refs or reset projects to look unborn. |
+| **DG-04: pre-release format policy** | All stages | There is **no backward-compatibility or migration requirement** before AOWIS's first release. New formats may replace obsolete experimental formats cleanly; reject unsupported records explicitly instead of supporting transitional readers or retaining legacy layers. Do not silently corrupt data, rewrite a committed history or disguise a failing test fixture. Fresh test data may be initialized explicitly. |
 | **DG-05: initial reconciliation** | VC-08 | Offer explicit Fetch, fast-forward and three-way merge of committed history. Provide manual conflict choices, persisted unresolved merge draft and whole hydraulic-model validation. No automatic rebase, force Push, silent conflict resolution or automatic Publish in initial UI. |
 | **DG-06: first remote branch** | VC-06, VC-07 | Require explicit shared-repository/project target. Provision locally created branch remotely under the **same UUIDv7** with idempotency and collision checks. Treat missing branch separately from existing branch with null HEAD; first Publish from null uses an explicit expected-null precondition. |
 
@@ -72,6 +72,39 @@ lifecycle is not open for renegotiation. Security design has **no VC milestone
 and is not an acceptance dependency** for the database/graph implementation.
 Any operational exposure risks are described separately in the
 [security backlog](deferred-security-considerations.md).
+
+## Current implementation state and immediate delivery priority
+
+This section records the **source-level checkpoint**, not a claim that the full
+user workflow already works. Documentation and unit tests never substitute for
+an end-to-end checkout/edit/reopen/commit test against a real personal DVMDB.
+
+| Area | Available in the checked source | Not yet accepted end to end |
+|---|---|---|
+| Project and branch history (VC-01/02) | Unborn project creation, nullable committed HEAD, immutable branch fork provenance, native/REST readers, corresponding GUI graph/inspector tests | Real multiclient history/graph acceptance across all deployment modes |
+| Personal repository identity and checkout (VC-03/04) | Persistent repository UUID/roles, tracking metadata, private working-copy CRUD and fenced generation-checked saves; committed REST branch clone-to-private workflow | Complete unborn checkout, model hydration from pinned base plus candidate, all modes |
+| Hydraulic editing (VC-04) | MODEL-owned canonical codec and reversible transactions; GUI entity capture, durable local event queue, typed record/membership intent adapter; native atomic journal and DVMDB-owned membership materialization | GUI membership transport wiring, genuine editor session binding, durable restart/reload verification, global mutation coverage |
+| Local Commit (VC-05) | Immutable revision and model persistence primitives | Working-copy-to-revision CAS, recoverable operation ID/status, usable Projects-tab Commit |
+| Collaboration (VC-06–08) | History transfer, import, revision DAG and domain merge primitives | Unified user-facing Fetch/Publish/reconciliation acceptance using independent private repositories |
+| Presentation and qualification (VC-09–11) | Graph and inspector regression coverage; extensive DVMDB durability/sync tests | Integrated GUI/Standalone/browser scenarios and complete release evidence |
+
+**Next actionable work (in order):** (1) expose and verify the `membership`
+field in the GUI event-save client, including dropped-response recovery;
+(2) hydrate the selected pinned base plus persisted candidate and establish a
+real `HydraulicData` editor session; (3) capture/queue/flush supported edits,
+including creation/deletion, over interrupted network and restart; (4) add
+local working-copy Commit with expected local HEAD and idempotent status;
+(5) integrate the Commit action and prove first unborn commit end to end.
+Broader Fetch/Publish/Merge polish follows this usable local workflow. Do not
+mark VC-04 complete until a real editor can reopen an automatically saved
+model byte-for-byte after process restart.
+
+**Verification note:** Previously reported targeted GUI tests passed for
+`aowis-personal-working-copy-client`, `aowis-personal-edit-queue` and
+`aowis-hydraulic-edit-transaction`. DVMDB hydraulic membership HTTP code and
+fixture are present in the supplied snapshot, but this document does **not**
+claim its revised integration test passed unless that run is separately
+recorded. There is no claimed end-to-end local Commit acceptance yet.
 
 ## C. Milestone order and concrete GUI work
 
@@ -94,12 +127,13 @@ Any operational exposure risks are described separately in the
    assuming an earlier patch has already been applied.
 
 **Exit:** source file/API matrix and DVMDB/GUI build prerequisites listed;
-the approved DG-04 migration policy is applied; no UI operation is built
+the no-compatibility pre-release format policy is applied; no UI operation is built
 on unverified backend shapes.
 
-VC-00 source/contract baseline: see
-[`vc00-baseline.md`](vc00-baseline.md). GUI nullable-HEAD implementation
-remains gated on the native/REST contract update.
+The [current implementation status](#current-implementation-state-and-immediate-delivery-priority)
+supersedes the initial source audit. Nullable committed HEAD readers and
+the graph have targeted tests; the remaining gate is integrated editor Save,
+reopen and local Commit, not a repeat of the initial nullable-HEAD work.
 
 ### VC-01 — Unborn projects and null HEAD display
 
@@ -302,13 +336,13 @@ DAG and all pointers remain correct after full refresh and pagination.
 **Exit:** end-to-end tests cover private editing and local committing
 alongside shared publication and conflict recovery for all supported modes.
 
-### VC-11 — Migration, data-integrity and release qualification
+### VC-11 — Data integrity and first-release qualification
 
-**Needs:** backend VC-11 and DG-04. **GUI work:**
+**Needs:** backend VC-11. **GUI work:**
 
-1. Handle incompatible/old development repositories explicitly using the
-   approved transition policy; don't auto-rename old UUIDs or invent missing
-   fork points. Display helpful error/recovery actions.
+1. Reject unsupported experimental repository formats with a clear error;
+   do not implement legacy readers or migration scaffolding. Never silently
+   change UUIDs or manufacture fork points.
 2. Test all source roles, graph import, bundle transfer, draft restore,
    empty unborn repositories, database restart, slow/failed HTTP, Unicode
    names and corrupt histories in the actual target environments.
@@ -390,8 +424,8 @@ clear unsupported/read-only state, not a substitute request to a shared repo.
     lease/fencing states; stale generation Save is rejected after takeover.
 15. Lost Commit/Publish response is recovered by original operation UUID,
     with pending/succeeded/rejected display and no duplicate write.
-16. Existing committed initial R0 remains visible after upgrade; only
-    newly created projects show unborn `main`.
+16. A newly created project has an unborn `main`; its first committed
+    revision is created only by an explicit local Commit.
 17. New local branch is provisioned explicitly at the shared repository
     with its own stable branch UUID; absence is distinct from null HEAD.
 18. Initial conflict workflow is explicit validated three-way merge, not
@@ -424,7 +458,6 @@ substep per patch.
    **only with matching test evidence**. Avoid claiming features work from
    documentation alone.
 
-**Next recommended task:** VC-00 inventory using the approved DG-04
-migration policy, followed by VC-01 unborn project/nullable HEAD support.
-Implement the approved DG-01 repository-qualified branch tracking at VC-03;
-no further identity-policy decision is needed.
+**Next task:** Complete the current VC-04 private draft editing path as
+specified in the status section above. Then implement VC-05 local Commit,
+without restarting VC-00 or adding unrelated features.

@@ -1,6 +1,12 @@
 # Projects workspace — interaction contract
 
-**Normative product design.** The Projects workspace implements the
+**Normative product design, not a declaration that every action is already
+wired in the GUI.** Real DVMDB browsing and graph inspection are available;
+the complete checked-out `HydraulicData` autosave and local Commit workflows
+are pending integrated acceptance. See the
+[current integration status](dvmdb-integration-roadmap.md#current-implementation-state-and-immediate-delivery-priority).
+
+The Projects workspace follows the
 [DVMDB version-control model](../../AOWIS-SERVER-DVMDB/docs/version-control-semantics.md)
 and [graph presentation](project-graph-layout.md). A database connection,
 project, branch, committed revision and private working copy are **different

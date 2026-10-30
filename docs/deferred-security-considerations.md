@@ -1,7 +1,7 @@
 # Deferred AOWIS security considerations (GUI)
 
 **Reference notes only — outside the DVMDB integration and Projects graph
-roadmap.** The [VC-00–VC-11 implementation roadmap](dvmdb-integration-roadmap.md)
+roadmap.** The [current Projects/DVMDB implementation roadmap](dvmdb-integration-roadmap.md)
 ends with functional integration and qualification. No VC milestone, acceptance
 criterion, test gate or implementation schedule is assigned to security here.
 This document records future ideas so they are not lost; **do not implement them

@@ -16,7 +16,7 @@ checkboxes: checked sources contribute projects, branches and revision
 history to the navigator and graph. Each project/revision is identified with
 its source, so the same ID on two servers is not conflated.
 
-The **target DVMDB model** separates immutable committed revisions from
+The **DVMDB product contract** separates immutable committed revisions from
 private editable working copies. Project creation yields an unborn `main`
 with no committed revisions. Each branch HEAD points to its latest committed
 revision (or null); independent users edit their own working copies and
@@ -28,6 +28,11 @@ revisions only**. See [Projects workspace](docs/projects-workspace.md),
 native/REST/GUI implementation must satisfy those specifications end to end.
 Built-in examples and the explicitly named demo profiles are a separate
 **in-memory preview**, not stored in DVMDB.
+
+**Current boundary:** MODEL transactions, typed-record conversion and the
+local durable queue are implemented and tested in isolation. The complete
+active hydraulic editor autosave and local Commit flow is **not** yet accepted.
+See the [documentation index](docs/README.md) and [roadmap status](docs/dvmdb-integration-roadmap.md).
 
 Start here:
 

@@ -1,88 +1,73 @@
-# Personal working-copy Save transport
+# Private draft Save, MODEL journal and recovery
 
-This is the HTTP transport contract for VC-04 draft editing. It is **not yet**
-editor hydration or semantic validation, and it does not create commits.
+This document describes the **implemented transport components** and the
+**remaining editor integration**. A durable Save is not a Commit or Publish.
+The relevant code is `src/projects/personal_working_copy_client.*`,
+`personal_edit_queue.*`, and `hydraulic_draft_event_adapter.*`.
 
-`src/projects/personal_working_copy_client.h` exposes `acquireLease`,
-`saveChanges`, `reopen` and `releaseLease`. Every operation verifies the
-configured private DVMDB repository ID and functional role and never falls
-back to the selected shared project source.
+## Ownership and targets
 
-The editor supplies the UUIDv7 draft ID, an explicit writer-session UUIDv7,
-lease duration (1–120 seconds), and a batch of 1–128 typed `ModelRecord`
-changes. Model keys and references preserve any canonical non-null UUID
-(including legacy model UUIDs); repository, project, branch, draft and
-session identities remain UUIDv7. Changes contain a model kind (`uint16`),
-references and exact payload bytes, or a tombstone/delete operation. They are
-sent using DVMDB's existing `{uuid, kind, references, payloadBase64}` or
-`{uuid, delete: true}` model-record wire shape. Model payloads must come from
-the **real AOWIS Model codec**, not arbitrary JSON or GUI render snapshots.
+The GUI must target the explicitly selected **personal DVMDB**, identified by
+repository UUID and functional role `private`; it never writes a draft to the
+selected shared browsing server as a fallback. Standalone ultimately uses its
+persistent embedded private DVMDB, while ordinary desktop/web GUI uses a
+configured private HTTP DVMDB. One draft has an exact project, branch,
+revision base (or unborn null), draft UUID, writer session and generation.
 
-A lease returns an opaque fencing token and decimal-string generation.
-Every Save supplies the exact session, token and expected generation. On
-success the response must identify the same draft and next generation; only
-then may the editor mark that generation saved. Duplicate keys, invalid
-references and malformed candidate overlays are rejected before presenting
-an acknowledgement. Release uses the exact token and session. A failed or
-uncertain HTTP Save must **not** be replayed blindly. The new
-`saveChangesRecovering()` issues the Save once, then (if the result is not
-confirmed) reopens the draft to verify the exact **next generation** and all
-proposed candidate records byte-for-byte, including ordered references. Only
-this exact match counts as recovered success; a stale/advanced generation,
-different payload, missing entry or failed reopen leaves the editor's local
-changes unsaved and requires explicit conflict handling. A recovery read does
-not acquire or extend a lease, and it never sends another write. Lease expiry and stale generations
-are not silently overridden. The server stores candidate changes separately
-from immutable HEADs and committed revisions.
+DVMDB Save requires the active session, exclusive lease/fencing token and
+expected generation. Saving candidate changes or an event batch advances the
+draft generation after durable replacement; it does **not** move committed
+HEAD. Stale generations and expired fencing tokens fail rather than overwrite
+another session's state.
 
-## Next GUI connection (still VC-04)
+## Canonical bytes and event preparation
 
-The map/network editor currently edits `NetworkHydraulic` in memory. The
-remaining bridge must load the pinned committed base **plus** saved candidate
-overlay into that model, convert actual model-entity mutations into canonical
-typed `ModelRecord` changes using the shared AOWIS Model codec, and bind
-Save/autosave and recovery to this transport. Until that bridge is proven,
-there must be no generic “Save” button claiming to persist a hydraulic model.
-A local Commit is a distinct VC-05 operation.
+**AOWIS-SERVER-MODEL owns the canonical serializer and the reversible
+`ModelEditTransaction` codec.** The GUI captures logical `HydraulicData`
+operations, stores encoded MODEL events in a durable local queue, and uses
+`HydraulicDraftEventAdapter::prepareWithMembership` against a staged network
+at the state *before* each event. This produces typed DVMDB model-record
+changes and, for creations/deletions, logical membership intents. MODEL's
+validation and reference rules remain authoritative.
 
-## Codec integration boundary
+The GUI must not invent its own manifest/chunk binary format. DVMDB's
+`/dvmdb/v1/working-copies/{draftId}/save-events` accepts an optional
+`membership` array (`networkId`, `entityId`, `kind`, `collectionIndex`,
+`inserted`) and materializes matching server-owned hydraulic membership
+chunks atomically with the candidate entity records and original MODEL event
+frames. The existing GUI `saveEventsRecovering` method currently handles
+`changes` and `events`; **wiring `membership` through this client is still
+required before enabling creation/deletion autosave**. The record-only
+adapter deliberately refuses membership mutations.
 
-`NetworkHydraulic` is the editor's authoritative in-memory representation.
-The canonical `ModelCodec<NetworkHydraulic>` and typed per-entity encodings
-currently live in AOWIS-SERVER-DVMDB (`model_codec.cpp` and
-`hydraulic_network_persistence.cpp`), **not** in the supplied GUI or its
-Model headers. The GUI's personal-client transport accepts canonical typed
-records but cannot itself convert `NetworkHydraulic` without sharing this
-codec implementation. Do not reconstruct network data using ad-hoc JSON or
-blindly treat the currently open example network as a checked-out revision.
+## Durable acknowledgement and retries
 
-Next: expose/reuse the existing canonical codec as a shared build dependency
-for the GUI's HTTP/Standalone targets, then hydrate a pinned private revision
-plus its draft overlay into `HydraulicData`. Only after that can Save/autosave
-be hooked to real editor changes. The model network UUID and draft base must
-be verified rather than guessed. This is a VC-04 integration prerequisite,
-not a security or separate roadmap milestone.
+`saveEventsRecovering` verifies accepted event IDs, generation and count.
+If the HTTP reply is lost, it reopens the authoritative draft and confirms
+persisted encoded event bytes and matching candidate records before reporting
+success. The queue drains **only after** authoritative confirmation. A draft
+reopen also resolves a GUI restart after remote persistence but before local
+queue deletion. An unknown/conflicting result preserves the local queue and
+must not cause a blind retry with another event identity.
 
-## Atomic MODEL event journal and local queue synchronization (VC-04)
+Queued events are processed serially per draft, in original transaction order.
+The bridge must retain a correctly staged model from the pinned base plus
+previously acknowledged draft changes. Never build an old queued event's
+references from today's potentially newer GUI network. `PersonalEditQueue`
+instance lifetime must cover asynchronous callbacks; wrong draft/repository
+targets are rejected.
 
-DVMDB's `/save-events` operation atomically publishes a batch of MODEL event
-frames and candidate typed model records. The GUI `saveEventsRecovering()`
-checks exact IDs, generation and journal count in its small acknowledgement.
-On an unknown outcome it reopens the authoritative draft and compares the
-ordered journal tail and exact changed candidate records. It never retries
-an uncertain write automatically. `flushOldestQueuedEvent()` sends the
-oldest `PersonalEditQueue` event together with a caller-provided typed model
-batch, verifies the event's after-images against those records, and deletes
-the local queued event only after that atomic confirmation. A GUI restart
-between DVMDB acceptance and local deletion is reconciled against the last
-persisted journal event. Failed or ambiguous confirmation preserves the
-queue. This workflow must remain serialized per draft, and the open queue
-must outlive the callback.
+## Remaining user-facing integration
 
-The next integration is NOT another networking transport. Implement a
-canonical editor-to-model-record adapter that builds correct kind IDs,
-references and network membership changes for every logical edit, hydrate
-the actual checked-out revision with its draft candidate, and bind the GUI
-editor session to the durable queue. Global capture remains disabled because
-network-wide settings and bulk imports need equivalent coverage. No draft
-Save is a Commit or a Publish.
+The transport components and corresponding targeted regressions exist, but
+**the current Projects-tab hydraulic editor is not yet bound to an end-to-end
+autosaved working-copy session**. Remaining work is: wire membership payloads;
+load the pinned base and candidate overlay into `HydraulicData`; attach
+edit capture and queue to the actual checked-out session; replay and recover
+after restart; verify persisted full-network equality; cover network-wide
+edits/bulk imports before allowing them through autosave. Then implement
+explicit local Commit with its own expected-HEAD and idempotency contract.
+
+See [hydraulic edit transactions](hydraulic-edit-transactions.md),
+[working repository configuration](working-repository-configuration.md), and
+[GUI integration roadmap](dvmdb-integration-roadmap.md).

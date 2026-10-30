@@ -1,104 +1,82 @@
-# Connect AOWIS Projects to DVMDB
+# Working with DVMDB in the Projects workspace
 
-This guide describes the intended GUI workflow under the
-[Projects workspace contract](projects-workspace.md) and
-[DVMDB version-control specification](../../AOWIS-SERVER-DVMDB/docs/version-control-semantics.md).
-Use a DVMDB server and GUI build supporting that contract; do not assume an
-older binary's data lifecycle matches it.
+This page separates **what today's components support** from the intended
+full editing workflow. It is not a promise that local Commit or hydraulic
+autosave is already exposed in the GUI.
 
-## 0. Configure your personal DVMDB working repository
+## 1. Start DVMDB
 
-The project source you browse is not where uncommitted user edits belong.
-Standalone uses its built-in persistent DVMDB as the personal working repo;
-basic desktop or browser/web GUI requires an explicitly configured private
-HTTP DVMDB working repository. See
-[configuration contract](working-repository-configuration.md). A shared
-repository must never silently become a user's private working repo.
-Without a working repo, browsing may be read-only but editing/Commit is off.
+In the DVMDB repository, run `./compile_linux.sh` to build and start the
+HTTP server after a successful build. The default address is
+`127.0.0.1:8755`; test it from a second terminal:
 
-## 1. Choose a database source
+```bash
+curl -fsS http://127.0.0.1:8755/dvmdb/v1/ready
+curl -fsS http://127.0.0.1:8755/dvmdb/v1/repository
+curl -fsS http://127.0.0.1:8755/dvmdb/v1/projects
+```
 
-Open **Projects → Databases** and add a source using its `+` action, or
-choose **Add database** on an empty workspace. Create an embedded/local
-source in a supported native Standalone build, or a remote DVMDB REST
-source by entering its endpoint. Validate connectivity and refresh the
-project catalogue. A visibility checkbox controls which sources appear in
-the navigator and canvas; it does not delete or disconnect a database.
+The repository endpoint identifies the server repository's UUID and functional
+role. A shared browsing source and a **personal working repository** are
+separate destinations even if their project/branch UUIDs match.
 
-The inspector identifies the selected database and exposes its connection
-settings, availability and projects. A checked, empty database still gets
-a server/source card on the graph canvas.
+## 2. Browse a source
 
-## 2. Create a project
+Open the GUI **Projects** tab and configure a DVMDB source in the Servers
+section/Inspector. Source visibility controls which project and branch
+histories appear in the navigator and graph; it does not make a source the
+private editor target. Refresh after external changes. Project creation
+produces an unborn `main` with zero revisions—no synthetic first commit.
+The branch inspector can identify the exact committed fork revision and
+source branch; those are provenance, not additional graph ancestry edges.
 
-Select an available database, choose **Create project** in the inspector,
-enter its name and confirm. The created project receives a UUIDv7 and a
-new UUIDv7 branch named **main**.
+## 3. Configure the personal repository
 
-**No revision has been committed yet.** Its main branch has an **unborn
-HEAD** (`null`). The navigator shows the project and `main`; the graph
-shows `No commits yet`, not a synthetic R0 card.
+Standalone chooses a separate durable per-user embedded DVMDB root where
+supported. Ordinary desktop and WebAssembly GUI require an explicit private
+HTTP DVMDB endpoint and exact repository UUIDv7 in the personal-repository
+setting. The profile is independent of selected shared sources.
+See [working repository configuration](working-repository-configuration.md).
+If that endpoint is missing, unavailable or mismatched, editing must be
+disabled; there is no silent shared-source or RAM-only fallback.
 
-## 3. Start editing privately
+The GUI contains a committed-branch checkout client for REST sources and a
+durable working-copy HTTP transport. These are **not** the same as a complete
+checkout into an active `HydraulicData` editor. Merely selecting a revision
+or showing a working-copy dialog must not imply the model has been hydrated
+from its pinned base and draft candidate.
 
-Choose **Checkout / Create working copy** for `main`. A working copy is
-private to the user/session, has its own UUIDv7, and starts from the empty
-model state. Editing this model does not modify the repository's committed
-HEAD or anyone else's working copy.
+## 4. Editing lifecycle to finish
 
-When a branch already has commits, checkout pins a precise base committed
-revision UUIDv7. The inspector distinguishes **current branch HEAD** from
-**my working-copy base** and **my unsaved changes**.
+1. Explicitly check out an exact committed revision or unborn `main` into a
+   personal working repository; then create/reopen the private working-copy
+   draft and acquire its writer lease.
+2. Load the exact base plus saved candidate into `HydraulicData`, capture
+   supported logical MODEL edits and durably queue them locally.
+3. Save the canonical event and typed entity changes (and DVMDB-owned
+   membership intents for creation/deletion) using expected generation and
+   fencing token. Never clear the queue before authoritative confirmation.
+4. Reopen after crash/disconnect and verify the full hydraulic network equals
+   the saved candidate. A Save must not move any committed HEAD.
+5. **Commit locally** from the validated saved draft to the personal branch
+   with exact expected local HEAD/null. This creates one immutable revision;
+   the shared branch remains unchanged until explicit Publish.
+6. Later Fetch, Publish and manual reconcile/merge will move independent
+   shared branch refs under expected-HEAD checks. No force-publish or silent
+   conflict overwrite.
 
-## 4. Make the first commit
+**Current delivery focus:** steps 1–4 end to end, followed immediately by
+local Commit. Refer to the [roadmap](dvmdb-integration-roadmap.md) for tested
+subcomponents and still-open integration gates. Do not use this checklist as
+an assertion that the workflow is already implemented.
 
-Select **Commit locally** from the working-copy editor, inspect model
-validation and commit metadata. The GUI commits to your *personal* DVMDB
-with an expected local HEAD of `null` on the first commit. This creates
-immutable revision R0 there but **does not publish to the shared DVMDB**.
-To share, select **Publish**, which sends verified R0 and atomically moves
-the shared unborn `main` HEAD from `null` to R0, provided it is still unborn.
+## 5. Troubleshooting and safety
 
-Every later commit creates another immutable UUIDv7 revision, with its
-committed parent bound by the canonical SHA-256 integrity record.
-
-## 5. Create a branch
-
-A project with unborn `main` must be committed first; you cannot branch
-from an uncommitted empty project. Select a branch or immutable historical
-revision. **Create branch** shows
-the committed starting revision, branch name and source. The new branch
-gets a new branch UUIDv7 and records the source branch UUIDv7 plus the
-exact fork revision UUIDv7. Its initial committed HEAD points to the
-already existing revision. **No extra revision is created.**
-
-If your working copy has uncommitted changes, explicitly **commit first**
-(or choose to branch from its last committed base without those edits).
-No other editor's working copy is automatically finalized. Branch names
-support valid UTF-8 and spaces.
-
-## 6. Concurrent work and conflicts
-
-Multiple users can work from the same shared R7 in their **own personal
-DVMDB repositories**, each with private working copies. Both can commit
-locally. The first compatible Publish advances the shared branch; the
-second, still expecting shared R7, is rejected even if their edits do not
-overlap. Neither their local immutable commits nor drafts disappear. The
-GUI offers Fetch, compare/reconcile and an explicit subsequent Publish. The full hydraulic model is revalidated before
-publication.
-
-## 7. History, inspection and synchronization
-
-The project canvas shows one Git-style committed revision ancestry DAG,
-with branch labels at their referenced HEAD revisions and optional layout
-lanes. Actual independent commits cause visible forks and merge commits
-have two parent edges. The branch inspector records creation source/fork
-metadata without drawing an extra ancestry line. Working copies are
-editor/session objects, never immutable revision cards.
-
-Native and REST sources must expose the same UUIDv7 identities, immutable
-SHA-256 records, branch-head/null states and conflict behavior. Replication
-preserves all those values without inventing new branch origins.
-
-For implementation gates and acceptance tests, see the
-[integration roadmap](dvmdb-integration-roadmap.md).
+- Check the HTTP repository UUID and functional role, not only its URL.
+- Check the selected draft, branch UUID, pinned base and saved generation.
+- A lost Save response can mean the write succeeded: reopen and compare exact
+  event bytes and candidate records before deleting a queued event.
+- A stale lease or generation is a conflict; never silently take over another
+  session's draft or switch to a different database.
+- The HTTP server currently has no enforced authentication. Keep writable
+  development endpoints isolated; security design is separate from this work.

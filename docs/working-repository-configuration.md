@@ -6,8 +6,9 @@
 [deferred security notes](deferred-security-considerations.md).
 The [GUI implementation roadmap](dvmdb-integration-roadmap.md) lists the
 backend prerequisites, per-user configuration work, decision gates and tests.
-Actual configuration names and widgets are to be implemented; example field
-names below are proposed logical keys, not a claim that these keys work today.
+The configured HTTP profile is implemented in
+`src/config/personal_repository_storage.cpp`; the complete editor lifecycle
+is not. The exact stored JSON/INI key is documented below.
 
 ## Explicit roles, not interchangeable source profiles
 
@@ -35,18 +36,27 @@ Save; read-only sessions may inspect the draft, and a stale writer never
 saves over recovered work. The GUI must show the current working repository,
 draft identity, lease/recovery status and saved-state generation.
 
-## Proposed configuration fields
+## Actual configuration format
 
-```ini
-# Illustrative schema; NOT recognized configuration keys yet.
-[WorkingRepository]
-mode=embedded|http
-# embedded (Standalone only):
-path=/absolute/persistent/user-working-dvmdb
-# http (desktop/basic/web):
-endpoint=https://private-working-dvmdb.example.invalid
-repositoryId=<user-private-repository-uuidv7>
+The desktop GUI stores a compact JSON object under the Qt INI settings key
+`projects/personal_repository` in `aowis-server-gui.ini`. The object has
+**exactly** these meaningful fields:
+
+```json
+{"endpoint":"http://127.0.0.1:8755","repositoryId":"<exact-lowercase-uuidv7>"}
 ```
+
+The provided placeholder must be replaced with the private DVMDB's actual
+`GET /dvmdb/v1/repository` UUID. `savePersonalRepositoryProfile` validates
+HTTP(S) root URLs without credentials/query/fragment and validates the UUIDv7.
+The WebAssembly build stores the same JSON under browser localStorage key
+`aowis.projects.personalRepository`. **This is endpoint selection, not a
+credential or secret store.**
+
+Standalone resolves a separate embedded personal DVMDB path through
+`defaultPersonalDvmdbPath()` (per-user GenericDataLocation,
+`aowis-personal-dvmdb`), and rejects conflicts with a navigable local source.
+It does not reuse the selected shared source path as a draft root.
 
 Shared project connections remain separate GUI database-source profiles.
 This version-control configuration does not define access tokens, passwords,
@@ -95,11 +105,11 @@ require their own lifecycle integration.
    local branch history or working-copy bases. Commit and Publish each use a
    persisted UUIDv7 operation ID and payload digest. After a timeout, query
    authoritative status and never submit a fresh write as an implicit retry.
-6. A newly created local branch must retain its UUIDv7 on explicitly chosen
+6. A newly created local branch retains its UUIDv7 on explicitly chosen
    remote provisioning. An absent remote branch differs from an existing
    unborn branch with HEAD `null`; first Publish from `null` checks the exact
-   expected value. Existing committed R0 remains in existing projects,
-   while new projects start unborn.
+   expected value. New projects start unborn; unsupported experimental
+   repository formats are rejected rather than migrated.
 
 The private HTTP service being configured does **not** prove that only the
 intended user can access it. Treat unauthenticated HTTP editing as suitable
