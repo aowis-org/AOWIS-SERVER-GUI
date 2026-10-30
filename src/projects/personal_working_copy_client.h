@@ -2,6 +2,8 @@
 
 #include "config/personal_repository_storage.h"
 
+#include <aowis/model/hydraulic/network_hydraulic.h>
+
 #include <QByteArray>
 #include <QList>
 #include <QNetworkAccessManager>
@@ -102,6 +104,15 @@ public:
     // DVMDB server owns the native manifest bytes. This does not commit or
     // advance HEAD. On an uncertain response, reopen before proceeding; the
     // same request is safely retryable by the same fenced writer.
+    // Hydrate a *read-only* consistent candidate from its immutable base and
+    // exact saved overlay. The server validates the native manifest, chunks,
+    // canonical entity codecs and references before returning MODEL bytes.
+    // This operation does not acquire a lease or enable unsaved editor edits.
+    using NetworkCompletion = std::function<void(
+        const NetworkHydraulic &, const QString &generation, const QString &error)>;
+    void loadDraftNetwork(const PersonalRepositoryTarget &target,
+                          const QString &draft_id, const QString &network_id,
+                          NetworkCompletion completion);
     void initializeEmptyNetwork(const PersonalRepositoryTarget &target,
                                 const QString &draft_id, const QString &session_id,
                                 const QString &fencing_token,

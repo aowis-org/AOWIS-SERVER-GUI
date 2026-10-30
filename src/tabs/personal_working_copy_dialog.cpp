@@ -195,6 +195,45 @@ void PersonalWorkingCopyDialog::showDraft(const PersonalWorkingCopyInfo &draft)
              draft.base_revision.isEmpty() ? tr("Unborn") : draft.base_revision,
              draft.generation, draft.dirty ? tr("Yes") : tr("None"),
              QString::number(draft.changes.size())));
+    // Until full network discovery and editor Save are integrated, only
+    // candidate roots can be previewed here. A read never enables editing.
+    QString network_id;
+    for (const PersonalWorkingCopyChange &change : draft.changes)
+    {
+        if (change.kind != 100 || change.deleted) continue;
+        if (!network_id.isEmpty())
+        {
+            this->details->setText(this->details->text() +
+                tr("\nMultiple networks are present. Choose a network in the future editor workflow."));
+            return;
+        }
+        network_id = change.uuid;
+    }
+    if (network_id.isEmpty()) return;
+    this->client.loadDraftNetwork(this->target, draft.id, network_id,
+        [this, draft](const NetworkHydraulic &network,
+                      const QString &generation, const QString &error)
+    {
+        if (!error.isEmpty())
+        {
+            this->status->setText(tr("Draft loaded, but hydraulic network hydration failed: %1").arg(error));
+            return;
+        }
+        if (generation != draft.generation)
+        {
+            this->status->setText(tr("Draft changed while loading the hydraulic model. Reopen it to get a consistent view."));
+            return;
+        }
+        this->details->setText(this->details->text() +
+            tr("\n\nVerified hydraulic network: %1\nNetwork UUIDv7: %2\n"
+               "Junctions: %3 · Pipes: %4 · Reservoirs: %5 · Tanks: %6")
+            .arg(network.id, network.uuid.toString(QUuid::WithoutBraces),
+                 QString::number(network.nodes_junctions.size()),
+                 QString::number(network.links_pipes.size()),
+                 QString::number(network.nodes_reservoirs.size()),
+                 QString::number(network.nodes_tanks.size())));
+        this->status->setText(tr("Hydraulic model rehydrated and validated (read-only preview)."));
+    });
 }
 
 void PersonalWorkingCopyDialog::checkoutBranch()

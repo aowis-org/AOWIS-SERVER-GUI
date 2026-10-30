@@ -3,6 +3,7 @@
 #include "projects/personal_edit_queue.h"
 
 #include <aowis/model/edit/model_edit_transaction.h>
+#include <aowis/model/serialization/model_codec.h>
 
 #include <QDateTime>
 #include <QHash>
@@ -516,6 +517,51 @@ void PersonalWorkingCopyClient::acquireLease(
             return;
         }
         completion(lease, {});
+    });
+}
+
+void PersonalWorkingCopyClient::loadDraftNetwork(
+    const PersonalRepositoryTarget &target, const QString &draft_id,
+    const QString &network_id, NetworkCompletion completion)
+{
+    if (!DvmdbIdentity::isUuidV7(draft_id) || !DvmdbIdentity::isUuidV7(network_id))
+    {
+        completion({}, {}, QStringLiteral("Invalid draft or network UUIDv7."));
+        return;
+    }
+    request(target, "GET", QStringLiteral("/working-copies/") + draft_id
+                + QStringLiteral("/networks/") + network_id, {},
+            [completion = std::move(completion), draft_id, network_id]
+            (const QJsonObject &response, const QString &error)
+    {
+        if (!error.isEmpty()) { completion({}, {}, error); return; }
+        const QString generation = response.value(QStringLiteral("generation")).toString();
+        const QString encoded = response.value(QStringLiteral("payloadBase64")).toString();
+        if (response.size() != 4 || response.value(QStringLiteral("draftId")).toString() != draft_id ||
+            response.value(QStringLiteral("networkId")).toString() != network_id ||
+            !decimal(generation) || !response.value(QStringLiteral("payloadBase64")).isString() ||
+            encoded.size() > 12 * 1024 * 1024)
+        {
+            completion({}, {}, QStringLiteral("Invalid draft network identity, generation or payload."));
+            return;
+        }
+        const QByteArray::FromBase64Result decoded = QByteArray::fromBase64Encoding(
+            encoded.toLatin1(), QByteArray::AbortOnBase64DecodingErrors);
+        if (!decoded || decoded.decoded.toBase64() != encoded.toLatin1())
+        {
+            completion({}, {}, QStringLiteral("Invalid canonical draft network base64."));
+            return;
+        }
+        QString codec_error;
+        const std::optional<NetworkHydraulic> network =
+            aowis::model::ModelCodec<NetworkHydraulic>::decode(decoded.decoded, &codec_error);
+        if (!network || network->uuid.toString(QUuid::WithoutBraces) != network_id ||
+            aowis::model::ModelCodec<NetworkHydraulic>::encode(*network) != decoded.decoded)
+        {
+            completion({}, {}, QStringLiteral("Invalid canonical draft network: %1").arg(codec_error));
+            return;
+        }
+        completion(*network, generation, {});
     });
 }
 

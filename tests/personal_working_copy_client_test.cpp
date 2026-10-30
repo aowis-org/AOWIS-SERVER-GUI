@@ -3,6 +3,7 @@
 #include "projects/personal_edit_queue.h"
 
 #include <aowis/model/edit/model_edit_transaction.h>
+#include <aowis/model/serialization/model_codec.h>
 
 #include <QCoreApplication>
 #include <QElapsedTimer>
@@ -90,6 +91,8 @@ public:
     int release_count = 0;
     int generation = 0;
     bool malformed_overlay = false;
+    bool corrupt_network_payload = false;
+    int network_read_count = 0;
     bool drop_next_save_acknowledgement = false;
 
     QByteArray bundlePayload() const
@@ -217,6 +220,23 @@ public:
                         document = QJsonObject{{QStringLiteral("token"), lease_token},
                             {QStringLiteral("generation"), QString::number(this->generation)},
                             {QStringLiteral("expiresAtMs"), QStringLiteral("1800000000000")}};
+                    }
+                    else if (request_line.startsWith("GET /dvmdb/v1/working-copies/") &&
+                             request_line.contains("/networks/"))
+                    {
+                        ++this->network_read_count;
+                        const QByteArray path = request_line.split(' ').value(1);
+                        const QString network_id = QString::fromLatin1(path.mid(path.lastIndexOf('/') + 1));
+                        NetworkHydraulic network;
+                        network.uuid = QUuid(network_id);
+                        network.id = QStringLiteral("loaded draft");
+                        if (this->corrupt_network_payload) network.uuid = QUuid(entity_id);
+                        document = QJsonObject{
+                            {QStringLiteral("draftId"), draft_id},
+                            {QStringLiteral("networkId"), network_id},
+                            {QStringLiteral("generation"), QString::number(this->generation)},
+                            {QStringLiteral("payloadBase64"), QString::fromLatin1(
+                                aowis::model::ModelCodec<NetworkHydraulic>::encode(network).toBase64())}};
                     }
                     else if (request_line.startsWith("POST /dvmdb/v1/working-copies/") &&
                              request_line.contains("/initialize-network "))
@@ -469,6 +489,38 @@ int main(int argc, char **argv)
                initial_draft.changes.first().kind == 100 &&
                initial_draft.events.isEmpty(),
                "GUI first hydraulic network initialization did not persist an empty root")) return 1;
+    initialized = false;
+    NetworkHydraulic loaded_network;
+    QString loaded_generation;
+    client.loadDraftNetwork(bootstrap.target(), draft_id, network_id,
+        [&](const NetworkHydraulic &network, const QString &generation, const QString &failure)
+    {
+        loaded_network = network;
+        loaded_generation = generation;
+        init_error = failure;
+        initialized = true;
+    });
+    if (!check(until(application, [&] { return initialized; }) && init_error.isEmpty() &&
+               loaded_generation == QStringLiteral("1") &&
+               loaded_network.uuid == QUuid(network_id) &&
+               loaded_network.id == QStringLiteral("loaded draft") &&
+               bootstrap.network_read_count == 1,
+               "canonical draft hydration failed")) return 1;
+    bootstrap.corrupt_network_payload = true;
+    initialized = false;
+    client.loadDraftNetwork(bootstrap.target(), draft_id, network_id,
+        [&](const NetworkHydraulic &, const QString &, const QString &failure)
+        { init_error = failure; initialized = true; });
+    if (!check(until(application, [&] { return initialized; }) && !init_error.isEmpty() &&
+               bootstrap.network_read_count == 2,
+               "GUI draft hydration accepted wrong network UUID")) return 1;
+    bootstrap.corrupt_network_payload = false;
+    initialized = false;
+    client.loadDraftNetwork(bootstrap.target(), draft_id, QStringLiteral("not-a-uuid"),
+        [&](const NetworkHydraulic &, const QString &, const QString &failure)
+        { init_error = failure; initialized = true; });
+    if (!check(initialized && !init_error.isEmpty() && bootstrap.network_read_count == 2,
+               "invalid draft hydration UUID reached HTTP")) return 1;
     initialized = false;
     client.initializeEmptyNetwork(bootstrap.target(), draft_id, init_session, lease_token,
         QStringLiteral("0"), PersonalWorkingCopyClient::newSessionUuidV7(),

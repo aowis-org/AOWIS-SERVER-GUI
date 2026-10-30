@@ -82,11 +82,19 @@ an end-to-end checkout/edit/reopen/commit test against a real personal DVMDB.
 | Area | Available in the checked source | Not yet accepted end to end |
 |---|---|---|
 | Project and branch history (VC-01/02) | Unborn project creation, nullable committed HEAD, immutable branch fork provenance, native/REST readers, corresponding GUI graph/inspector tests | Real multiclient history/graph acceptance across all deployment modes |
-| Personal repository identity and checkout (VC-03/04) | Persistent repository UUID/roles, tracking metadata, private working-copy CRUD and fenced generation-checked saves; committed REST bundle transfer and identity-preserving unborn root checkout to a private clone target | Hydrate pinned base plus persisted candidate; embedded and remaining deployment modes |
-| Hydraulic editing (VC-04) | MODEL-owned canonical codec and reversible transactions; GUI entity capture, durable local event queue, typed record/membership adapter; membership transport and lost-acknowledgement recovery; private-draft network initializer client, native atomic journal and DVMDB-owned membership materialization (pending test run) | GUI-driven first-network initialization, genuine editor session binding, durable restart/reload verification, global mutation coverage |
+| Personal repository identity and checkout (VC-03/04) | Persistent repository UUID/roles, tracking metadata, private working-copy CRUD and fenced generation-checked saves; committed REST bundle transfer and identity-preserving unborn root checkout to a private clone target | Bind the hydrated model to a real editor, embedded and remaining deployment modes |
+| Hydraulic editing (VC-04) | MODEL-owned canonical codec and reversible transactions; GUI entity capture, durable local event queue, typed record/membership adapter; membership transport and lost-acknowledgement recovery; private-draft network initializer client, native atomic journal and DVMDB-owned membership materialization (prior GUI suite: 63/63 passed) | GUI-driven first-network initialization, genuine editor session binding, durable restart/reload verification, global mutation coverage |
 | Local Commit (VC-05) | Immutable revision and model persistence primitives | Working-copy-to-revision CAS, recoverable operation ID/status, usable Projects-tab Commit |
 | Collaboration (VC-06–08) | History transfer, import, revision DAG and domain merge primitives | Unified user-facing Fetch/Publish/reconciliation acceptance using independent private repositories |
 | Presentation and qualification (VC-09–11) | Graph and inspector regression coverage; extensive DVMDB durability/sync tests | Integrated GUI/Standalone/browser scenarios and complete release evidence |
+
+**Read-only draft hydration:** The DVMDB `GET /working-copies/:draft/networks/:network`
+endpoint reconstitutes the saved candidate over the pinned immutable base,
+validating manifest chunks, canonical entity payloads and typed dependencies.
+`PersonalWorkingCopyClient::loadDraftNetwork()` decodes and verifies the exact
+MODEL payload and generation. The draft inspector previews an unambiguous
+candidate-root network. No editor Save is implied: connecting the snapshot to
+`HydraulicData` plus durable editor event capture remains the next VC-04 gate.
 
 **Next actionable work (in order):** (1) done 2026-10-30: the GUI
 event-save client sends `membership`, checks it locally and recovers a
@@ -104,9 +112,8 @@ independent of first-network creation and still requires the user's test run.
 `PersonalWorkingCopyClient::initializeEmptyNetwork()` when opening an empty
 unborn editor. This operation creates one server-owned empty network root
 without a commit; the caller must retain the draft on any ambiguous outcome
-and reopen to confirm its generation. Next hydrate
-the selected pinned base plus persisted candidate and establish a
-real `HydraulicData` editor session; (3) capture/queue/flush supported edits,
+and reopen to confirm its generation. The candidate hydration read is now implemented and has dedicated regression
+tests; next bind its verified result to a real `HydraulicData` editor session; (3) capture/queue/flush supported edits,
 including creation/deletion, over interrupted network and restart; (4) add
 local working-copy Commit with expected local HEAD and idempotent status;
 (5) integrate the Commit action and prove first unborn commit end to end.
