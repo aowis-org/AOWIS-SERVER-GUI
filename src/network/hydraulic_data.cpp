@@ -92,12 +92,39 @@ const NetworkHydraulic &HydraulicData::networkHydraulic() const
     return this->network_hydraulic;
 }
 
+void HydraulicData::setLogicalEditCaptureEnabled(bool enabled)
+{
+    this->logical_edit_capture_enabled = enabled;
+}
+
+bool HydraulicData::logicalEditCaptureEnabled() const
+{
+    return this->logical_edit_capture_enabled;
+}
+
+void HydraulicData::publishCapturedEdit(const HydraulicEditTransactionCapture &capture)
+{
+    QString error;
+    const std::optional<QByteArray> transaction = capture.finish(this->network_hydraulic, &error);
+    if (!error.isEmpty())
+    {
+        // An editor must not regard this unsaved mutation as persisted.
+        this->logical_edit_capture_enabled = false;
+        emit signalLogicalEditCaptureFailed(error);
+    }
+    else if (transaction.has_value())
+    {
+        emit signalLogicalEditRecorded(transaction.value());
+    }
+}
+
 void HydraulicData::replaceNetworkHydraulic(
     NetworkHydraulic network,
     QList<WaterQualitySolverOptions> quality_run_options)
 {
     clearSimulationResultTimeline();
 
+    this->logical_edit_capture_enabled = false;
     this->network_hydraulic = std::move(network);
     this->simulation_quality_run_options = std::move(quality_run_options);
     this->source_trace_origin_node_uuid = QUuid();
@@ -2038,6 +2065,7 @@ void HydraulicData::requestEntityLocate(InfrastructureEntity entity_type, const 
 
 QUuid HydraulicData::addJunction(const CoordinateWGS84 &coordinate)
 {
+    HydraulicEditTransactionCapture capture(QStringLiteral("hydraulic.junction.create"));
     const QUuid uuid = this->network_editor.addJunction(coordinate);
     if (!uuid.isNull())
     {
@@ -2045,11 +2073,17 @@ QUuid HydraulicData::addJunction(const CoordinateWGS84 &coordinate)
             emit signalBoundingBoxWgs84Changed();
         markNetworkChanged(NetworkChange::Geometry, uuid);
     }
+    if (this->logical_edit_capture_enabled && !uuid.isNull())
+    {
+        capture.watchCreated(uuid);
+        publishCapturedEdit(capture);
+    }
     return uuid;
 }
 
 QUuid HydraulicData::addReservoir(const CoordinateWGS84 &coordinate)
 {
+    HydraulicEditTransactionCapture capture(QStringLiteral("hydraulic.reservoir.create"));
     const QUuid uuid = this->network_editor.addReservoir(coordinate);
     if (!uuid.isNull())
     {
@@ -2057,11 +2091,17 @@ QUuid HydraulicData::addReservoir(const CoordinateWGS84 &coordinate)
             emit signalBoundingBoxWgs84Changed();
         markNetworkChanged(NetworkChange::Geometry, uuid);
     }
+    if (this->logical_edit_capture_enabled && !uuid.isNull())
+    {
+        capture.watchCreated(uuid);
+        publishCapturedEdit(capture);
+    }
     return uuid;
 }
 
 QUuid HydraulicData::addTank(const CoordinateWGS84 &coordinate)
 {
+    HydraulicEditTransactionCapture capture(QStringLiteral("hydraulic.tank.create"));
     const QUuid uuid = this->network_editor.addTank(coordinate);
     if (!uuid.isNull())
     {
@@ -2069,11 +2109,17 @@ QUuid HydraulicData::addTank(const CoordinateWGS84 &coordinate)
             emit signalBoundingBoxWgs84Changed();
         markNetworkChanged(NetworkChange::Geometry, uuid);
     }
+    if (this->logical_edit_capture_enabled && !uuid.isNull())
+    {
+        capture.watchCreated(uuid);
+        publishCapturedEdit(capture);
+    }
     return uuid;
 }
 
 QUuid HydraulicData::addDemandPoint(const CoordinateWGS84 &coordinate)
 {
+    HydraulicEditTransactionCapture capture(QStringLiteral("hydraulic.demand-point.create"));
     const QUuid uuid = this->network_editor.addDemandPoint(coordinate);
     if (!uuid.isNull())
     {
@@ -2082,12 +2128,18 @@ QUuid HydraulicData::addDemandPoint(const CoordinateWGS84 &coordinate)
         markNetworkChanged(NetworkChange::Geometry, uuid);
         emit signalDemandPointChanged(uuid);
     }
+    if (this->logical_edit_capture_enabled && !uuid.isNull())
+    {
+        capture.watchCreated(uuid);
+        publishCapturedEdit(capture);
+    }
     return uuid;
 }
 
 QUuid HydraulicData::addPipe(const QUuid &node_uuid_from, const QUuid &node_uuid_to,
                              const QList<CoordinateWGS84> &intermediate_vertices)
 {
+    HydraulicEditTransactionCapture capture(QStringLiteral("hydraulic.pipe.create"));
     const QUuid uuid =
         this->network_editor.addPipe(node_uuid_from, node_uuid_to, intermediate_vertices);
     if (!uuid.isNull())
@@ -2099,12 +2151,18 @@ QUuid HydraulicData::addPipe(const QUuid &node_uuid_from, const QUuid &node_uuid
             emit signalBoundingBoxWgs84Changed();
         markNetworkChanged(NetworkChange::Geometry, uuid);
     }
+    if (this->logical_edit_capture_enabled && !uuid.isNull())
+    {
+        capture.watchCreated(uuid);
+        publishCapturedEdit(capture);
+    }
     return uuid;
 }
 
 QUuid HydraulicData::addPump(const QUuid &node_uuid_from, const QUuid &node_uuid_to,
                              const CoordinateWGS84 &center_coordinate)
 {
+    HydraulicEditTransactionCapture capture(QStringLiteral("hydraulic.pump.create"));
     const QUuid uuid =
         this->network_editor.addPump(node_uuid_from, node_uuid_to, center_coordinate);
     if (!uuid.isNull())
@@ -2113,12 +2171,18 @@ QUuid HydraulicData::addPump(const QUuid &node_uuid_from, const QUuid &node_uuid
             emit signalBoundingBoxWgs84Changed();
         markNetworkChanged(NetworkChange::Geometry, uuid);
     }
+    if (this->logical_edit_capture_enabled && !uuid.isNull())
+    {
+        capture.watchCreated(uuid);
+        publishCapturedEdit(capture);
+    }
     return uuid;
 }
 
 QUuid HydraulicData::addValve(const QUuid &node_uuid_from, const QUuid &node_uuid_to,
                               const CoordinateWGS84 &center_coordinate)
 {
+    HydraulicEditTransactionCapture capture(QStringLiteral("hydraulic.valve.create"));
     const QUuid uuid =
         this->network_editor.addValve(node_uuid_from, node_uuid_to, center_coordinate);
     if (!uuid.isNull())
@@ -2126,6 +2190,11 @@ QUuid HydraulicData::addValve(const QUuid &node_uuid_from, const QUuid &node_uui
         if (extendBoundingBoxWgs84(center_coordinate))
             emit signalBoundingBoxWgs84Changed();
         markNetworkChanged(NetworkChange::Geometry, uuid);
+    }
+    if (this->logical_edit_capture_enabled && !uuid.isNull())
+    {
+        capture.watchCreated(uuid);
+        publishCapturedEdit(capture);
     }
     return uuid;
 }
@@ -2164,6 +2233,17 @@ bool HydraulicData::setNodeEnabled(const QUuid &uuid, bool enabled)
 
 bool HydraulicData::setNodeCoordinate(const QUuid &uuid, const CoordinateWGS84 &coordinate)
 {
+    HydraulicEditTransactionCapture capture(QStringLiteral("hydraulic.node.move"));
+    if (this->logical_edit_capture_enabled)
+    {
+        capture.watch(this->network_hydraulic, uuid);
+        for (const HydraulicLinkPipe &pipe : this->network_hydraulic.links_pipes)
+        {
+            if (pipe.node_uuid_from == uuid || pipe.node_uuid_to == uuid)
+                capture.watch(this->network_hydraulic, pipe.uuid);
+        }
+    }
+
     const std::optional<InfrastructureEntity> entity_type = nodeEntityType(uuid);
     if (!entity_type.has_value())
         return false;
@@ -2178,6 +2258,8 @@ bool HydraulicData::setNodeCoordinate(const QUuid &uuid, const CoordinateWGS84 &
     markNetworkChanged(NetworkChange::Geometry, uuid);
     emit signalNodeChanged(entity_type.value(), uuid);
     emitConnectedPipeChanges(uuid);
+    if (this->logical_edit_capture_enabled)
+        publishCapturedEdit(capture);
     return true;
 }
 
@@ -2494,9 +2576,15 @@ bool HydraulicData::setJunctionElevationInputType(
 
 bool HydraulicData::setJunctionElevationM(const QUuid &uuid, double elevation_m)
 {
-    return emitNodeChangedIfSuccessful(
+    HydraulicEditTransactionCapture capture(QStringLiteral("hydraulic.junction.elevation"));
+    if (this->logical_edit_capture_enabled)
+        capture.watch(this->network_hydraulic, uuid);
+    const bool successful = emitNodeChangedIfSuccessful(
         uuid, this->network_editor.setJunctionElevationM(uuid, elevation_m),
         NetworkChange::Geometry);
+    if (successful && this->logical_edit_capture_enabled)
+        publishCapturedEdit(capture);
+    return successful;
 }
 
 bool HydraulicData::setJunctionTerrainElevationM(const QUuid &uuid, double terrain_elevation_m)
@@ -2779,8 +2867,14 @@ bool HydraulicData::setPipeInitialStatus(
 
 bool HydraulicData::setPipeDiameterMm(const QUuid &uuid, double diameter_mm)
 {
-    return emitLinkChangedIfSuccessful(
+    HydraulicEditTransactionCapture capture(QStringLiteral("hydraulic.pipe.diameter"));
+    if (this->logical_edit_capture_enabled)
+        capture.watch(this->network_hydraulic, uuid);
+    const bool successful = emitLinkChangedIfSuccessful(
         uuid, this->network_editor.setPipeDiameterMm(uuid, diameter_mm));
+    if (successful && this->logical_edit_capture_enabled)
+        publishCapturedEdit(capture);
+    return successful;
 }
 
 bool HydraulicData::setPipeMeasuredLengthM(
@@ -3076,6 +3170,32 @@ bool HydraulicData::applyGeometryBatch(const HydraulicGeometryBatch &batch)
     if (batch.isEmpty())
         return true;
 
+    HydraulicEditTransactionCapture capture(QStringLiteral("hydraulic.geometry.batch"));
+    if (this->logical_edit_capture_enabled)
+    {
+        for (QHash<QUuid, CoordinateWGS84>::const_iterator it = batch.node_coordinates.cbegin();
+             it != batch.node_coordinates.cend(); ++it)
+            capture.watch(this->network_hydraulic, it.key());
+        for (QHash<QUuid, CoordinateWGS84>::const_iterator it = batch.demand_point_coordinates.cbegin();
+             it != batch.demand_point_coordinates.cend(); ++it)
+            capture.watch(this->network_hydraulic, it.key());
+        for (QHash<QUuid, QList<CoordinateWGS84>>::const_iterator it = batch.pipe_vertices.cbegin();
+             it != batch.pipe_vertices.cend(); ++it)
+            capture.watch(this->network_hydraulic, it.key());
+        for (QHash<QUuid, CoordinateWGS84>::const_iterator it = batch.pump_center_coordinates.cbegin();
+             it != batch.pump_center_coordinates.cend(); ++it)
+            capture.watch(this->network_hydraulic, it.key());
+        for (QHash<QUuid, CoordinateWGS84>::const_iterator it = batch.valve_center_coordinates.cbegin();
+             it != batch.valve_center_coordinates.cend(); ++it)
+            capture.watch(this->network_hydraulic, it.key());
+        for (const HydraulicLinkPipe &pipe : this->network_hydraulic.links_pipes)
+        {
+            if (batch.node_coordinates.contains(pipe.node_uuid_from) ||
+                batch.node_coordinates.contains(pipe.node_uuid_to))
+                capture.watch(this->network_hydraulic, pipe.uuid);
+        }
+    }
+
     const bool snapshot_was_current =
         this->network_render_snapshot.geometry_revision == this->geometry_revision;
     const HydraulicGeometryBatchResult result = this->network_editor.applyGeometryBatch(batch);
@@ -3240,22 +3360,55 @@ bool HydraulicData::applyGeometryBatch(const HydraulicGeometryBatch &batch)
     for (const QUuid &pipe_uuid : result.affected_pipe_uuids)
         emit signalLinkChanged(InfrastructureEntity::Pipe, pipe_uuid);
 
+    if (this->logical_edit_capture_enabled)
+        publishCapturedEdit(capture);
     return true;
 }
 
 QUuid HydraulicData::splitPipeAtVertex(const QUuid &pipe_uuid, int vertex_index,
                                        const QUuid &junction_uuid)
 {
+    HydraulicEditTransactionCapture capture(QStringLiteral("hydraulic.pipe.split"));
+    if (this->logical_edit_capture_enabled)
+    {
+        capture.watch(this->network_hydraulic, pipe_uuid);
+        for (const HydraulicDemandPoint &point : this->network_hydraulic.demand_points)
+        {
+            if (point.attachment.type == HydraulicDemandPointAttachmentType::Pipe &&
+                point.attachment.pipe_uuid == pipe_uuid)
+                capture.watch(this->network_hydraulic, point.uuid);
+        }
+    }
     const QUuid second_pipe_uuid =
         this->network_editor.splitPipeAtVertex(pipe_uuid, vertex_index, junction_uuid);
     if (!second_pipe_uuid.isNull())
         markNetworkChanged(NetworkChange::Geometry, pipe_uuid);
+    if (this->logical_edit_capture_enabled && !second_pipe_uuid.isNull())
+    {
+        capture.watchCreated(second_pipe_uuid);
+        publishCapturedEdit(capture);
+    }
     return second_pipe_uuid;
 }
 
 bool HydraulicData::undoPipeSplit(const QUuid &first_pipe_uuid, const QUuid &second_pipe_uuid,
                                   const QUuid &junction_uuid)
 {
+    HydraulicEditTransactionCapture capture(QStringLiteral("hydraulic.pipe.rejoin"));
+    if (this->logical_edit_capture_enabled)
+    {
+        capture.watch(this->network_hydraulic, first_pipe_uuid);
+        capture.watch(this->network_hydraulic, second_pipe_uuid);
+        for (const HydraulicDemandPoint &point : this->network_hydraulic.demand_points)
+        {
+            if ((point.attachment.type == HydraulicDemandPointAttachmentType::Pipe &&
+                 (point.attachment.pipe_uuid == first_pipe_uuid ||
+                  point.attachment.pipe_uuid == second_pipe_uuid)) ||
+                (point.attachment.type == HydraulicDemandPointAttachmentType::Junction &&
+                 point.attachment.junction_uuid == junction_uuid))
+                capture.watch(this->network_hydraulic, point.uuid);
+        }
+    }
     const bool successful =
         this->network_editor.undoPipeSplit(first_pipe_uuid, second_pipe_uuid, junction_uuid);
     if (successful)
@@ -3264,6 +3417,8 @@ bool HydraulicData::undoPipeSplit(const QUuid &first_pipe_uuid, const QUuid &sec
         markSimulationDiagnosticEntityStale(second_pipe_uuid);
         markSimulationDiagnosticEntityStale(junction_uuid);
     }
+    if (successful && this->logical_edit_capture_enabled)
+        publishCapturedEdit(capture);
     return successful;
 }
 
@@ -3335,12 +3490,25 @@ bool HydraulicData::deleteDemandPoint(const QUuid &uuid)
 
 bool HydraulicData::deletePipe(const QUuid &uuid)
 {
+    HydraulicEditTransactionCapture capture(QStringLiteral("hydraulic.pipe.delete"));
+    if (this->logical_edit_capture_enabled)
+    {
+        capture.watch(this->network_hydraulic, uuid);
+        for (const HydraulicDemandPoint &point : this->network_hydraulic.demand_points)
+        {
+            if (point.attachment.type == HydraulicDemandPointAttachmentType::Pipe &&
+                point.attachment.pipe_uuid == uuid)
+                capture.watch(this->network_hydraulic, point.uuid);
+        }
+    }
     const bool successful = this->network_editor.deletePipe(uuid);
     if (successful)
     {
         rebuildBoundingBoxWgs84();
         markNetworkChanged(NetworkChange::Geometry, uuid);
     }
+    if (successful && this->logical_edit_capture_enabled)
+        publishCapturedEdit(capture);
     return successful;
 }
 

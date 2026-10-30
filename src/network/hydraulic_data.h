@@ -26,6 +26,7 @@
 
 #include "common/_enums_structs.h"
 #include "network/hydraulic_network_editor.h"
+#include "network/hydraulic_edit_transaction_capture.h"
 #include "network/network_render_snapshot.h"
 #include "network/network_symbology.h"
 
@@ -51,6 +52,10 @@ public:
     explicit HydraulicData(QObject *parent = nullptr);
 
     const NetworkHydraulic &networkHydraulic() const;
+    // Disabled until a personal working copy is bound. Captured events are not
+    // durable until a future working-copy controller acknowledges persistence.
+    void setLogicalEditCaptureEnabled(bool enabled);
+    bool logicalEditCaptureEnabled() const;
     void replaceNetworkHydraulic(
         NetworkHydraulic network,
         QList<WaterQualitySolverOptions> quality_run_options);
@@ -474,7 +479,9 @@ private:
     void rebuildNetworkRenderSnapshot() const;
     // After an ID change: the render snapshot's IDs follow (map labels).
     void refreshNetworkRenderSnapshotIds();
+    void publishCapturedEdit(const HydraulicEditTransactionCapture &capture);
 
+    bool logical_edit_capture_enabled = false;
     NetworkHydraulic network_hydraulic;
     QList<WaterQualitySolverOptions> simulation_quality_run_options;
     QUuid source_trace_origin_node_uuid;
@@ -563,6 +570,10 @@ private:
     mutable NetworkRenderSnapshot network_render_snapshot;
 
 signals:
+    // Canonical MODEL event bytes. One emission = one logical editing action.
+    // Not a durability acknowledgement; the working-copy controller owns that.
+    void signalLogicalEditRecorded(const QByteArray &encoded_transaction);
+    void signalLogicalEditCaptureFailed(const QString &reason);
     void signalNetworkLoaded();
     void signalWaterQualityOptionsChanged();
     void signalSimulationResultTimelineChanged(bool available);

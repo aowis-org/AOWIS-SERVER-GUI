@@ -180,6 +180,8 @@ qt_add_executable(aowis-server-gui
     # Network
     src/network/hydraulic_data.cpp
     src/network/hydraulic_data.h
+    src/network/hydraulic_edit_transaction_capture.cpp
+    src/network/hydraulic_edit_transaction_capture.h
     src/network/hydraulic_entity_table_widget.cpp
     src/network/hydraulic_entity_table_widget.h
     src/network/hydraulic_network_editor.cpp
@@ -1318,6 +1320,8 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
     )
 
     add_library(aowis-hydraulic-test-support STATIC
+        src/network/hydraulic_edit_transaction_capture.cpp
+        src/network/hydraulic_edit_transaction_capture.h
         src/geo/geo_metric_projection.cpp
         src/geo/geo_metric_projection.h
         src/network/hydraulic_network_editor.cpp
@@ -1361,6 +1365,19 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
         aowis-hydraulic-network-editor
         tests/hydraulic_network_editor_tests.cpp
     )
+    add_executable(aowis-hydraulic-edit-transaction-tests
+        tests/hydraulic_edit_transaction_test.cpp
+        tests/test_harness.h
+        src/network/hydraulic_data.cpp
+        src/network/hydraulic_data.h
+    )
+    set_target_properties(aowis-hydraulic-edit-transaction-tests PROPERTIES AUTOMOC ON)
+    target_link_libraries(aowis-hydraulic-edit-transaction-tests PRIVATE
+        aowis-hydraulic-test-support AOWIS::ServerEpanet Qt6::Core Qt6::Gui)
+    add_test(NAME aowis-hydraulic-edit-transaction
+        COMMAND aowis-hydraulic-edit-transaction-tests)
+    set_tests_properties(aowis-hydraulic-edit-transaction PROPERTIES LABELS "aowis")
+
     aowis_add_hydraulic_test(
         aowis-demand-point-tests
         aowis-demand-points
@@ -1505,6 +1522,7 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
             aowis-unit-table-presentation-tests
             aowis-map-render-neutral-tests
             aowis-hydraulic-network-editor-tests
+            aowis-hydraulic-edit-transaction-tests
             aowis-demand-point-tests
             aowis-pipe-material-tests
             aowis-epanet-js-reader-tests
