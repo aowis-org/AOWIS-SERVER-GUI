@@ -36,6 +36,12 @@ bool check(bool value, const char *message)
     return value;
 }
 
+// DVMDB's real error shape; the client must surface `message`.
+QJsonObject dvmdbError(const QString &code, const QString &message)
+{
+    return QJsonObject{{QStringLiteral("code"), code}, {QStringLiteral("message"), message}};
+}
+
 bool until(QCoreApplication &application, const std::function<bool()> &ready)
 {
     QElapsedTimer timer;
@@ -70,6 +76,7 @@ public:
     QJsonArray saved_changes;
     QJsonArray saved_events;
     int event_save_count = 0;
+    QJsonObject last_event_save;
     bool drop_next_event_acknowledgement = false;
     bool reject_next_event_save = false;
     bool corrupt_event_reopen = false;
@@ -180,13 +187,35 @@ public:
                              request_line.contains("/save-events "))
                     {
                         ++this->event_save_count;
+                        this->last_event_save = request_body;
                         const QString expected = request_body.value(QStringLiteral("expectedGeneration")).toString();
-                        if (this->reject_next_event_save || expected != QString::number(this->generation) ||
+                        // Same precondition as DVMDB: creating or removing an
+                        // entity without a membership array is a 400.
+                        bool unlisted = false;
+                        if (!request_body.contains(QStringLiteral("membership")))
+                            for (const QJsonValue &encoded : request_body.value(QStringLiteral("events")).toArray())
+                            {
+                                const std::optional<aowis::model::ModelEditTransaction> decoded =
+                                    aowis::model::ModelEditTransactionCodec::decode(
+                                        QByteArray::fromBase64(encoded.toString().toLatin1()));
+                                if (decoded.has_value())
+                                    for (const aowis::model::ModelEntityEdit &item : decoded->edits)
+                                        unlisted |= !item.before.has_value() || !item.after.has_value();
+                            }
+                        if (unlisted)
+                        {
+                            status = 400;
+                            document.insert(QStringLiteral("error"), dvmdbError(
+                                QStringLiteral("invalid_request"),
+                                QStringLiteral("missing membership for created or removed entity")));
+                        }
+                        else if (this->reject_next_event_save || expected != QString::number(this->generation) ||
                             request_body.value(QStringLiteral("fencingToken")).toString() != lease_token)
                         {
                             this->reject_next_event_save = false;
                             status = 409;
-                            document.insert(QStringLiteral("error"), QStringLiteral("stale event writer"));
+                            document.insert(QStringLiteral("error"), dvmdbError(QStringLiteral("conflict"),
+                                                               QStringLiteral("stale event writer")));
                         }
                         else
                         {
@@ -204,7 +233,8 @@ public:
                             if (duplicate)
                             {
                                 status = 409;
-                                document.insert(QStringLiteral("error"), QStringLiteral("event already persisted"));
+                                document.insert(QStringLiteral("error"), dvmdbError(QStringLiteral("conflict"),
+                                                                   QStringLiteral("event already persisted")));
                             }
                             else
                             {
@@ -240,7 +270,8 @@ public:
                                 != QString::number(this->generation))
                         {
                             status = 409;
-                            document.insert(QStringLiteral("error"), QStringLiteral("stale writer"));
+                            document.insert(QStringLiteral("error"), dvmdbError(QStringLiteral("conflict"),
+                                                               QStringLiteral("stale writer")));
                         }
                         else
                         {
@@ -287,7 +318,8 @@ public:
                     else
                     {
                         status = 404;
-                        document.insert(QStringLiteral("error"), QStringLiteral("Not found"));
+                        document.insert(QStringLiteral("error"), dvmdbError(QStringLiteral("not_found"),
+                                                           QStringLiteral("Not found")));
                     }
                     if (request_line.startsWith("POST /dvmdb/v1/working-copies/") &&
                         request_line.contains("/save-events ") &&
@@ -627,6 +659,8 @@ int main(int argc, char **argv)
     aowis::model::ModelEntityEdit edit;
     edit.entityId = QUuid(entity_id);
     edit.entityType = QStringLiteral("HydraulicLinkPipe");
+    // An attribute update: before and after images, so no membership change.
+    edit.before = QByteArray("pipe before diameter change");
     edit.after = update.payload;
     event.edits.append(edit);
     const QByteArray encoded = aowis::model::ModelEditTransactionCodec::encode(event);
@@ -636,7 +670,7 @@ int main(int argc, char **argv)
     PersonalWorkingCopyEventSaveResult journal_ack;
     recovered = true;
     client.saveEventsRecovering(stub.target(), draft_id, head_id, lease.token,
-        QStringLiteral("2"), {update}, {encoded},
+        QStringLiteral("2"), {update}, {encoded}, {},
         [&](const PersonalWorkingCopyEventSaveResult &result, bool from_recovery, const QString &failure)
     {
         journal_ack = result;
@@ -665,7 +699,7 @@ int main(int argc, char **argv)
                "could not persist queued editing event")) return 1;
     done = false;
     client.flushOldestQueuedEvent(stub.target(), queue, head_id, head_id, lease.token,
-        QStringLiteral("3"), {update},
+        QStringLiteral("3"), {update}, {},
         [&](const QString &, bool, const QString &failure)
     {
         error = failure;
@@ -679,7 +713,7 @@ int main(int argc, char **argv)
     QString next_generation;
     recovered = false;
     client.flushOldestQueuedEvent(stub.target(), queue, draft_id, head_id, lease.token,
-        QStringLiteral("3"), {update},
+        QStringLiteral("3"), {update}, {},
         [&](const QString &next, bool from_recovery, const QString &failure)
     {
         next_generation = next;
@@ -699,7 +733,7 @@ int main(int argc, char **argv)
     done = false;
     recovered = false;
     client.flushOldestQueuedEvent(stub.target(), queue, draft_id, head_id, lease.token,
-        QStringLiteral("4"), {update},
+        QStringLiteral("4"), {update}, {},
         [&](const QString &next, bool from_recovery, const QString &failure)
     {
         next_generation = next;
@@ -721,7 +755,7 @@ int main(int argc, char **argv)
     stub.reject_next_event_save = true;
     done = false;
     client.flushOldestQueuedEvent(stub.target(), queue, draft_id, head_id, lease.token,
-        QStringLiteral("4"), {update},
+        QStringLiteral("4"), {update}, {},
         [&](const QString &, bool, const QString &failure)
     {
         error = failure;
@@ -730,12 +764,14 @@ int main(int argc, char **argv)
     if (!check(until(application, [&] { return done; }) && !error.isEmpty() &&
                queue.pending().size() == 1 && stub.saved_events.size() == 2,
                "rejected server event incorrectly erased the local queue")) return 1;
+    if (!check(error.contains(QStringLiteral("stale event writer (conflict)")),
+               "DVMDB error message was not surfaced to the caller")) return 1;
     // A candidate payload unrelated to the journal must be rejected locally.
     update.payload = QByteArray("unrelated candidate");
     const int saves_before_mismatch = stub.event_save_count;
     done = false;
     client.flushOldestQueuedEvent(stub.target(), queue, draft_id, head_id, lease.token,
-        QStringLiteral("4"), {update},
+        QStringLiteral("4"), {update}, {},
         [&](const QString &, bool, const QString &failure)
     {
         error = failure;
@@ -745,6 +781,123 @@ int main(int argc, char **argv)
                stub.event_save_count == saves_before_mismatch,
                "mismatched event/model records were transmitted")) return 1;
     queue.close();
+
+    // Creating an entity: the membership intent travels with the event and
+    // its typed record. Without an intent nothing is sent at all.
+    const QUuid network_uuid(PersonalWorkingCopyClient::newSessionUuidV7());
+    const QUuid junction_uuid(PersonalWorkingCopyClient::newSessionUuidV7());
+    aowis::model::ModelEditTransaction creation;
+    creation.transactionId = QUuid(PersonalWorkingCopyClient::newSessionUuidV7());
+    creation.operation = QStringLiteral("hydraulic.junction.create");
+    creation.edits.append(aowis::model::ModelEntityEdit{
+        junction_uuid, QStringLiteral("HydraulicNodeJunction"), std::nullopt,
+        QByteArray("junction after-image")});
+    const QByteArray creation_bytes = aowis::model::ModelEditTransactionCodec::encode(creation);
+    PersonalWorkingCopyChange created_record;
+    created_record.uuid = junction_uuid.toString(QUuid::WithoutBraces);
+    created_record.kind = 1;
+    created_record.payload = *creation.edits.first().after;
+    HydraulicDraftMembershipEdit insertion;
+    insertion.network_id = network_uuid;
+    insertion.entity_id = junction_uuid;
+    insertion.kind = 1;
+    insertion.collection_index = 9;
+    insertion.inserted = true;
+    bool batch_recovered = false;
+    const std::function<QString(const QList<PersonalWorkingCopyChange> &,
+                                const QList<QByteArray> &,
+                                const QList<HydraulicDraftMembershipEdit> &)> saveBatch =
+        [&](const QList<PersonalWorkingCopyChange> &records, const QList<QByteArray> &frames,
+            const QList<HydraulicDraftMembershipEdit> &intents)
+    {
+        done = false;
+        QString result;
+        client.saveEventsRecovering(stub.target(), draft_id, head_id, lease.token,
+            QString::number(stub.generation), records, frames, intents,
+            [&](const PersonalWorkingCopyEventSaveResult &, bool from_recovery, const QString &failure)
+        {
+            result = failure;
+            batch_recovered = from_recovery;
+            done = true;
+        });
+        until(application, [&] { return done; });
+        return result;
+    };
+    const int saves_before_membership = stub.event_save_count;
+    error = saveBatch({created_record}, {creation_bytes}, {});
+    if (!check(done && error.contains(QStringLiteral("no matching membership intent")) &&
+               stub.event_save_count == saves_before_membership,
+               "creation without membership intent was transmitted")) return 1;
+    HydraulicDraftMembershipEdit removal = insertion;
+    removal.inserted = false;
+    error = saveBatch({created_record}, {creation_bytes}, {removal});
+    if (!check(done && !error.isEmpty() && stub.event_save_count == saves_before_membership,
+               "creation with a removal intent was transmitted")) return 1;
+    PersonalWorkingCopyChange wrong_record = created_record;
+    wrong_record.payload = QByteArray("different bytes");
+    error = saveBatch({wrong_record}, {creation_bytes}, {insertion});
+    if (!check(done && !error.isEmpty() && stub.event_save_count == saves_before_membership,
+               "membership record differing from the after-image was transmitted")) return 1;
+    HydraulicDraftMembershipEdit stray = insertion;
+    stray.entity_id = QUuid(entity_id);
+    error = saveBatch({update}, {aowis::model::ModelEditTransactionCodec::encode(queued_event)},
+                      {stray});
+    if (!check(done && !error.isEmpty() && stub.event_save_count == saves_before_membership,
+               "membership intent for an attribute update was transmitted")) return 1;
+    // The queue path rejects the same mismatch without any network read.
+    PersonalEditQueue reopened_queue;
+    if (!check(reopened_queue.open(queue_root.path(), QUuid(repository_id), QUuid(draft_id),
+                                   &queue_error) && reopened_queue.pending().size() == 1,
+               "could not reopen the pending editing queue")) return 1;
+    PersonalWorkingCopyChange pending_record = update;
+    pending_record.payload = QByteArray("still pending");
+    const int reads_before_flush = stub.open_count;
+    done = false;
+    client.flushOldestQueuedEvent(stub.target(), reopened_queue, draft_id, head_id, lease.token,
+        QString::number(stub.generation), {pending_record}, {stray},
+        [&](const QString &, bool, const QString &failure)
+    {
+        error = failure;
+        done = true;
+    });
+    if (!check(done && error.contains(QStringLiteral("does not describe a creation")) &&
+               reopened_queue.pending().size() == 1 && stub.open_count == reads_before_flush &&
+               stub.event_save_count == saves_before_membership,
+               "queued flush with a stray membership intent reached the network")) return 1;
+    reopened_queue.close();
+    stub.reject_next_event_save = false;
+    const QString generation_before_creation = QString::number(stub.generation);
+    // Lost acknowledgement: the reopened journal and sent records confirm the
+    // write; DVMDB's derived membership chunks are not part of the comparison.
+    stub.drop_next_event_acknowledgement = true;
+    error = saveBatch({created_record}, {creation_bytes}, {insertion});
+    const QJsonArray sent_membership =
+        stub.last_event_save.value(QStringLiteral("membership")).toArray();
+    const QJsonObject sent_intent = sent_membership.isEmpty()
+        ? QJsonObject() : sent_membership.first().toObject();
+    if (!check(done && error.isEmpty() && batch_recovered &&
+               stub.event_save_count == saves_before_membership + 1 &&
+               stub.last_event_save.value(QStringLiteral("expectedGeneration")).toString()
+                   == generation_before_creation &&
+               sent_membership.size() == 1 && sent_intent.size() == 5 &&
+               sent_intent.value(QStringLiteral("networkId")).toString()
+                   == network_uuid.toString(QUuid::WithoutBraces) &&
+               sent_intent.value(QStringLiteral("entityId")).toString()
+                   == junction_uuid.toString(QUuid::WithoutBraces) &&
+               sent_intent.value(QStringLiteral("kind")).toInt() == 1 &&
+               sent_intent.value(QStringLiteral("collectionIndex")).toInt() == 9 &&
+               sent_intent.value(QStringLiteral("inserted")) == QJsonValue(true),
+               "membership intent was not sent with the creation event")) return 1;
+    // Update-only batches omit the field: DVMDB requires a non-empty array.
+    aowis::model::ModelEditTransaction retitle = queued_event;
+    retitle.transactionId = QUuid(PersonalWorkingCopyClient::newSessionUuidV7());
+    retitle.edits.first().after = QByteArray("update only");
+    PersonalWorkingCopyChange retitled = update;
+    retitled.payload = *retitle.edits.first().after;
+    error = saveBatch({retitled}, {aowis::model::ModelEditTransactionCodec::encode(retitle)}, {});
+    if (!check(done && error.isEmpty() &&
+               !stub.last_event_save.contains(QStringLiteral("membership")),
+               "update-only event batch sent a membership field")) return 1;
 
     done = false;
     client.releaseLease(stub.target(), draft_id, head_id, lease.token,

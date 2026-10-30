@@ -33,9 +33,15 @@ QString endpointRoot(const QString &endpoint)
 
 QString responseError(QNetworkReply *reply, const QByteArray &bytes)
 {
-    const QString message = QJsonDocument::fromJson(bytes).object()
-        .value(QStringLiteral("error")).toString();
-    if (!message.isEmpty()) return message;
+    // DVMDB reports failures as {"error":{"code":"...","message":"..."}}.
+    // Prefer its message (it names the rejected precondition) over Qt's
+    // generic transport text; fall back to the latter for non-DVMDB replies.
+    const QJsonObject error = QJsonDocument::fromJson(bytes).object()
+        .value(QStringLiteral("error")).toObject();
+    const QString message = error.value(QStringLiteral("message")).toString();
+    const QString code = error.value(QStringLiteral("code")).toString();
+    if (!message.isEmpty())
+        return code.isEmpty() ? message : QStringLiteral("%1 (%2)").arg(message, code);
     return reply->errorString();
 }
 
@@ -77,6 +83,81 @@ QJsonArray encodeChanges(const QList<PersonalWorkingCopyChange> &changes)
                                   QString::fromLatin1(change.payload.toBase64())}});
     }
     return batch;
+}
+
+QJsonArray encodeMembership(const QList<HydraulicDraftMembershipEdit> &membership)
+{
+    QJsonArray batch;
+    for (const HydraulicDraftMembershipEdit &intent : membership)
+        batch.append(QJsonObject{
+            {QStringLiteral("networkId"), intent.network_id.toString(QUuid::WithoutBraces)},
+            {QStringLiteral("entityId"), intent.entity_id.toString(QUuid::WithoutBraces)},
+            {QStringLiteral("kind"), static_cast<int>(intent.kind)},
+            {QStringLiteral("collectionIndex"), static_cast<int>(intent.collection_index)},
+            {QStringLiteral("inserted"), intent.inserted}});
+    return batch;
+}
+
+// Mirrors DVMDB's /save-events preconditions so that a batch DVMDB would
+// reject never leaves the GUI: every created/removed entity in the events has
+// exactly one intent with the matching direction, every intent describes such
+// an edit, and the typed record agrees (inserted: record with the event's
+// after-image; removed: tombstone). Updates need no intent.
+QString validateMembership(const QList<aowis::model::ModelEditTransaction> &events,
+                           const QList<PersonalWorkingCopyChange> &changes,
+                           const QList<HydraulicDraftMembershipEdit> &membership)
+{
+    if (membership.size() > 128)
+        return QStringLiteral("Membership batch exceeds 128 intents.");
+    QHash<QUuid, const HydraulicDraftMembershipEdit *> intents;
+    for (const HydraulicDraftMembershipEdit &intent : membership)
+    {
+        if (intent.network_id.isNull() || intent.entity_id.isNull() ||
+            intent.entity_id == intent.network_id || intent.kind == 0 ||
+            intent.collection_index >= 18 || intents.contains(intent.entity_id))
+            return QStringLiteral("Invalid or duplicate hydraulic membership intent.");
+        intents.insert(intent.entity_id, &intent);
+    }
+    QSet<QUuid> described;
+    for (const aowis::model::ModelEditTransaction &event : events)
+    {
+        for (const aowis::model::ModelEntityEdit &edit : event.edits)
+        {
+            const bool created = !edit.before.has_value() && edit.after.has_value();
+            const bool removed = edit.before.has_value() && !edit.after.has_value();
+            const HydraulicDraftMembershipEdit *intent = intents.value(edit.entityId, nullptr);
+            if (!created && !removed)
+            {
+                if (intent != nullptr)
+                    return QStringLiteral("Membership intent for entity %1 does not describe a "
+                        "creation or removal.").arg(edit.entityId.toString(QUuid::WithoutBraces));
+                continue;
+            }
+            if (intent == nullptr || intent->inserted != created)
+                return QStringLiteral("Created or removed entity %1 has no matching membership intent.")
+                    .arg(edit.entityId.toString(QUuid::WithoutBraces));
+            if (described.contains(edit.entityId))
+                return QStringLiteral("Entity %1 is created or removed twice in one batch.")
+                    .arg(edit.entityId.toString(QUuid::WithoutBraces));
+            described.insert(edit.entityId);
+            const QString uuid = edit.entityId.toString(QUuid::WithoutBraces);
+            bool record_matches = false;
+            for (const PersonalWorkingCopyChange &change : changes)
+            {
+                if (change.uuid != uuid) continue;
+                record_matches = created
+                    ? !change.deleted && change.kind == intent->kind && change.payload == *edit.after
+                    : change.deleted;
+                break;
+            }
+            if (!record_matches)
+                return QStringLiteral("Typed record for membership entity %1 is missing or differs "
+                                      "from the MODEL event.").arg(uuid);
+        }
+    }
+    if (described.size() != intents.size())
+        return QStringLiteral("Membership intent without a matching creation or removal event.");
+    return {};
 }
 
 bool matchingChanges(const QList<PersonalWorkingCopyChange> &stored,
@@ -579,7 +660,8 @@ void PersonalWorkingCopyClient::saveEventsRecovering(
     const QString &session_id, const QString &fencing_token,
     const QString &expected_generation,
     const QList<PersonalWorkingCopyChange> &changes,
-    const QList<QByteArray> &encoded_events, EventSaveCompletion completion)
+    const QList<QByteArray> &encoded_events,
+    const QList<HydraulicDraftMembershipEdit> &membership, EventSaveCompletion completion)
 {
     const QString invalid = validateSaveRequest(draft_id, session_id, fencing_token,
                                                 expected_generation, changes);
@@ -595,6 +677,7 @@ void PersonalWorkingCopyClient::saveEventsRecovering(
     QStringList ids;
     QSet<QString> seen;
     QJsonArray events;
+    QList<aowis::model::ModelEditTransaction> decoded_events;
     for (const QByteArray &encoded : encoded_events)
     {
         QString codec_error;
@@ -614,14 +697,27 @@ void PersonalWorkingCopyClient::saveEventsRecovering(
         seen.insert(id);
         ids.append(id);
         events.append(QString::fromLatin1(encoded.toBase64()));
+        decoded_events.append(event.value());
     }
+    const QString membership_error = validateMembership(decoded_events, changes, membership);
+    if (!membership_error.isEmpty())
+    {
+        completion({}, false, membership_error);
+        return;
+    }
+    QJsonObject body{{QStringLiteral("sessionId"), session_id},
+                     {QStringLiteral("fencingToken"), fencing_token},
+                     {QStringLiteral("expectedGeneration"), expected_generation},
+                     {QStringLiteral("changes"), encodeChanges(changes)},
+                     {QStringLiteral("events"), events}};
+    // DVMDB accepts `membership` only as a non-empty array; an update-only
+    // batch omits it. Its derived chunk records are not echoed in `changes`,
+    // so recovery below compares only the records sent here.
+    if (!membership.isEmpty())
+        body.insert(QStringLiteral("membership"), encodeMembership(membership));
     request(target, "POST", QStringLiteral("/working-copies/") + draft_id
                 + QStringLiteral("/save-events"),
-            QJsonObject{{QStringLiteral("sessionId"), session_id},
-                        {QStringLiteral("fencingToken"), fencing_token},
-                        {QStringLiteral("expectedGeneration"), expected_generation},
-                        {QStringLiteral("changes"), encodeChanges(changes)},
-                        {QStringLiteral("events"), events}},
+            body,
             [this, target, draft_id, expected, ids, encoded_events, changes,
              completion = std::move(completion)](const QJsonObject &reply, const QString &error)
     {
@@ -681,6 +777,7 @@ void PersonalWorkingCopyClient::flushOldestQueuedEvent(
     const QString &draft_id, const QString &session_id,
     const QString &fencing_token, const QString &expected_generation,
     const QList<PersonalWorkingCopyChange> &changes,
+    const QList<HydraulicDraftMembershipEdit> &membership,
     QueueFlushCompletion completion)
 {
     if (!queue.isOpen() || queue.pending().isEmpty())
@@ -704,8 +801,8 @@ void PersonalWorkingCopyClient::flushOldestQueuedEvent(
         return;
     }
     // Every reversible entity edit must be present with the exact resulting
-    // bytes. Additional typed internal model records (membership chunks) are
-    // allowed but must be supplied by the caller's canonical model adapter.
+    // bytes. Membership chunks are never supplied here: DVMDB derives them
+    // from `membership`, which saveEventsRecovering checks against the event.
     for (const aowis::model::ModelEntityEdit &edit : event->edits)
     {
         const QString uuid = edit.entityId.toString(QUuid::WithoutBraces);
@@ -724,8 +821,16 @@ void PersonalWorkingCopyClient::flushOldestQueuedEvent(
             return;
         }
     }
+    // A local precondition failure must not reach the recovery path below,
+    // which would read the draft over the network for a batch never sent.
+    const QString membership_error = validateMembership({event.value()}, changes, membership);
+    if (!membership_error.isEmpty())
+    {
+        completion({}, false, membership_error);
+        return;
+    }
     saveEventsRecovering(target, draft_id, session_id, fencing_token,
-                         expected_generation, changes, {first.encoded_transaction},
+                         expected_generation, changes, {first.encoded_transaction}, membership,
                          [this, target, draft_id, changes, &queue, first,
                           completion = std::move(completion)]
                          (const PersonalWorkingCopyEventSaveResult &result,

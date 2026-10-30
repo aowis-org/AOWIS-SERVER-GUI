@@ -35,10 +35,18 @@ The GUI must not invent its own manifest/chunk binary format. DVMDB's
 `membership` array (`networkId`, `entityId`, `kind`, `collectionIndex`,
 `inserted`) and materializes matching server-owned hydraulic membership
 chunks atomically with the candidate entity records and original MODEL event
-frames. The existing GUI `saveEventsRecovering` method currently handles
-`changes` and `events`; **wiring `membership` through this client is still
-required before enabling creation/deletion autosave**. The record-only
-adapter deliberately refuses membership mutations.
+frames. `saveEventsRecovering` and `flushOldestQueuedEvent` take the
+adapter's intents and send them as `membership` (omitted for update-only
+batches, since DVMDB accepts only a non-empty array). Before any request the
+client checks that each created/removed entity has exactly one intent of the
+same direction, that each intent describes such an edit, and that the typed
+record matches (inserted: same kind and the event's after-image; removed:
+tombstone). DVMDB applies the same rule and rejects a creation or removal
+without membership with 400. The record-only adapter deliberately refuses
+membership mutations.
+
+DVMDB error bodies are `{"error":{"code","message"}}`; the client reports
+`message (code)` instead of Qt's generic transport text.
 
 ## Durable acknowledgement and retries
 
@@ -61,7 +69,7 @@ targets are rejected.
 
 The transport components and corresponding targeted regressions exist, but
 **the current Projects-tab hydraulic editor is not yet bound to an end-to-end
-autosaved working-copy session**. Remaining work is: wire membership payloads;
+autosaved working-copy session**. Remaining work is:
 load the pinned base and candidate overlay into `HydraulicData`; attach
 edit capture and queue to the actual checked-out session; replay and recover
 after restart; verify persisted full-network equality; cover network-wide

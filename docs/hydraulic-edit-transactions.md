@@ -29,7 +29,11 @@ Do not add JSON snapshots or a duplicate GUI serializer.
   creation/deletion. A failed event leaves caller data unchanged.
 - DVMDB's `/save-events` can atomically materialize those membership intents
   in existing hydraulic networks with the model changes and event journal.
-  The GUI's event-save client does **not yet forward** the membership array.
+  `PersonalWorkingCopyClient::saveEventsRecovering` / `flushOldestQueuedEvent`
+  forward them as the `membership` array and first check, as DVMDB does, that
+  every created/removed entity has exactly one matching intent. DVMDB rejects
+  a creation or removal without membership (400), so no candidate can hold an
+  entity record that its network does not list.
 - The existing record-only `prepare()` rejects creation/deletion so that an
   incomplete candidate cannot be presented as a successful saved model.
 

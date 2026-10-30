@@ -9,6 +9,7 @@
 #include <QString>
 #include <QJsonObject>
 #include <QStringList>
+#include <QUuid>
 
 #include <functional>
 
@@ -21,6 +22,20 @@ struct PersonalWorkingCopyChange
     quint16 kind = 0;
     QStringList references;
     QByteArray payload;
+};
+
+// Logical membership intent for one hydraulic entity that a MODEL event
+// creates (inserted) or removes. DVMDB materializes the physical membership
+// chunks itself; the GUI never encodes DVMDB storage internals. Every create
+// or delete edit in an event batch needs exactly one intent, and DVMDB rejects
+// a batch that creates or removes an entity without one.
+struct HydraulicDraftMembershipEdit final
+{
+    QUuid network_id;
+    QUuid entity_id;
+    quint16 kind = 0;
+    quint16 collection_index = 0;
+    bool inserted = false;
 };
 
 struct PersonalWorkingCopyEvent
@@ -99,8 +114,11 @@ public:
                                const QList<PersonalWorkingCopyChange> &changes,
                                RecoveringSaveCompletion completion);
 
-    // Send logical MODEL transactions and typed model records atomically to the
-    // private journal. Validate exact IDs, generation and count in the small
+    // Send logical MODEL transactions, typed model records and membership
+    // intents atomically to the private journal. `membership` must hold
+    // exactly one intent per created/removed entity in `encoded_events` (empty
+    // when the batch only updates entities); a mismatch is rejected locally
+    // before any request. Validate exact IDs, generation and count in the small
     // acknowledgement. For lost/malformed responses, reopen and compare the
     // authoritative last journal batch and candidate bytes before confirming.
     // Never resend an uncertain batch automatically.
@@ -111,12 +129,15 @@ public:
                              const QString &fencing_token, const QString &expected_generation,
                              const QList<PersonalWorkingCopyChange> &changes,
                              const QList<QByteArray> &encoded_events,
+                             const QList<HydraulicDraftMembershipEdit> &membership,
                              EventSaveCompletion completion);
 
-    // Drain precisely the oldest durable local event. The caller supplies a
-    // matching typed candidate-record batch; only an authoritative DVMDB
-    // journal acknowledgement permits deleting the local event. The queue
-    // must remain alive and open until completion; call serially per draft.
+    // Drain precisely the oldest durable local event. The caller supplies the
+    // matching typed candidate records and membership intents, both as
+    // produced by HydraulicDraftEventAdapter::prepareWithMembership(); only an
+    // authoritative DVMDB journal acknowledgement permits deleting the local
+    // event. The queue must remain alive and open until completion; call
+    // serially per draft.
     using QueueFlushCompletion = std::function<void(
         const QString &next_generation, bool recovered, const QString &)>;
     void flushOldestQueuedEvent(const PersonalRepositoryTarget &target,
@@ -124,6 +145,7 @@ public:
                                const QString &session_id, const QString &fencing_token,
                                const QString &expected_generation,
                                const QList<PersonalWorkingCopyChange> &changes,
+                               const QList<HydraulicDraftMembershipEdit> &membership,
                                QueueFlushCompletion completion);
 
     void releaseLease(const PersonalRepositoryTarget &target, const QString &draft_id,

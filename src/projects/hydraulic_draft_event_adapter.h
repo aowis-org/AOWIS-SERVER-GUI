@@ -20,14 +20,8 @@
 // DVMDB owns the physical manifest and membership chunks. The adapter emits
 // logical membership intents for its server-side draft materializer; it never
 // encodes DVMDB storage internals or pretends entity records alone are enough.
-struct HydraulicDraftMembershipEdit final
-{
-    QUuid network_id;
-    QUuid entity_id;
-    quint16 kind = 0;
-    quint16 collection_index = 0;
-    bool inserted = false;
-};
+// HydraulicDraftMembershipEdit is declared with the event-save client, which
+// transports it unchanged to DVMDB.
 class HydraulicDraftEventAdapter final
 {
 public:
