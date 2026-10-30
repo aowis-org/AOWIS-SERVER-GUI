@@ -1499,6 +1499,9 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
     # shows up as "Not Run" in CTest.
     add_custom_target(aowis-tests
         DEPENDS
+            aowis-personal-repository-settings-tests
+            aowis-personal-working-copy-client-tests
+            aowis-personal-edit-queue-tests
             aowis-compound-dag-layout-tests
             aowis-layered-dag-layout-tests
             aowis-project-revision-graph-tests
