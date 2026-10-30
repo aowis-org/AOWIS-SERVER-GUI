@@ -182,6 +182,8 @@ qt_add_executable(aowis-server-gui
     src/network/hydraulic_data.h
     src/network/hydraulic_edit_transaction_capture.cpp
     src/network/hydraulic_edit_transaction_capture.h
+    src/projects/personal_edit_queue.cpp
+    src/projects/personal_edit_queue.h
     src/network/hydraulic_entity_table_widget.cpp
     src/network/hydraulic_entity_table_widget.h
     src/network/hydraulic_network_editor.cpp
@@ -1365,11 +1367,26 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
         aowis-hydraulic-network-editor
         tests/hydraulic_network_editor_tests.cpp
     )
+    add_executable(aowis-personal-edit-queue-tests
+        tests/personal_edit_queue_test.cpp
+        tests/test_harness.h
+        src/projects/personal_edit_queue.cpp
+        src/projects/personal_edit_queue.h
+    )
+    target_include_directories(aowis-personal-edit-queue-tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+    target_link_libraries(aowis-personal-edit-queue-tests PRIVATE
+        Qt6::Core AOWIS::ServerModel)
+    add_test(NAME aowis-personal-edit-queue COMMAND aowis-personal-edit-queue-tests)
+    set_tests_properties(aowis-personal-edit-queue PROPERTIES LABELS "aowis")
+
     add_executable(aowis-hydraulic-edit-transaction-tests
         tests/hydraulic_edit_transaction_test.cpp
         tests/test_harness.h
         src/network/hydraulic_data.cpp
         src/network/hydraulic_data.h
+        src/projects/personal_edit_queue.cpp
+        src/projects/personal_edit_queue.h
     )
     set_target_properties(aowis-hydraulic-edit-transaction-tests PROPERTIES AUTOMOC ON)
     target_link_libraries(aowis-hydraulic-edit-transaction-tests PRIVATE

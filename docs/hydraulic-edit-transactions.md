@@ -48,3 +48,36 @@ feature until those boundaries are closed.
 
 Commit is not Save, and Save is not Publish. No backward-format compatibility or
 security system is part of this roadmap.
+
+## Local pending-event durability
+
+`PersonalEditQueue` now provides a crash-recoverable per-repository/per-draft
+**pending-event spool** (under the GUI application's local data directory).
+Each complete, validated MODEL transaction is atomically committed as its own
+binary file with sequence ordering and SHA-256 verification; no ZIP or JSON is
+used for entity/event data. A process lock prevents two GUI instances from
+writing the same draft queue concurrently. After a restart, `pending()` returns
+the original UUIDv7 transaction IDs and exact bytes in application order.
+Corrupt events block opening the queue rather than disappearing silently.
+Duplicate transaction IDs with identical bytes are accepted idempotently;
+conflicting IDs fail. The queue is bounded (128 MiB / 100,000 pending
+transactions); on exhaustion editing must pause rather than silently discard
+operations. The oldest pending transaction must be acknowledged first. Distinct repository/draft UUIDs have independent queues.
+
+The spool is intentionally **not** the server's undo history. Acknowledging an
+item deletes its local pending file and must happen **only after the personal
+DVMDB atomically commits both the event and its candidate-model changes**.
+The existing DVMDB `saveChangesRecovering()` overlay-only acknowledgement
+cannot justify dropping a transaction, because it does not yet persist the
+reversible transaction journal. Keep events locally until that server-side
+contract exists. Do not enable capture globally yet: network-wide settings,
+bulk imports, and external model mutation paths remain uncovered. The default
+is still disabled, and no currently shipped UI action binds the spool to a
+working copy. The next integration will bind a verified local draft, restore
+its event spool, and add the durable DVMDB journal endpoint and acknowledgements
+before enabling general editing. If spool persistence fails, pause the editor
+and report an unsaved error; never silently resume normal editing.
+
+The spool is for pending changes only. Confirmed undo/redo history will live
+in the personal DVMDB's durable journal with its history cursor. Transport
+batch compression can be introduced later if measurements support it.

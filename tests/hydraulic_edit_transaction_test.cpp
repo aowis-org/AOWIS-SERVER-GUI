@@ -1,6 +1,7 @@
 #include "network/hydraulic_data.h"
 #include "network/hydraulic_edit_transaction_capture.h"
 #include "network/hydraulic_network_editor.h"
+#include "projects/personal_edit_queue.h"
 #include "test_harness.h"
 
 #include <aowis/model/edit/model_edit_transaction.h>
@@ -8,6 +9,8 @@
 
 #include <QCoreApplication>
 #include <QObject>
+#include <QTemporaryDir>
+#include <aowis/model/uuid.h>
 
 namespace
 {
@@ -263,6 +266,45 @@ void testCascadingNodeDeletionIsOneTransaction()
                             "delete event preserves all reversible before/after images");
 }
 
+void testCapturedOperationsEnterDurableQueue()
+{
+    QTemporaryDir root;
+    QString error;
+    PersonalEditQueue queue;
+    const QUuid repository = createUuidV7();
+    const QUuid draft = createUuidV7();
+    test_harness.expectTrue(queue.open(root.path(), repository, draft, &error),
+                            "verified draft's local edit queue opens");
+    HydraulicData data;
+    bool persisted = true;
+    QObject::connect(&data, &HydraulicData::signalLogicalEditRecorded, &data,
+                     [&queue, &persisted](const QByteArray &event)
+    {
+        QString write_error;
+        if (!queue.append(event, &write_error))
+            persisted = false;
+    });
+    // Explicit test binding only: general editing remains capture-disabled.
+    data.setLogicalEditCaptureEnabled(true);
+    const QUuid junction = data.addJunction(coordinate(50.1, 8.4));
+    test_harness.expectTrue(!junction.isNull() && data.setNodeId(junction, QStringLiteral("J-offline")),
+                            "real editor operations produce queued events");
+    test_harness.expectTrue(persisted && queue.pending().size() == 2,
+                            "each operation is persisted synchronously before network access");
+    const QList<PersonalEditQueue::Entry> written = queue.pending();
+    queue.close();
+    PersonalEditQueue recovered;
+    test_harness.expectTrue(recovered.open(root.path(), repository, draft, &error),
+                            "draft events survive editor teardown");
+    const QList<PersonalEditQueue::Entry> events = recovered.pending();
+    const bool exact_recovery = events.size() == 2 && written.size() == 2 &&
+        events.at(0).encoded_transaction == written.at(0).encoded_transaction &&
+        events.at(1).encoded_transaction == written.at(1).encoded_transaction;
+    test_harness.expectTrue(exact_recovery,
+                            "the original MODEL transaction bytes are recoverable after restart");
+    // No acknowledgement: DVMDB has not yet saved the logical undo journal.
+}
+
 }
 
 int main(int argc, char **argv)
@@ -272,5 +314,6 @@ int main(int argc, char **argv)
     test_harness.runCase("HydraulicData logical operations", testHydraulicDataLogicalOperations);
     test_harness.runCase("Hydraulic property capture and no-op", testPropertyCaptureAndNoop);
     test_harness.runCase("Cascading node deletion", testCascadingNodeDeletionIsOneTransaction);
+    test_harness.runCase("Capture to durable offline queue", testCapturedOperationsEnterDurableQueue);
     return test_harness.finish();
 }
