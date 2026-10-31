@@ -8,6 +8,7 @@
 #include <QEventLoop>
 #include <QFocusEvent>
 #include <QKeyEvent>
+#include <QImage>
 #include <QMouseEvent>
 #include <QTemporaryDir>
 #include <QTimer>
@@ -547,6 +548,31 @@ int main(int argc, char **argv)
     server_card.id = QStringLiteral("group:server:test-source");
     server_card.title = QStringLiteral("Test database");
     server_card.position = QPointF(0, 310);
+    // The personal database uses the same structural server card, but a
+    // golden surface and border; ordinary servers retain the teal palette.
+    // Test the rendered result to catch a missing graph-node designation.
+    graph.setNodes({server_card});
+    graph.setSelection(QString());
+    graph.fitGraph();
+    app.processEvents();
+    const QPointF teal_center = graph.nodeViewportPosition(server_card.id);
+    const QPointF teal_sample = teal_center + QPointF(-117.0 * graph.zoomFactor(), 0.0);
+    const QImage teal_image = graph.grab().toImage();
+    const QColor teal_pixel = teal_image.pixelColor(teal_sample.toPoint());
+    if (!require(teal_pixel.green() > teal_pixel.red(),
+                 "ordinary server card lost its teal surface")) return 1;
+    server_card.personal_server = true;
+    graph.setNodes({server_card});
+    app.processEvents();
+    const QPointF gold_center = graph.nodeViewportPosition(server_card.id);
+    const QPointF gold_sample = gold_center + QPointF(-117.0 * graph.zoomFactor(), 0.0);
+    const QImage gold_image = graph.grab().toImage();
+    const QColor gold_pixel = gold_image.pixelColor(gold_sample.toPoint());
+    if (!require(gold_pixel.red() > gold_pixel.green()
+                     && gold_pixel.red() > teal_pixel.red(),
+                 "personal working server card is not golden")) return 1;
+    server_card.personal_server = false;
+
     ProjectGraphNode project_card;
     project_card.kind = ProjectGraphNode::Kind::Project;
     project_card.id = QStringLiteral("group:project:test-project");

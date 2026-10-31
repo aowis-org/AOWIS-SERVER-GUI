@@ -1684,6 +1684,7 @@ void ProjectsWidget::rebuildGraph()
         // exist just because it currently contains no projects.
         ProjectGraphNode server_node;
         server_node.kind = ProjectGraphNode::Kind::Server;
+        server_node.personal_server = source.personal;
         server_node.id = server_node_id;
         server_node.title = source.name;
         server_node.branch = source.connection_type == QStringLiteral("local")
@@ -3196,6 +3197,7 @@ void ProjectsWidget::setPersonalServer(bool enabled)
             reportServerSaveFailure();
         }
         populateServerTree();
+        rebuildGraph(); // Update the golden server card immediately when designation changes.
         if (this->selection_kind == SelectionKind::Server) updateInspector();
     };
     if (!enabled)

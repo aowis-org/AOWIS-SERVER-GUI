@@ -1013,10 +1013,13 @@ void ProjectRevisionGraph::paintEvent(QPaintEvent *event)
                     Qt::AlignLeft | Qt::AlignVCenter, node.branch);
                 continue;
             }
-            const QColor group_color = server ? QColor(50, 174, 173) : accent;
+            const bool personal_server = server && node.personal_server;
+            const QColor group_color = personal_server ? QColor(222, 169, 46)
+                : server ? QColor(50, 174, 173) : accent;
             painter.setPen(QPen(tint(group_color, selected ? 255 : (server ? 230 : 140)),
                                 selected ? 3.4 : server ? 2.2 : 1.6));
-            painter.setBrush(tint(group_color, selected ? 100 : server ? 64 : 24));
+            painter.setBrush(tint(group_color, personal_server ? (selected ? 185 : 145)
+                : selected ? 100 : server ? 64 : 24));
             painter.drawRoundedRect(box, server ? 15 : 11, server ? 15 : 11);
             if (server)
             {
@@ -1032,10 +1035,28 @@ void ProjectRevisionGraph::paintEvent(QPaintEvent *event)
                                        icon_box.width(), 8), 180 * 16, 180 * 16);
                 painter.setFont(title_font);
                 painter.setPen(ink);
-                painter.drawText(box.adjusted(53, 10, -12, -29),
-                    Qt::AlignVCenter | Qt::AlignLeft,
-                    painter.fontMetrics().elidedText(node.title, Qt::ElideRight,
-                        int(box.width() - 70)));
+                // Keep the existing database icon at the left of every server.
+                // Personal servers additionally show a crown directly after
+                // their name, with enough space reserved when it is elided.
+                const QString crown = QStringLiteral("♛");
+                const QFontMetrics title_metrics = painter.fontMetrics();
+                const qreal crown_width = personal_server
+                    ? title_metrics.horizontalAdvance(crown) + 6.0 : 0.0;
+                const QRectF title_box = box.adjusted(53, 10, -12, -29);
+                const int title_width = qMax(0, int(title_box.width() - crown_width));
+                const QString title = title_metrics.elidedText(
+                    node.title, Qt::ElideRight, title_width);
+                painter.drawText(title_box.adjusted(0, 0, -crown_width, 0),
+                    Qt::AlignVCenter | Qt::AlignLeft, title);
+                if (personal_server)
+                {
+                    const qreal crown_x = title_box.left()
+                        + title_metrics.horizontalAdvance(title) + 6.0;
+                    painter.drawText(QRectF(crown_x, title_box.top(),
+                                            title_metrics.horizontalAdvance(crown),
+                                            title_box.height()),
+                        Qt::AlignVCenter | Qt::AlignLeft, crown);
+                }
                 painter.setFont(small_font);
                 painter.setPen(muted);
                 painter.drawText(box.adjusted(53, 40, -12, -9),
