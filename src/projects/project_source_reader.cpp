@@ -7,7 +7,6 @@
 #include <QJsonObject>
 #include <QNetworkReply>
 #include <QNetworkRequest>
-#include <QThread>
 #include <QTimer>
 #include <QUrl>
 
@@ -15,12 +14,10 @@
 #include <memory>
 #include <optional>
 #include <stdexcept>
-#include <type_traits>
 #include <utility>
 
 #ifdef AOWIS_STANDALONE_DVMDB_ENABLED
-#include "aowis/dvmdb/project_service.h"
-#include <filesystem>
+#include "projects/embedded_dvmdb_host.h"
 #endif
 
 namespace
@@ -150,188 +147,6 @@ bool validateCompleteGraph(const SourceProject &project)
     return consumed == project.revisions.size();
 }
 
-#ifdef AOWIS_STANDALONE_DVMDB_ENABLED
-// Canonical native graph reading uses UUIDv7 and record hashes. Retain the
-// compile-time version check for Standalone submodules not updated to DVMDB
-// UUIDv7 yet; older APIs fail explicitly instead of reading SHA histories.
-template <typename Service, typename = void>
-struct NativeRevisionGraphV2Available : std::false_type {};
-
-template <typename Service>
-struct NativeRevisionGraphV2Available<Service, std::void_t<decltype(
-    std::declval<Service &>().revisionGraphV2(
-        std::declval<std::string_view>(), std::size_t{}))>> : std::true_type {};
-
-template <typename Service>
-bool loadNativeV2Graph(Service &service, const std::string &project_id,
-                       SourceProject &project, int &total_branches,
-                       int &total_revisions,
-                       const std::shared_ptr<std::atomic_bool> &cancelled)
-{
-    if constexpr (!NativeRevisionGraphV2Available<Service>::value)
-    {
-        return false;
-    }
-    else
-    {
-        if (!DvmdbIdentity::isUuidV7(QString::fromStdString(project_id)))
-            throw std::runtime_error("DVMDB project is not UUIDv7; recreate obsolete pre-release data");
-        using Page = decltype(service.revisionGraphV2(project_id, graph_page_size));
-        Page page = service.revisionGraphV2(project_id, graph_page_size);
-        QStringList pinned_heads;
-        QSet<QString> seen_revisions;
-        std::size_t prior_skip = 0;
-        bool first_page = true;
-        for (;;)
-        {
-            if (cancelled->load()) return true;
-            QStringList current_heads;
-            QSet<QString> current_branch_ids;
-            QSet<QString> current_names;
-            for (const auto &head : page.heads)
-            {
-                const QString name = QString::fromStdString(head.name);
-                const QString branch_id = QString::fromStdString(head.branchId.toString());
-                const QString revision_id = []<typename Head>(const Head &item) -> QString {
-                    if constexpr (requires { item.revision.has_value(); })
-                        return item.revision ? QString::fromStdString(item.revision->toString()) : QString();
-                    else return QString::fromStdString(item.revision.toString());
-                }(head);
-                const QString digest = []<typename Head>(const Head &item) -> QString {
-                    if constexpr (requires { item.recordHash.has_value(); })
-                        return item.recordHash ? QString::fromStdString(aowis::dvmdb::toHex(*item.recordHash)) : QString();
-                    else return QString::fromStdString(aowis::dvmdb::toHex(item.recordHash));
-                }(head);
-                if (name.isEmpty() || !DvmdbIdentity::isUuidV7(branch_id)
-                    || (revision_id.isEmpty() ? !digest.isEmpty()
-                        : (!DvmdbIdentity::isUuidV7(revision_id)
-                           || !DvmdbIdentity::isLegacySha256(digest)))
-                    || current_branch_ids.contains(branch_id)
-                    || current_names.contains(name))
-                    throw std::runtime_error("Invalid UUIDv7 branch HEAD in native graph");
-                current_branch_ids.insert(branch_id);
-                current_names.insert(name);
-                QString origin;
-                // Embedded Standalone builds can still link a DVMDB checkout
-                // without branch provenance; do not fabricate a parent.
-                if constexpr (requires { head.originBranchId; })
-                    if (head.originBranchId)
-                        origin = QString::fromStdString(head.originBranchId->toString());
-                if (!origin.isEmpty() && (!DvmdbIdentity::isUuidV7(origin) || origin == branch_id))
-                    throw std::runtime_error("Invalid DVMDB branch creation origin");
-                QString fork_revision;
-                // Preserve compatibility with embedded DVMDB versions which
-                // predate immutable fork provenance. Never infer it from HEAD.
-                if constexpr (requires { head.forkRevisionId; })
-                    if (head.forkRevisionId)
-                        fork_revision = QString::fromStdString(head.forkRevisionId->toString());
-                if (!fork_revision.isEmpty() && (origin.isEmpty()
-                    || !DvmdbIdentity::isUuidV7(fork_revision)))
-                    throw std::runtime_error("Invalid DVMDB branch fork revision");
-                current_heads.append(name + QLatin1Char('\n') + branch_id
-                                     + QLatin1Char('\n') + revision_id
-                                     + QLatin1Char('\n') + digest
-                                     + QLatin1Char('\n') + origin
-                                     + QLatin1Char('\n') + fork_revision);
-                if (first_page)
-                {
-                    SourceBranch branch;
-                    branch.name = name;
-                    branch.id = branch_id;
-                    branch.head = revision_id;
-                    branch.record_sha256 = digest;
-                    branch.origin_branch_id = origin;
-                    branch.fork_revision_id = fork_revision;
-                    project.branches.append(branch);
-                }
-            }
-            if (first_page)
-            {
-                total_branches += current_heads.size();
-                if (total_branches > maximum_branches)
-                    throw std::runtime_error("Too many UUIDv7 branches to display");
-                pinned_heads = current_heads;
-            }
-            else if (current_heads != pinned_heads)
-                throw std::runtime_error("DVMDB UUIDv7 graph HEAD snapshot changed between pages");
-
-            for (const auto &entry : page.revisions)
-            {
-                SourceRevision revision;
-                revision.id = QString::fromStdString(entry.id.toString());
-                if (!DvmdbIdentity::isUuidV7(revision.id)
-                    || seen_revisions.contains(revision.id))
-                    throw std::runtime_error("Invalid or duplicated UUIDv7 revision in graph");
-                seen_revisions.insert(revision.id);
-                revision.record_sha256 = QString::fromStdString(
-                    aowis::dvmdb::toHex(entry.recordHash));
-                if (!DvmdbIdentity::isLegacySha256(revision.record_sha256))
-                    throw std::runtime_error("Invalid canonical SHA-256 record digest");
-                for (const auto &parent : entry.parents)
-                {
-                    const QString parent_id = QString::fromStdString(parent.id.toString());
-                    if (!DvmdbIdentity::isUuidV7(parent_id))
-                        throw std::runtime_error("Invalid UUIDv7 graph parent");
-                    revision.parents.append(parent_id);
-                    const QString expected = QString::fromStdString(
-                        aowis::dvmdb::toHex(parent.expectedRecordHash));
-                    if (!DvmdbIdentity::isLegacySha256(expected))
-                        throw std::runtime_error("Invalid parent record digest in native graph");
-                    revision.parent_record_sha256.append(expected);
-                }
-                if (revision.parents.size() > 2 || revision.parents.contains(revision.id))
-                    throw std::runtime_error("Invalid UUIDv7 revision ancestry");
-                project.revisions.append(revision);
-                ++total_revisions;
-                if (project.revisions.size() > maximum_revisions_per_project
-                    || total_revisions > maximum_total_revisions)
-                    throw std::runtime_error("UUIDv7 graph exceeds the GUI's safe display limit");
-            }
-            if (!page.next) break;
-            if (page.revisions.empty() || page.next->skip <= prior_skip)
-                throw std::runtime_error("DVMDB UUIDv7 graph cursor did not advance");
-            prior_skip = page.next->skip;
-            first_page = false;
-            if (cancelled->load()) return true;
-            page = service.revisionGraphV2(project_id, graph_page_size, page.next);
-        }
-        project.graph_complete = validateCompleteGraph(project);
-        if (!project.graph_complete)
-            throw std::runtime_error("DVMDB returned an incomplete UUIDv7 graph");
-        return true;
-    }
-}
-
-SourceSnapshot loadNative(const ProjectServerProfile &profile,
-                          const std::shared_ptr<std::atomic_bool> &cancelled)
-{
-    SourceSnapshot snapshot;
-    aowis::dvmdb::ProjectService service(std::filesystem::path(profile.local_path.toStdString()));
-    if constexpr (requires { service.repositoryId(); })
-        snapshot.repository_id = QString::fromStdString(service.repositoryId());
-    else
-        throw std::runtime_error("Embedded DVMDB is outdated: repositoryId is required for VC-03");
-    if (!DvmdbIdentity::isUuidV7(snapshot.repository_id))
-        throw std::runtime_error("Invalid embedded DVMDB repository identity");
-    const std::vector<aowis::dvmdb::ProjectInfo> projects = service.listProjects();
-    if (projects.size() > maximum_projects) throw std::runtime_error("Too many projects to display");
-    int branch_count = 0;
-    int revision_count = 0;
-    for (const aowis::dvmdb::ProjectInfo &info : projects)
-    {
-        if (cancelled->load()) return {};
-        SourceProject project;
-        project.id = QString::fromStdString(info.id);
-        project.name = QString::fromStdString(info.name);
-        if (!loadNativeV2Graph(service, info.id, project, branch_count,
-                               revision_count, cancelled))
-            throw std::runtime_error("Embedded DVMDB is outdated: UUIDv7 revisionGraphV2 is required");
-        if (cancelled->load()) return {};
-        snapshot.projects.append(project);
-    }
-    return snapshot;
-}
-#endif
 }
 
 ProjectSourceReader::ProjectSourceReader(QObject *parent)
@@ -343,8 +158,6 @@ void ProjectSourceReader::cancel()
 {
     ++this->generation;
     this->completion = {};
-    if (this->native_cancel) this->native_cancel->store(true);
-    this->native_cancel.reset();
     if (this->reply)
     {
         QNetworkReply *previous = this->reply;
@@ -354,9 +167,31 @@ void ProjectSourceReader::cancel()
     this->manager.clearConnectionCache();
 }
 
-void ProjectSourceReader::load(const ProjectServerProfile &profile, Completion completion)
+void ProjectSourceReader::load(const ProjectServerProfile &source_profile, Completion completion)
 {
     cancel();
+    ProjectServerProfile profile = source_profile;
+    // Standalone's local catalogues are owned by one in-process service.
+    // The same bounded read routes are used for both local and remote sources.
+    if (profile.connection_type == QStringLiteral("local"))
+    {
+#ifdef AOWIS_STANDALONE_DVMDB_ENABLED
+        QString error;
+        const QString endpoint = embeddedDvmdbEndpoint(profile.local_path, profile.personal,
+                                                       nullptr, &error);
+        if (endpoint.isEmpty())
+        {
+            if (completion) completion({}, error.isEmpty()
+                ? tr("Embedded DVMDB could not start.") : error);
+            return;
+        }
+        profile.connection_type = QStringLiteral("remote");
+        profile.endpoint = endpoint;
+#else
+        if (completion) completion({}, tr("This build does not include embedded DVMDB support."));
+        return;
+#endif
+    }
     this->profile = profile;
     this->completion = std::move(completion);
     this->snapshot = {};
@@ -368,33 +203,6 @@ void ProjectSourceReader::load(const ProjectServerProfile &profile, Completion c
     this->used_cursors.clear();
     this->revisions_seen.clear();
     const quint64 requested = this->generation;
-    if (profile.connection_type == QStringLiteral("local"))
-    {
-#ifdef AOWIS_STANDALONE_DVMDB_ENABLED
-        struct Result { SourceSnapshot snapshot; QString error; };
-        const std::shared_ptr<Result> result = std::make_shared<Result>();
-        const std::shared_ptr<std::atomic_bool> cancelled = std::make_shared<std::atomic_bool>(false);
-        this->native_cancel = cancelled;
-        QThread *thread = QThread::create([profile, result, cancelled]
-        {
-            try { result->snapshot = loadNative(profile, cancelled); }
-            catch (const std::exception &error) { result->error = QString::fromUtf8(error.what()); }
-            catch (...) { result->error = QStringLiteral("Unknown embedded DVMDB error"); }
-        });
-        connect(thread, &QThread::finished, this, [this, result, requested]
-        {
-            if (requested != this->generation) return;
-            this->native_cancel.reset();
-            this->snapshot = result->snapshot;
-            complete(requested, result->error);
-        });
-        connect(thread, &QThread::finished, thread, &QObject::deleteLater);
-        thread->start();
-#else
-        complete(requested, tr("This build does not include embedded DVMDB support."));
-#endif
-        return;
-    }
     if (profile.connection_type != QStringLiteral("remote"))
     {
         complete(requested, tr("Unsupported database connection type."));

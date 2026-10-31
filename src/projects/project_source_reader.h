@@ -10,9 +10,7 @@
 #include <QString>
 #include <QStringList>
 
-#include <atomic>
 #include <functional>
-#include <memory>
 
 class QNetworkReply;
 
@@ -55,7 +53,7 @@ struct SourceSnapshot
 };
 
 // A single active generation: cancelling/refreshing aborts REST replies and
-// requests a cooperative stop of the native worker between graph pages.
+// discards superseded in-flight HTTP responses.
 // Results are delivered on the GUI thread only after a complete snapshot.
 class ProjectSourceReader final : public QObject
 {
@@ -84,6 +82,5 @@ private:
     QString next_cursor;
     QSet<QString> used_cursors;
     QHash<QString, int> revisions_seen;
-    std::shared_ptr<std::atomic_bool> native_cancel;
     quint64 generation = 0;
 };

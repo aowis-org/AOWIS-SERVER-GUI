@@ -1,6 +1,7 @@
 #include "tabs/tab_projects_widget.h"
 #include "projects/dvmdb_identity.h"
 #include "config/personal_repository_storage.h"
+#include "projects/embedded_dvmdb_host.h"
 #include "tabs/project_graph_placement.h"
 #include "tabs/personal_working_copy_dialog.h"
 
@@ -2765,8 +2766,13 @@ void ProjectsWidget::openWorkingCopy(bool direct_edit)
     const ProjectServerProfile *source = nullptr;
     for (const ProjectServerProfile &candidate : this->servers)
         if (candidate.id == project->server_id) { source = &candidate; break; }
-    const QString source_endpoint = source != nullptr &&
+    QString source_endpoint = source != nullptr &&
         source->connection_type == QStringLiteral("remote") ? source->endpoint : QString();
+#ifdef AOWIS_STANDALONE_DVMDB_ENABLED
+    if (source != nullptr && source->connection_type == QStringLiteral("local"))
+        source_endpoint = embeddedDvmdbEndpoint(source->local_path, source->personal,
+                                                nullptr, nullptr);
+#endif
     PersonalWorkingCopyDialog dialog(project->backend_id,
         branch_uuid, branch->name, branch->head,
         project->repository_id, source_endpoint, project->name, this, direct_edit);
@@ -3199,7 +3205,24 @@ void ProjectsWidget::setPersonalServer(bool enabled)
     }
     if (server->connection_type == QStringLiteral("local"))
     {
-        persistSelection(QString(), true);
+#ifdef AOWIS_STANDALONE_DVMDB_ENABLED
+        QString repository_id;
+        QString error;
+        const QString endpoint = embeddedDvmdbEndpoint(server->local_path, true,
+                                                       &repository_id, &error);
+        if (endpoint.isEmpty() || !DvmdbIdentity::isUuidV7(repository_id))
+        {
+            QMessageBox::warning(this, tr("Cannot select personal database"),
+                error.isEmpty() ? tr("Unable to verify local DVMDB identity.") : error);
+            const QSignalBlocker blocker(this->personal_server_checkbox);
+            this->personal_server_checkbox->setChecked(false);
+            return;
+        }
+        persistSelection(repository_id, true);
+#else
+        QMessageBox::warning(this, tr("Embedded database unavailable"),
+            tr("This build does not include native DVMDB support."));
+#endif
         return;
     }
     // The checkbox is an explicit deployment-role choice. Discover identity first,

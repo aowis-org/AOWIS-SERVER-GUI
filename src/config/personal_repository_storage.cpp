@@ -2,6 +2,7 @@
 
 #include "config/project_server_profile_storage.h"
 #include "projects/dvmdb_identity.h"
+#include "projects/embedded_dvmdb_host.h"
 
 #include <QDir>
 #include <QUrl>
@@ -41,8 +42,17 @@ PersonalRepositoryTarget resolvePersonalRepositoryTarget()
 #ifdef AOWIS_STANDALONE_DVMDB_ENABLED
             if (QDir::isAbsolutePath(server.local_path))
             {
-                target.kind = PersonalRepositoryTarget::Kind::Embedded;
-                target.storage_path = QDir::cleanPath(server.local_path);
+                QString error;
+                QString repository_id;
+                const QString endpoint = embeddedDvmdbEndpoint(server.local_path, true,
+                                                                 &repository_id, &error);
+                if (!endpoint.isEmpty() && DvmdbIdentity::isUuidV7(repository_id))
+                {
+                    target.kind = PersonalRepositoryTarget::Kind::Embedded;
+                    target.storage_path = QDir::cleanPath(server.local_path);
+                    target.endpoint = endpoint;
+                    target.repository_id = repository_id;
+                }
             }
 #endif
             return target;

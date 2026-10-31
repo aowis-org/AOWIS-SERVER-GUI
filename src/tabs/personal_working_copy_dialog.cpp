@@ -34,7 +34,7 @@ PersonalWorkingCopyDialog::PersonalWorkingCopyDialog(
     context->setWordWrap(true);
     context->setTextInteractionFlags(Qt::TextSelectableByMouse);
     layout->addWidget(context);
-    if (this->target.kind == PersonalRepositoryTarget::Kind::Http
+    if (this->target.kind != PersonalRepositoryTarget::Kind::Unavailable
         && this->source_repository_id != this->target.repository_id)
     {
         QLabel *different = new QLabel(tr("Selected database and personal DVMDB are different repositories. "
@@ -128,11 +128,9 @@ PersonalWorkingCopyDialog::PersonalWorkingCopyDialog(
         setBusy(this->busy);
     });
     setBusy(false);
-    if (this->target.kind != PersonalRepositoryTarget::Kind::Http)
+    if (this->target.kind == PersonalRepositoryTarget::Kind::Unavailable)
     {
-        this->status->setText(this->target.kind == PersonalRepositoryTarget::Kind::Embedded
-            ? tr("Embedded personal DVMDB draft operations are not connected to this GUI yet.")
-            : tr("Select a personal database in Projects → Server Inspector first."));
+        this->status->setText(tr("Select a personal database in Projects → Server Inspector first."));
         this->create_button->setEnabled(false);
         this->refresh_button->setEnabled(false);
         this->checkout_button->setEnabled(false);
@@ -150,20 +148,20 @@ void PersonalWorkingCopyDialog::setBusy(bool busy)
     this->checkout_button->setEnabled(!busy &&
         !this->source_endpoint.isEmpty() &&
         this->source_repository_id != this->target.repository_id &&
-        this->target.kind == PersonalRepositoryTarget::Kind::Http);
+        this->target.kind != PersonalRepositoryTarget::Kind::Unavailable);
     this->create_button->setEnabled(!busy);
     this->reopen_button->setEnabled(!busy && this->drafts->currentItem() != nullptr);
     this->initialize_button->setEnabled(!busy && this->active_draft.has_value()
         && this->active_draft->base_revision.isEmpty()
         && this->active_draft->changes.isEmpty() && !this->active_draft->dirty
-        && this->target.kind == PersonalRepositoryTarget::Kind::Http);
+        && this->target.kind != PersonalRepositoryTarget::Kind::Unavailable);
     const bool verified_preview = !busy && this->active_draft.has_value()
         && this->preview_network.has_value()
         && this->preview_draft_id == this->active_draft->id
         && this->preview_generation == this->active_draft->generation;
     this->view_button->setEnabled(verified_preview);
     this->edit_button->setEnabled(verified_preview
-        && this->target.kind == PersonalRepositoryTarget::Kind::Http);
+        && this->target.kind != PersonalRepositoryTarget::Kind::Unavailable);
 }
 
 void PersonalWorkingCopyDialog::refresh()

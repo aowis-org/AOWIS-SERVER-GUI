@@ -17,8 +17,7 @@
 #include <stdexcept>
 
 #ifdef AOWIS_STANDALONE_DVMDB_ENABLED
-#include "aowis/dvmdb/project_service.h"
-#include <filesystem>
+#include "projects/embedded_dvmdb_host.h"
 #endif
 
 namespace
@@ -49,44 +48,6 @@ QString validateProfile(const ProjectServerProfile &profile)
         || url.host().isEmpty() || !url.userInfo().isEmpty() || url.hasQuery() || url.hasFragment())
         return QObject::tr("Invalid REST database endpoint.");
     return {};
-}
-
-#ifdef AOWIS_STANDALONE_DVMDB_ENABLED
-// The embedded DVMDB is the same version as this GUI (pre-release: no
-// compatibility with older embedded APIs). Identities are chosen by the
-// caller exactly as on the REST path, and the native calls are idempotent
-// for them.
-QString writeNative(const ProjectServerProfile &profile, bool project_operation,
-                    const QString &project_id, const QString &name,
-                    const QString &from_branch_id, const QString &from_revision,
-                    const QString &created_id)
-{
-    aowis::dvmdb::ProjectService service(std::filesystem::path(profile.local_path.toStdString()));
-    if (project_operation)
-    {
-        const std::string id = created_id.toStdString();
-        const QString created = QString::fromStdString(
-            service.createUnbornProjectV2(name.toStdString(), std::string_view(id)).id);
-        if (created != created_id)
-            throw std::runtime_error("DVMDB created a project with a different UUIDv7");
-        return created;
-    }
-    std::optional<aowis::dvmdb::RevisionId> revision;
-    if (!from_revision.isEmpty())
-    {
-        revision = aowis::dvmdb::RevisionId::parse(from_revision.toStdString());
-        if (!revision)
-            throw std::runtime_error("Invalid historical branch revision UUIDv7");
-    }
-    const aowis::dvmdb::BranchCreationResultV2 created = service.createBranchFromIdV2(
-        project_id.toStdString(), name.toStdString(), from_branch_id.toStdString(),
-        revision, created_id.toStdString());
-    const QString id = QString::fromStdString(created.branchId.toString());
-    if (id != created_id)
-        throw std::runtime_error("DVMDB created a branch with a different UUIDv7");
-    return id;
-}
-#endif
 }
 
 ProjectSourceWriter::ProjectSourceWriter(QObject *parent)
@@ -152,41 +113,35 @@ void ProjectSourceWriter::start(const ProjectServerProfile &profile, Operation o
         if (completion) completion({}, tr("Canonical DVMDB writes require UUIDv7 project, source branch and revision IDs."));
         return;
     }
-    // Fixed before the first attempt, so every transport resend of this one
-    // request names the same project/branch (idempotent in DVMDB).
-    const QString created_id = DvmdbIdentity::newUuidV7();
-    this->busy = true;
-    this->completion = std::move(completion);
+    // Local Standalone sources must use the same long-lived catalogue owner
+    // as private drafts. Opening another ProjectService would fail its lock.
+    ProjectServerProfile request_profile = profile;
     if (profile.connection_type == QStringLiteral("local"))
     {
 #ifdef AOWIS_STANDALONE_DVMDB_ENABLED
-        struct Result { QString id; QString error; };
-        const std::shared_ptr<Result> result = std::make_shared<Result>();
-        QThread *thread = QThread::create([profile, operation, project_id, name,
-                                           from_branch_id, from_revision, created_id, result]
+        QString error;
+        const QString endpoint = embeddedDvmdbEndpoint(profile.local_path, profile.personal,
+                                                       nullptr, &error);
+        if (endpoint.isEmpty())
         {
-            try
-            {
-                result->id = writeNative(profile, operation == Operation::Project,
-                                         project_id, name, from_branch_id, from_revision,
-                                         created_id);
-            }
-            catch (const std::exception &error) { result->error = QString::fromUtf8(error.what()); }
-            catch (...) { result->error = QStringLiteral("Unknown embedded DVMDB write error"); }
-        });
-        connect(thread, &QThread::finished, this, [this, result]
-        {
-            finish(result->id, result->error);
-        });
-        connect(thread, &QThread::finished, thread, &QObject::deleteLater);
-        thread->start();
+            if (completion) completion({}, error.isEmpty()
+                ? tr("Embedded DVMDB could not start.") : error);
+            return;
+        }
+        request_profile.connection_type = QStringLiteral("remote");
+        request_profile.endpoint = endpoint;
 #else
-        finish({}, tr("Embedded DVMDB is unavailable."));
-#endif
+        if (completion) completion({}, tr("Embedded DVMDB is unavailable."));
         return;
+#endif
     }
+    // The caller supplies a stable UUIDv7 in the request. If the reply is
+    // lost, the user can refresh to verify the result before retrying.
+    const QString created_id = DvmdbIdentity::newUuidV7();
+    this->busy = true;
+    this->completion = std::move(completion);
 
-    QString root = profile.endpoint.trimmed();
+    QString root = request_profile.endpoint.trimmed();
     while (root.endsWith(QLatin1Char('/'))) root.chop(1);
     if (!root.endsWith(QStringLiteral("/dvmdb/v1"))) root += QStringLiteral("/dvmdb/v1");
     QString path = QStringLiteral("/projects");

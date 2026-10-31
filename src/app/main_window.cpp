@@ -418,11 +418,12 @@ MainWindow::MainWindow(QWidget *parent)
             return;
         }
         const PersonalRepositoryTarget target = resolvePersonalRepositoryTarget();
-        if (target.kind != PersonalRepositoryTarget::Kind::Http ||
+        if ((target.kind != PersonalRepositoryTarget::Kind::Http &&
+             target.kind != PersonalRepositoryTarget::Kind::Embedded) ||
             !DvmdbIdentity::isUuidV7(draft_id) || !DvmdbIdentity::isUuidV7(network_id))
         {
             QMessageBox::warning(this, tr("Cannot edit private draft"),
-                tr("An HTTP private DVMDB and verified draft/network UUIDv7 identities are required."));
+                tr("A personal DVMDB and verified draft/network UUIDv7 identities are required."));
             return;
         }
         const QString directory = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);

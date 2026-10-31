@@ -79,8 +79,9 @@ repository role. If still `unconfigured`, the GUI explicitly configures it as
 `private` using `POST /repository/role` with the discovered identity, then
 stores the personal designation and crown in its server profile. Existing
 `shared` repositories are never silently changed, and a remote whose identity
-changes is never accepted. No UUID needs manual entry. This designation does
-not yet connect the embedded Standalone draft editing backend.
+changes is never accepted. No UUID needs manual entry. In Standalone, a
+personal local DVMDB profile now configures and pins the embedded repository
+using its process-owned DVMDB service; it needs no external server process.
 
 ## Current implementation state and immediate delivery priority
 
@@ -91,7 +92,7 @@ an end-to-end checkout/edit/reopen/commit test against a real personal DVMDB.
 | Area | Available in the checked source | Not yet accepted end to end |
 |---|---|---|
 | Project and branch history (VC-01/02) | Unborn project creation, nullable committed HEAD, immutable branch fork provenance, native/REST readers, corresponding GUI graph/inspector tests | Real multiclient history/graph acceptance across all deployment modes |
-| Personal repository identity and checkout (VC-03/04) | Persistent repository UUID/roles, tracking metadata, private working-copy CRUD and fenced generation-checked saves; committed REST bundle transfer and identity-preserving unborn root checkout to a private clone target | Live editor recovery acceptance, embedded and remaining deployment modes |
+| Personal repository identity and checkout (VC-03/04) | Persistent repository UUID/roles, tracking metadata, private working-copy CRUD and fenced generation-checked saves; committed REST bundle transfer and identity-preserving unborn root checkout to a private clone target; Standalone process-owned local DVMDB adapter | Standalone end-to-end acceptance and remaining deployment modes |
 | Hydraulic editing (VC-04) | MODEL-owned canonical codec and reversible transactions; GUI entity capture, durable local event queue, typed record/membership adapter; membership transport and lost-acknowledgement recovery; private-draft network initializer client, native atomic journal and DVMDB-owned membership materialization (prior GUI suite: 63/63 passed) | Real GUI restart/reload acceptance against DVMDB, unsupported mutation coverage and platform validation |
 | Local Commit (VC-05) | Immutable revision and model persistence primitives | Working-copy-to-revision CAS, recoverable operation ID/status, usable Projects-tab Commit |
 | Collaboration (VC-06–08) | History transfer, import, revision DAG and domain merge primitives | Unified user-facing Fetch/Publish/reconciliation acceptance using independent private repositories |
@@ -106,9 +107,11 @@ working-copy persistence, **not** an implicit Commit or an advance of the
 branch HEAD. For a multi-branch project, select the exact branch first. If
 more than one draft exists, the GUI requires explicit selection via the
 advanced Personal working copies action to avoid choosing the wrong edits.
-Cross-server checkout still requires a verifiable HTTP source, and embedded
-Standalone's native working-copy adapter remains pending. This user-visible
-path needs real GUI/DVMDB acceptance, including restart and loss-of-network.
+Cross-server checkout still requires a verifiable HTTP source, including the
+process-owned internal endpoint for local Standalone databases. The Standalone
+adapter connects local profiles and draft editing to the same validated DVMDB
+routes in-process; it does not launch the external DVMDB executable or persist
+an ephemeral endpoint. Full Standalone GUI/restart acceptance is still required.
 
 **GUI VC-04 network preview:** The personal working-copy dialog can now
 initialize the first network through a fenced lease and server-owned draft
@@ -290,8 +293,11 @@ creation, UTF-8 labels with spaces, native/REST parity.
    requests recheck UUID and role and fail closed on mismatch.
 3. For local Standalone profiles, designation records the selected embedded
    store path; it does not create an additional hidden personal directory.
-   Native embedded draft operations still require their own VC-04 integration;
-   selecting the profile does not imply autosave is active.
+   It configures an unconfigured repository to private and pins its UUIDv7
+   internally. An application-owned ProjectService holds the catalogue lock;
+   its bounded local-only loopback routes reuse the HTTP GUI draft writer.
+   Autosave activates only when **Edit network** opens a verified draft,
+   never merely because a personal database is selected.
 4. Branch tracking and local/remote commit identities remain distinct.
    A missing, disconnected or mismatched personal server must never silently
    fall back to whichever source is being viewed.

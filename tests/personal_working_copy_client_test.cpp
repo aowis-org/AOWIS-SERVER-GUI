@@ -693,6 +693,24 @@ int main(int argc, char **argv)
                && listed.size() == 1 && listed.first().id == draft_id,
                "list could not read personal working-copy metadata")) return 1;
 
+    // Standalone routes its native in-process catalogue through the same
+    // verified, loopback-only HTTP adapter. Kind::Embedded is not a bypass of
+    // repository UUID/role checks or the working-copy response validation.
+    PersonalRepositoryTarget embedded = stub.target();
+    embedded.kind = PersonalRepositoryTarget::Kind::Embedded;
+    done = false;
+    client.list(embedded, [&](const QList<PersonalWorkingCopyInfo> &drafts,
+                              const QString &failure)
+    {
+        listed = drafts;
+        error = failure;
+        done = true;
+    });
+    if (!check(until(application, [&] { return done; }) && error.isEmpty()
+               && listed.size() == 1 && listed.first().id == draft_id
+               && stub.listing_count == 2,
+               "embedded personal target did not use the verified draft transport")) return 1;
+
     done = false;
     PersonalWorkingCopyInfo created;
     client.create(stub.target(), project_id, branch_id, {},
@@ -1281,7 +1299,7 @@ int main(int argc, char **argv)
         done = true;
     });
     if (!check(until(application, [&] { return done; }) && !error.isEmpty()
-               && stub.listing_count == 1,
+               && stub.listing_count == 2,
                "shared repository role was not rejected before draft access")) return 1;
     return 0;
 }

@@ -45,12 +45,13 @@ void PersonalDraftEditSession::start(
         emit blocked(QStringLiteral("Close the previous private draft session before opening another."));
         return;
     }
-    if (target.kind != PersonalRepositoryTarget::Kind::Http ||
+    if ((target.kind != PersonalRepositoryTarget::Kind::Http &&
+         target.kind != PersonalRepositoryTarget::Kind::Embedded) ||
         !DvmdbIdentity::isUuidV7(target.repository_id) ||
         !DvmdbIdentity::isUuidV7(draft_id) ||
         !DvmdbIdentity::isUuidV7(network_id) || queue_root.trimmed().isEmpty())
     {
-        emit blocked(QStringLiteral("A valid HTTP private repository, draft, network and queue root are required."));
+        emit blocked(QStringLiteral("A verified private repository, draft, network and queue root are required."));
         return;
     }
     this->target_ = target;

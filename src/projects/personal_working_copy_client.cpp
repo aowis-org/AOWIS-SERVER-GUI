@@ -334,10 +334,10 @@ void PersonalWorkingCopyClient::request(const PersonalRepositoryTarget &target,
                                         const QByteArray &method, const QString &path,
                                         const QJsonObject &body, Response completion)
 {
-    if (target.kind != PersonalRepositoryTarget::Kind::Http)
+    if (target.kind != PersonalRepositoryTarget::Kind::Http &&
+        target.kind != PersonalRepositoryTarget::Kind::Embedded)
     {
-        completion({}, QStringLiteral("HTTP personal DVMDB is not configured. "
-                                      "Standalone embedded draft integration is a separate VC-04 step."));
+        completion({}, QStringLiteral("Select a personal database in Projects first."));
         return;
     }
     const PersonalRepositoryProfile profile{target.endpoint, target.repository_id};
@@ -1007,7 +1007,8 @@ void PersonalWorkingCopyClient::checkoutBranchPrivately(
     const QString &project_name, const QString &branch_id,
     const QString &expected_head, CheckoutCompletion completion)
 {
-    if (target.kind != PersonalRepositoryTarget::Kind::Http ||
+    if ((target.kind != PersonalRepositoryTarget::Kind::Http &&
+         target.kind != PersonalRepositoryTarget::Kind::Embedded) ||
         !DvmdbIdentity::isUuidV7(source_repository_id) ||
         !DvmdbIdentity::isUuidV7(project_id) ||
         !DvmdbIdentity::isUuidV7(branch_id) ||
@@ -1015,7 +1016,7 @@ void PersonalWorkingCopyClient::checkoutBranchPrivately(
         project_name.trimmed().isEmpty() ||
         source_repository_id == target.repository_id)
     {
-        completion(QStringLiteral("Checkout requires two distinct HTTP DVMDB "
+        completion(QStringLiteral("Checkout requires two distinct DVMDB "
                                   "repositories and valid project, branch and HEAD identities."));
         return;
     }
