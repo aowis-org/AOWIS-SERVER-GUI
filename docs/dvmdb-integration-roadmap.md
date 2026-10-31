@@ -82,8 +82,8 @@ an end-to-end checkout/edit/reopen/commit test against a real personal DVMDB.
 | Area | Available in the checked source | Not yet accepted end to end |
 |---|---|---|
 | Project and branch history (VC-01/02) | Unborn project creation, nullable committed HEAD, immutable branch fork provenance, native/REST readers, corresponding GUI graph/inspector tests | Real multiclient history/graph acceptance across all deployment modes |
-| Personal repository identity and checkout (VC-03/04) | Persistent repository UUID/roles, tracking metadata, private working-copy CRUD and fenced generation-checked saves; committed REST bundle transfer and identity-preserving unborn root checkout to a private clone target | Bind the hydrated model to a real editor, embedded and remaining deployment modes |
-| Hydraulic editing (VC-04) | MODEL-owned canonical codec and reversible transactions; GUI entity capture, durable local event queue, typed record/membership adapter; membership transport and lost-acknowledgement recovery; private-draft network initializer client, native atomic journal and DVMDB-owned membership materialization (prior GUI suite: 63/63 passed) | GUI-driven first-network initialization, genuine editor session binding, durable restart/reload verification, global mutation coverage |
+| Personal repository identity and checkout (VC-03/04) | Persistent repository UUID/roles, tracking metadata, private working-copy CRUD and fenced generation-checked saves; committed REST bundle transfer and identity-preserving unborn root checkout to a private clone target | Live editor recovery acceptance, embedded and remaining deployment modes |
+| Hydraulic editing (VC-04) | MODEL-owned canonical codec and reversible transactions; GUI entity capture, durable local event queue, typed record/membership adapter; membership transport and lost-acknowledgement recovery; private-draft network initializer client, native atomic journal and DVMDB-owned membership materialization (prior GUI suite: 63/63 passed) | Real GUI restart/reload acceptance against DVMDB, unsupported mutation coverage and platform validation |
 | Local Commit (VC-05) | Immutable revision and model persistence primitives | Working-copy-to-revision CAS, recoverable operation ID/status, usable Projects-tab Commit |
 | Collaboration (VC-06–08) | History transfer, import, revision DAG and domain merge primitives | Unified user-facing Fetch/Publish/reconciliation acceptance using independent private repositories |
 | Presentation and qualification (VC-09–11) | Graph and inspector regression coverage; extensive DVMDB durability/sync tests | Integrated GUI/Standalone/browser scenarios and complete release evidence |
@@ -93,11 +93,12 @@ initialize the first network through a fenced lease and server-owned draft
 initializer. After a generation-matched canonical hydrate it offers **View in
 Distribution Monitor**. MainWindow loads the verified `NetworkHydraulic` into
 the shared model after explicit confirmation, with logical edit capture disabled.
-This is intentionally a non-durable preview: no GUI autosave or local Commit is
-claimed, and the dialog warns that editor changes will not be saved. The next
-gate is binding an actual editor session with a durable event queue.
+This path is intentionally read-only and never activates draft capture. The
+separate **Edit in Distribution Editor** path opens the fenced session and
+enables captured transactions only after verified hydration. A preview is not
+an editing session, and local Commit is not yet available.
 
-**VC-04 local event staging (implemented, not yet editor-bound):**
+**VC-04 local event staging (implemented and editor-bound for captured edits):**
 `PersonalDraftEditStage` opens the exclusive durable `PersonalEditQueue` only
 against a verified authoritative candidate. It replays pending MODEL events in
 order to reconstruct the local visible model, prepares the oldest event against
@@ -109,7 +110,7 @@ block further staging while retaining queue records for investigation. The
 hydraulic transaction test covers multi-event replay, a creation followed by a
 property update, restart after the first Save and out-of-order failure.
 
-**VC-04 fenced HTTP writer controller (implemented, not yet editor-bound):**
+**VC-04 fenced HTTP writer controller (implemented and editor-bound):**
 `PersonalDraftEditSession` now reopens the authoritative draft and hydrated
 candidate, acquires a writer lease, checks its generation, recovers the local
 queue and serially flushes MODEL events with atomic membership intents.
@@ -118,12 +119,14 @@ unknown outcomes leave queued data intact and block subsequent operations.
 HTTP-fixture regressions exercise lost-acknowledgement recovery and replay of
 an event after a rejected Save and process-like session restart.
 
-This is **not yet end-to-end editor autosave**. The live Distribution Editor
-remains capture-disabled for private drafts. The next VC-04 change must bind
-`HydraulicData` capture to the session's durable append, check initial model
-equality, expose lease/queue failures visibly and prevent edit continuation
-after an append failure. Do not wire capture directly to HTTP or reconstruct
-an old event from the current editor network.
+The Projects draft dialog now offers a separately confirmed **Edit in
+Distribution Editor** action. `MainWindow` binds `HydraulicData` to the
+hydrated/replayed session state, stages captured events before HTTP Save, and
+checks the live canonical model against the staged network after edits and on a
+periodic guard. Capture stops on a failed staging, Save, or lease check; the
+queue is preserved. This guarded slice still requires runtime acceptance with
+an actual DVMDB, including restart, structural changes and network outages.
+Do not reconstruct an old event from the current editor network.
 
 **Read-only draft hydration:** The DVMDB `GET /working-copies/:draft/networks/:network`
 endpoint reconstitutes the saved candidate over the pinned immutable base,
@@ -131,7 +134,7 @@ validating manifest chunks, canonical entity payloads and typed dependencies.
 `PersonalWorkingCopyClient::loadDraftNetwork()` decodes and verifies the exact
 MODEL payload and generation. The draft inspector previews an unambiguous
 candidate-root network. No editor Save is implied: connecting the snapshot to
-`HydraulicData` plus durable editor event capture remains the next VC-04 gate.
+the separate fenced editing action is required for durable transaction capture.
 
 **Next actionable work (in order):** (1) done 2026-10-30: the GUI
 event-save client sends `membership`, checks it locally and recovers a
@@ -164,6 +167,17 @@ local working-copy Commit with expected local HEAD and idempotent status;
 Broader Fetch/Publish/Merge polish follows this usable local workflow. Do not
 mark VC-04 complete until a real editor can reopen an automatically saved
 model byte-for-byte after process restart.
+
+**VC-04 structural restart regression (new, pending execution):** The
+`aowis-hydraulic-edit-transaction` test now stages five real `HydraulicData`
+operations: junction creation ×2, pipe creation, junction rename, and cascading
+junction/pipe deletion. It checks membership and endpoint references; performs
+a process-like close/reopen after two confirmed Saves; simulates a lost pipe
+acknowledgement using the authoritative journal tail; drains remaining events;
+and verifies canonical `NetworkHydraulic` byte equality and an empty queue
+after a second reopen. This is a deterministic GUI-side staging regression,
+not a substitute for real HTTP/GUI process-restart acceptance. Do not mark
+VC-04 accepted until the latter is observed.
 
 **Verification note:** Previously reported targeted GUI tests passed for
 `aowis-personal-working-copy-client`, `aowis-personal-edit-queue` and

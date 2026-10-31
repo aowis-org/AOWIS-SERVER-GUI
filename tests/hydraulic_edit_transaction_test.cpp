@@ -602,6 +602,158 @@ void testVerifiedDraftStageReplayAndAck()
                             "verified and live models converge after both acknowledgements");
 }
 
+void testStructuralDraftRecoveryAcrossRestart()
+{
+    QTemporaryDir root;
+    test_harness.expectTrue(root.isValid(), "structural draft queue storage exists");
+    if (!root.isValid())
+        return;
+
+    const QUuid repository = createUuidV7();
+    const QUuid draft = createUuidV7();
+    NetworkHydraulic base;
+    base.uuid = createUuidV7();
+    base.id = QStringLiteral("structural-draft-restart");
+    HydraulicData live;
+    live.replaceNetworkHydraulic(base, {});
+    QList<QByteArray> events;
+    QString capture_error;
+    QObject::connect(&live, &HydraulicData::signalLogicalEditRecorded, &live,
+                     [&events](const QByteArray &event) { events.append(event); });
+    QObject::connect(&live, &HydraulicData::signalLogicalEditCaptureFailed, &live,
+                     [&capture_error](const QString &error) { capture_error = error; });
+    live.setLogicalEditCaptureEnabled(true);
+
+    const QUuid first = live.addJunction(coordinate(50.1, 8.4));
+    const QUuid second = live.addJunction(coordinate(50.2, 8.5));
+    const QUuid pipe = live.addPipe(first, second, {});
+    const bool renamed = live.setNodeId(second, QStringLiteral("J-after-restart"));
+    const bool deleted = live.deleteJunction(first);
+    test_harness.expectTrue(!first.isNull() && !second.isNull() && !pipe.isNull() &&
+                            renamed && deleted && capture_error.isEmpty() && events.size() == 5,
+                            "five real editor operations capture creation, connection, update and cascade deletion");
+    if (events.size() != 5 || !capture_error.isEmpty())
+        return;
+
+    PersonalDraftEditStage stage;
+    QString error;
+    test_harness.expectTrue(stage.open(root.path(), repository, draft, base, {}, &error),
+                            "stage structural edits against empty verified network");
+    if (!stage.isOpen())
+        return;
+    for (const QByteArray &event : events)
+    {
+        if (!stage.append(event, &error))
+        {
+            test_harness.expectTrue(false, "all captured structural edits must be durably queued");
+            return;
+        }
+    }
+    const QByteArray expected = aowis::model::ModelCodec<NetworkHydraulic>::encode(
+        live.networkHydraulic());
+    test_harness.expectTrue(stage.pendingCount() == 5 &&
+                            aowis::model::ModelCodec<NetworkHydraulic>::encode(
+                                stage.visibleNetwork()) == expected,
+                            "offline replay reproduces final network including cascade deletion");
+
+    // Simulate two successful server Saves, with later local events still pending.
+    NetworkHydraulic candidate;
+    QList<PersonalWorkingCopyChange> changes;
+    QList<HydraulicDraftMembershipEdit> membership;
+    for (int index = 0; index < 2; ++index)
+    {
+        if (!stage.prepareOldest(candidate, changes, membership, &error))
+        {
+            test_harness.expectTrue(false, "prepare structural creation for remote Save");
+            return;
+        }
+        test_harness.expectTrue(changes.size() == 1 && membership.size() == 1 &&
+                                membership.first().inserted &&
+                                membership.first().collection_index == 9,
+                                "each created junction has one atomic membership insertion");
+        if (!stage.acknowledgeOldest(events.at(index), &error))
+        {
+            test_harness.expectTrue(false, "acknowledge verified junction Save");
+            return;
+        }
+    }
+    test_harness.expectTrue(stage.pendingCount() == 3,
+                            "only acknowledged events are removed before restart");
+    const NetworkHydraulic verified_after_two = stage.persistedNetwork();
+    stage.close();
+
+    PersonalDraftEditStage restarted;
+    test_harness.expectTrue(restarted.open(root.path(), repository, draft,
+                                            verified_after_two, events.at(1), &error),
+                            "restart replays pending pipe creation, rename and cascade removal");
+    if (!restarted.isOpen())
+        return;
+    test_harness.expectTrue(restarted.pendingCount() == 3 &&
+                            aowis::model::ModelCodec<NetworkHydraulic>::encode(
+                                restarted.visibleNetwork()) == expected,
+                            "restart reconstructs identical complete network from persisted candidate and queue");
+    if (!restarted.prepareOldest(candidate, changes, membership, &error))
+    {
+        test_harness.expectTrue(false, "prepare pipe creation after restart");
+        return;
+    }
+    const QString first_reference = first.toString(QUuid::WithoutBraces);
+    const QString second_reference = second.toString(QUuid::WithoutBraces);
+    test_harness.expectTrue(changes.size() == 1 && changes.first().kind == 4 &&
+                            changes.first().references.contains(first_reference) &&
+                            changes.first().references.contains(second_reference) &&
+                            membership.size() == 1 && membership.first().inserted &&
+                            membership.first().collection_index == 12,
+                            "pipe Save retains canonical endpoint references and atomic membership insertion");
+
+    // Simulate DVMDB persisting the pipe and the process dying before the
+    // local acknowledgement: only the exact journal-tail event can be retired.
+    restarted.close();
+    PersonalDraftEditStage recovered;
+    test_harness.expectTrue(recovered.open(root.path(), repository, draft,
+                                            candidate, events.at(2), &error),
+                            "lost pipe acknowledgement is reconciled from authoritative journal tail");
+    if (!recovered.isOpen())
+        return;
+    test_harness.expectTrue(recovered.pendingCount() == 2 &&
+                            aowis::model::ModelCodec<NetworkHydraulic>::encode(
+                                recovered.visibleNetwork()) == expected,
+                            "recovery retires only confirmed pipe event and retains later edits");
+    if (!recovered.prepareOldest(candidate, changes, membership, &error))
+    {
+        test_harness.expectTrue(false, "prepare junction rename after restart");
+        return;
+    }
+    test_harness.expectTrue(changes.size() == 1 && membership.isEmpty(),
+                            "property-only Save does not mutate membership");
+    if (!recovered.acknowledgeOldest(events.at(3), &error) ||
+        !recovered.prepareOldest(candidate, changes, membership, &error))
+    {
+        test_harness.expectTrue(false, "prepare final cascade deletion");
+        return;
+    }
+    int removals = 0;
+    for (const HydraulicDraftMembershipEdit &entry : membership)
+        if (!entry.inserted)
+            ++removals;
+    test_harness.expectTrue(changes.size() == 2 && membership.size() == 2 && removals == 2,
+                            "cascading junction/pipe deletion sends two atomic membership removals");
+    test_harness.expectTrue(recovered.acknowledgeOldest(events.at(4), &error) &&
+                            recovered.pendingCount() == 0 &&
+                            aowis::model::ModelCodec<NetworkHydraulic>::encode(
+                                recovered.persistedNetwork()) == expected,
+                            "all five remote acknowledgements converge to exact live hydraulic model");
+    const NetworkHydraulic authoritative_final = recovered.persistedNetwork();
+    recovered.close();
+    PersonalDraftEditStage final_reopen;
+    test_harness.expectTrue(final_reopen.open(root.path(), repository, draft,
+                                              authoritative_final, events.at(4), &error) &&
+                            final_reopen.pendingCount() == 0 &&
+                            aowis::model::ModelCodec<NetworkHydraulic>::encode(
+                                final_reopen.visibleNetwork()) == expected,
+                            "second restart leaves no duplicates, ghost links or unsaved transactions");
+}
+
 void testDraftStageRejectsOutOfOrderReplay()
 {
     QTemporaryDir root;
@@ -650,6 +802,7 @@ int main(int argc, char **argv)
     test_harness.runCase("Hydraulic membership intent mapping", testHydraulicDraftMembershipIntents);
     test_harness.runCase("Capture to durable offline queue", testCapturedOperationsEnterDurableQueue);
     test_harness.runCase("Verified draft staging and recovery", testVerifiedDraftStageReplayAndAck);
+    test_harness.runCase("Structural editing across draft restarts", testStructuralDraftRecoveryAcrossRestart);
     test_harness.runCase("Reject unverified draft replay", testDraftStageRejectsOutOfOrderReplay);
     return test_harness.finish();
 }
