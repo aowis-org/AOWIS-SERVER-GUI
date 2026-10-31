@@ -1,4 +1,5 @@
 #include "tabs/tab_projects_widget.h"
+#include "tabs/personal_working_copy_dialog.h"
 #include "widgets/group_box_collapsible.h"
 #include "config/gui_configuration.h"
 #include "config/project_server_profile_storage.h"
@@ -62,6 +63,23 @@ int main(int argc, char **argv)
         return 1;
     qputenv("XDG_DATA_HOME", configuration_dir.path().toUtf8());
     QApplication app(argc, argv);
+
+    // Network initialization and Monitor preview must not be available until
+    // a real private draft has been reopened and canonically hydrated.
+    {
+        PersonalWorkingCopyDialog dialog(QStringLiteral("019a47b1-2041-7af9-8d1c-2670badb6371"),
+            QStringLiteral("019a47b1-2042-7af9-8d1c-2670badb6371"),
+            QStringLiteral("main"), {}, {}, {}, QStringLiteral("Test"));
+        QPushButton *initialize = dialog.findChild<QPushButton *>(
+            QStringLiteral("projectsWorkingCopiesInitializeNetwork"));
+        QPushButton *view = dialog.findChild<QPushButton *>(
+            QStringLiteral("projectsWorkingCopiesViewNetwork"));
+        if (!require(initialize != nullptr && view != nullptr
+                         && !initialize->isEnabled() && !view->isEnabled()
+                         && !dialog.selectedPreviewNetwork().has_value(),
+                     "private draft network actions enabled without a verified draft"))
+            return 1;
+    }
 
     // A fresh GUI must not present fictional entries as configured servers.
     {

@@ -143,6 +143,7 @@ private:
     int settings_page_index = -1;
     QShortcut *shortcut_toggle_right_docks = nullptr;
     MapWorkspaceWidget *map_workspace = nullptr;
+    int map_workspace_page_index = -1;
     ProjectsWidget *projects_workspace = nullptr;
     void updateActiveMapPanels();
     MapMonitorContainer *map_monitor;

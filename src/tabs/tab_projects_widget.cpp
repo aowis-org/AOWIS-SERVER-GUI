@@ -2707,7 +2707,9 @@ void ProjectsWidget::showWorkingCopies()
     PersonalWorkingCopyDialog dialog(project->backend_id,
         branch_uuid, branch->name, branch->head,
         project->repository_id, source_endpoint, project->name, this);
-    dialog.exec();
+    if (dialog.exec() == QDialog::Accepted && dialog.selectedPreviewNetwork().has_value())
+        emit draftNetworkPreviewRequested(*dialog.selectedPreviewNetwork(),
+            dialog.selectedPreviewDraftId(), dialog.selectedPreviewGeneration());
 }
 
 void ProjectsWidget::createBranch()

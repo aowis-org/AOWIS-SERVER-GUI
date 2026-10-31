@@ -5,6 +5,8 @@
 
 #include <QDialog>
 
+#include <optional>
+
 class QLabel;
 class QListWidget;
 class QPushButton;
@@ -20,11 +22,19 @@ public:
                               const QString &source_endpoint, const QString &project_name,
                               QWidget *parent = nullptr);
 
+    // Available only after a generation-checked canonical network load.
+    // The caller may display it, but editing is NOT bound to autosave yet.
+    const std::optional<NetworkHydraulic> &selectedPreviewNetwork() const;
+    QString selectedPreviewDraftId() const;
+    QString selectedPreviewGeneration() const;
+
 private:
     void refresh();
     void createDraft();
     void inspectDraft();
     void checkoutBranch();
+    void initializeNetwork();
+    void viewDraftNetwork();
     void setBusy(bool busy);
     void showDraft(const PersonalWorkingCopyInfo &draft);
 
@@ -44,5 +54,13 @@ private:
     QPushButton *create_button = nullptr;
     QPushButton *checkout_button = nullptr;
     QPushButton *reopen_button = nullptr;
+    QPushButton *initialize_button = nullptr;
+    QPushButton *view_button = nullptr;
+    std::optional<PersonalWorkingCopyInfo> active_draft;
+    std::optional<NetworkHydraulic> preview_network;
+    QString preview_generation;
+    QString preview_draft_id;
+    QString accepted_draft_id;
+    QString accepted_generation;
     bool busy = false;
 };

@@ -88,6 +88,15 @@ an end-to-end checkout/edit/reopen/commit test against a real personal DVMDB.
 | Collaboration (VC-06–08) | History transfer, import, revision DAG and domain merge primitives | Unified user-facing Fetch/Publish/reconciliation acceptance using independent private repositories |
 | Presentation and qualification (VC-09–11) | Graph and inspector regression coverage; extensive DVMDB durability/sync tests | Integrated GUI/Standalone/browser scenarios and complete release evidence |
 
+**GUI VC-04 network preview:** The personal working-copy dialog can now
+initialize the first network through a fenced lease and server-owned draft
+initializer. After a generation-matched canonical hydrate it offers **View in
+Distribution Monitor**. MainWindow loads the verified `NetworkHydraulic` into
+the shared model after explicit confirmation, with logical edit capture disabled.
+This is intentionally a non-durable preview: no GUI autosave or local Commit is
+claimed, and the dialog warns that editor changes will not be saved. The next
+gate is binding an actual editor session with a durable event queue.
+
 **Read-only draft hydration:** The DVMDB `GET /working-copies/:draft/networks/:network`
 endpoint reconstitutes the saved candidate over the pinned immutable base,
 validating manifest chunks, canonical entity payloads and typed dependencies.

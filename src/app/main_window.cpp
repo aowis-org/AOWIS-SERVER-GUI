@@ -13,6 +13,7 @@
 #include <qapplication.h>
 
 #include <optional>
+#include <utility>
 
 MainWindow::~MainWindow()
 {
@@ -225,7 +226,7 @@ MainWindow::MainWindow(QWidget *parent)
     //                              QIcon(":/icon/dashboard.png"),
     //                              "Site Dashboard");
 
-    this->main_navigation->addPage(this->map_workspace,
+    this->map_workspace_page_index = this->main_navigation->addPage(this->map_workspace,
                                   QIcon(":/icon/map.png"),
                                   "Maps");
     this->main_navigation->addPage(this->energy,
@@ -288,6 +289,23 @@ MainWindow::MainWindow(QWidget *parent)
         this->settings->focusUnits();
     });
 
+    connect(this->projects_workspace, &ProjectsWidget::draftNetworkPreviewRequested,
+            this, [this](NetworkHydraulic network, const QString &draft_id,
+                         const QString &generation)
+    {
+        const QMessageBox::StandardButton decision = QMessageBox::question(this,
+            tr("View private draft network"),
+            tr("Replace the current in-memory hydraulic model with the verified private draft "
+               "%1 (generation %2)?\n\nAny unsaved changes in the current model will be lost. "
+               "The Distribution Monitor can display this network, but editing and autosave "
+               "are NOT bound to the draft yet.")
+                .arg(draft_id, generation), QMessageBox::Yes | QMessageBox::Cancel,
+            QMessageBox::Cancel);
+        if (decision != QMessageBox::Yes) return;
+        this->hydraulic_data->replaceNetworkHydraulic(std::move(network), {});
+        this->map_workspace->setCurrentMode(MapWorkspaceWidget::DistributionMonitor);
+        this->main_navigation->setCurrentIndex(this->map_workspace_page_index);
+    });
     connect(this->projects_workspace, &ProjectsWidget::projectContextChanged,
             this->top_control_bar, &TopControlBar::setProjectContext);
     connect(this->top_control_bar, &TopControlBar::signalProjectSelected,

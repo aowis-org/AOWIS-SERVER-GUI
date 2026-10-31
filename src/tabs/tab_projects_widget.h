@@ -12,6 +12,8 @@
 #include <QStringList>
 #include <QWidget>
 
+#include <aowis/model/hydraulic/network_hydraulic.h>
+
 class GroupBoxCollapsible;
 struct BuiltinExampleRevision;
 class QDockWidget;
@@ -86,6 +88,9 @@ signals:
                                const QString &branch);
     void builtinExampleRequested(const QString &resource_path, const QString &file_name);
     void importProjectRequested();
+    // Canonical generation-verified preview; autosave is not attached.
+    void draftNetworkPreviewRequested(NetworkHydraulic network, const QString &draft_id,
+                                      const QString &generation);
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
