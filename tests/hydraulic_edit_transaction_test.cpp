@@ -3,6 +3,7 @@
 #include "network/hydraulic_network_editor.h"
 #include "projects/personal_edit_queue.h"
 #include "projects/hydraulic_draft_event_adapter.h"
+#include "projects/personal_draft_edit_stage.h"
 #include "test_harness.h"
 
 #include <aowis/model/edit/model_edit_transaction.h>
@@ -520,6 +521,122 @@ void testCapturedOperationsEnterDurableQueue()
     // No acknowledgement: DVMDB has not yet saved the logical undo journal.
 }
 
+
+void testVerifiedDraftStageReplayAndAck()
+{
+    QTemporaryDir root;
+    const QUuid repository = createUuidV7();
+    const QUuid draft = createUuidV7();
+    NetworkHydraulic base;
+    base.uuid = createUuidV7();
+    base.id = QStringLiteral("Draft Network");
+    NetworkHydraulic live = base;
+    HydraulicNetworkEditor editor(live);
+    QString error;
+
+    HydraulicEditTransactionCapture create(QStringLiteral("hydraulic.junction.create"));
+    const QUuid junction = editor.addJunction(coordinate(50.1, 8.4));
+    test_harness.expectTrue(!junction.isNull() && create.watchCreated(junction),
+                            "draft stage test creates a junction");
+    const std::optional<QByteArray> created = create.finish(live, &error);
+    test_harness.expectTrue(created.has_value() && error.isEmpty(),
+                            "first transaction captured with canonical MODEL codec");
+    if (!created.has_value()) return;
+
+    HydraulicEditTransactionCapture rename(QStringLiteral("hydraulic.junction.rename"));
+    test_harness.expectTrue(rename.watch(live, junction), "capture before-image of junction");
+    test_harness.expectTrue(editor.setNodeId(junction, QStringLiteral("J-local")),
+                            "update the same junction while creation is not yet saved remotely");
+    const std::optional<QByteArray> updated = rename.finish(live, &error);
+    test_harness.expectTrue(updated.has_value() && error.isEmpty(),
+                            "second transaction captured");
+    if (!updated.has_value()) return;
+
+    PersonalDraftEditStage stage;
+    test_harness.expectTrue(stage.open(root.path(), repository, draft, base, {}, &error),
+                            "open staging boundary against a verified remote candidate");
+    test_harness.expectTrue(stage.append(*created, &error) && stage.append(*updated, &error),
+                            "two events durably queued before remote submission");
+    test_harness.expectTrue(stage.pendingCount() == 2 && stage.persistedNetwork().nodes_junctions.isEmpty(),
+                            "server candidate remains unchanged while live model has pending edits");
+    test_harness.expectTrue(aowis::model::ModelCodec<NetworkHydraulic>::encode(stage.visibleNetwork()) ==
+                            aowis::model::ModelCodec<NetworkHydraulic>::encode(live),
+                            "local replay reaches the exact live edited network");
+
+    NetworkHydraulic first_candidate;
+    QList<PersonalWorkingCopyChange> records;
+    QList<HydraulicDraftMembershipEdit> membership;
+    test_harness.expectTrue(stage.prepareOldest(first_candidate, records, membership, &error),
+                            "prepare oldest event against server candidate rather than live model");
+    test_harness.expectTrue(first_candidate.nodes_junctions.size() == 1 &&
+                            first_candidate.nodes_junctions.first().id != QStringLiteral("J-local") &&
+                            records.size() == 1 && membership.size() == 1 && membership.first().inserted,
+                            "first Save proposes only the junction creation and membership");
+    test_harness.expectTrue(!stage.acknowledgeOldest(*updated, &error) &&
+                            stage.pendingCount() == 2,
+                            "a confirmation for a newer transaction cannot delete the oldest event");
+
+    // Simulated power cut after DVMDB has persisted the first transaction but
+    // before the GUI deleted the locally durable event.
+    stage.close();
+    PersonalDraftEditStage recovered;
+    test_harness.expectTrue(recovered.open(root.path(), repository, draft,
+                                            first_candidate, *created, &error),
+                            "authoritative journal tail allows recovery of a lost Save acknowledgement");
+    test_harness.expectTrue(recovered.pendingCount() == 1 &&
+                            aowis::model::ModelCodec<NetworkHydraulic>::encode(recovered.visibleNetwork()) ==
+                            aowis::model::ModelCodec<NetworkHydraulic>::encode(live),
+                            "recovery drops only saved event and replays later pending edits");
+    NetworkHydraulic second_candidate;
+    test_harness.expectTrue(recovered.prepareOldest(second_candidate, records, membership, &error),
+                            "prepare pending update from verified post-create candidate");
+    test_harness.expectTrue(membership.isEmpty() && records.size() == 1 &&
+                            !second_candidate.nodes_junctions.isEmpty() &&
+                            second_candidate.nodes_junctions.first().id == QStringLiteral("J-local"),
+                            "second Save is a property update without duplicate membership insertion");
+    test_harness.expectTrue(recovered.acknowledgeOldest(*updated, &error) &&
+                            recovered.pendingCount() == 0,
+                            "confirmed second journal event advances remote candidate and empties local queue");
+    test_harness.expectTrue(aowis::model::ModelCodec<NetworkHydraulic>::encode(recovered.persistedNetwork()) ==
+                            aowis::model::ModelCodec<NetworkHydraulic>::encode(live),
+                            "verified and live models converge after both acknowledgements");
+}
+
+void testDraftStageRejectsOutOfOrderReplay()
+{
+    QTemporaryDir root;
+    const QUuid repository = createUuidV7();
+    const QUuid draft = createUuidV7();
+    NetworkHydraulic base;
+    base.uuid = createUuidV7();
+    base.id = QStringLiteral("Replay Guard");
+    NetworkHydraulic live = base;
+    HydraulicNetworkEditor editor(live);
+    HydraulicEditTransactionCapture capture(QStringLiteral("hydraulic.junction.create"));
+    const QUuid junction = editor.addJunction(coordinate(50.1, 8.4));
+    capture.watchCreated(junction);
+    const std::optional<QByteArray> event = capture.finish(live);
+    if (!event.has_value())
+    {
+        test_harness.expectTrue(false, "prepare test event for replay mismatch");
+        return;
+    }
+    QString error;
+    PersonalDraftEditStage stage;
+    test_harness.expectTrue(stage.open(root.path(), repository, draft, base, {}, &error) &&
+                            stage.append(*event, &error),
+                            "valid pending event is recorded");
+    stage.close();
+    PersonalDraftEditStage reopened;
+    test_harness.expectTrue(!reopened.open(root.path(), repository, draft, live, {}, &error) &&
+                            error.contains(QStringLiteral("replay"), Qt::CaseInsensitive),
+                            "stale server journal cannot silently replay event against an already changed model");
+    PersonalEditQueue raw;
+    test_harness.expectTrue(raw.open(root.path(), repository, draft, &error) &&
+                            raw.pending().size() == 1,
+                            "rejected replay never removes the locally durable transaction");
+}
+
 }
 
 int main(int argc, char **argv)
@@ -532,5 +649,7 @@ int main(int argc, char **argv)
     test_harness.runCase("Hydraulic event to canonical DVMDB records", testOrderedHydraulicDraftRecordMapping);
     test_harness.runCase("Hydraulic membership intent mapping", testHydraulicDraftMembershipIntents);
     test_harness.runCase("Capture to durable offline queue", testCapturedOperationsEnterDurableQueue);
+    test_harness.runCase("Verified draft staging and recovery", testVerifiedDraftStageReplayAndAck);
+    test_harness.runCase("Reject unverified draft replay", testDraftStageRejectsOutOfOrderReplay);
     return test_harness.finish();
 }

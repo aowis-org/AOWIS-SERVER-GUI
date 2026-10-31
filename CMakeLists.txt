@@ -186,6 +186,8 @@ qt_add_executable(aowis-server-gui
     src/projects/personal_edit_queue.h
     src/projects/hydraulic_draft_event_adapter.cpp
     src/projects/hydraulic_draft_event_adapter.h
+    src/projects/personal_draft_edit_stage.cpp
+    src/projects/personal_draft_edit_stage.h
     src/network/hydraulic_entity_table_widget.cpp
     src/network/hydraulic_entity_table_widget.h
     src/network/hydraulic_network_editor.cpp
@@ -1397,6 +1399,8 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
         src/projects/personal_edit_queue.h
         src/projects/hydraulic_draft_event_adapter.cpp
         src/projects/hydraulic_draft_event_adapter.h
+        src/projects/personal_draft_edit_stage.cpp
+        src/projects/personal_draft_edit_stage.h
     )
     set_target_properties(aowis-hydraulic-edit-transaction-tests PROPERTIES AUTOMOC ON)
     target_link_libraries(aowis-hydraulic-edit-transaction-tests PRIVATE

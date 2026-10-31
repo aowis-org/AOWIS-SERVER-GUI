@@ -97,6 +97,27 @@ This is intentionally a non-durable preview: no GUI autosave or local Commit is
 claimed, and the dialog warns that editor changes will not be saved. The next
 gate is binding an actual editor session with a durable event queue.
 
+**VC-04 local event staging (implemented, not yet editor-bound):**
+`PersonalDraftEditStage` opens the exclusive durable `PersonalEditQueue` only
+against a verified authoritative candidate. It replays pending MODEL events in
+order to reconstruct the local visible model, prepares the oldest event against
+the **last confirmed server candidate**, and accepts acknowledgements only for
+the exact oldest transaction. A matching authoritative journal-tail event can
+be retired on restart after a lost acknowledgement, without replaying it twice.
+Invalid replay, uncertain disk persistence and contradictory acknowledgements
+block further staging while retaining queue records for investigation. The
+hydraulic transaction test covers multi-event replay, a creation followed by a
+property update, restart after the first Save and out-of-order failure.
+
+This is a local state machine, **not** a GUI autosave implementation: the live
+Distribution Editor is deliberately still capture-disabled for private drafts.
+The next VC-04 change must establish the long-lived lease/renewal and session
+controller, load the authoritative draft plus journal tail, connect captured
+HydraulicData events to this stage, serialize `/save-events` calls and handle
+queue/lease failures visibly before enabling an editable mode. Do not wire
+capture directly to an HTTP call or reconstruct an old event using the current
+editor network.
+
 **Read-only draft hydration:** The DVMDB `GET /working-copies/:draft/networks/:network`
 endpoint reconstitutes the saved candidate over the pinned immutable base,
 validating manifest chunks, canonical entity payloads and typed dependencies.
