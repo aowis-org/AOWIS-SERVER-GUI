@@ -50,6 +50,8 @@ QString validateProfile(const ProjectServerProfile &profile)
     return {};
 }
 
+} // namespace
+
 ProjectSourceWriter::ProjectSourceWriter(QObject *parent)
     : QObject(parent), manager(this)
 {
