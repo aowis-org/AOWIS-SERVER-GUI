@@ -74,8 +74,12 @@ int main(int argc, char **argv)
             QStringLiteral("projectsWorkingCopiesInitializeNetwork"));
         QPushButton *view = dialog.findChild<QPushButton *>(
             QStringLiteral("projectsWorkingCopiesViewNetwork"));
-        if (!require(initialize != nullptr && view != nullptr
+        QPushButton *edit = dialog.findChild<QPushButton *>(
+            QStringLiteral("projectsWorkingCopiesEditNetwork"));
+        if (!require(initialize != nullptr && view != nullptr && edit != nullptr
                          && !initialize->isEnabled() && !view->isEnabled()
+                         && !edit->isEnabled() && !dialog.selectedEditRequested()
+                         && dialog.selectedEditNetworkId().isEmpty()
                          && !dialog.selectedPreviewNetwork().has_value(),
                      "private draft network actions enabled without a verified draft"))
             return 1;

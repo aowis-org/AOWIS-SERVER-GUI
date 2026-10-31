@@ -27,6 +27,8 @@ public:
     const std::optional<NetworkHydraulic> &selectedPreviewNetwork() const;
     QString selectedPreviewDraftId() const;
     QString selectedPreviewGeneration() const;
+    QString selectedEditNetworkId() const;
+    bool selectedEditRequested() const;
 
 private:
     void refresh();
@@ -35,6 +37,7 @@ private:
     void checkoutBranch();
     void initializeNetwork();
     void viewDraftNetwork();
+    void editDraftNetwork();
     void setBusy(bool busy);
     void showDraft(const PersonalWorkingCopyInfo &draft);
 
@@ -56,11 +59,14 @@ private:
     QPushButton *reopen_button = nullptr;
     QPushButton *initialize_button = nullptr;
     QPushButton *view_button = nullptr;
+    QPushButton *edit_button = nullptr;
     std::optional<PersonalWorkingCopyInfo> active_draft;
     std::optional<NetworkHydraulic> preview_network;
     QString preview_generation;
     QString preview_draft_id;
     QString accepted_draft_id;
     QString accepted_generation;
+    QString accepted_network_id;
+    bool accepted_edit = false;
     bool busy = false;
 };

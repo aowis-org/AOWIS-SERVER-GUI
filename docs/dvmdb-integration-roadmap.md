@@ -150,7 +150,14 @@ independent of first-network creation and still requires the user's test run.
 unborn editor. This operation creates one server-owned empty network root
 without a commit; the caller must retain the draft on any ambiguous outcome
 and reopen to confirm its generation. The candidate hydration read is now implemented and has dedicated regression
-tests; next bind its verified result to a real `HydraulicData` editor session; (3) capture/queue/flush supported edits,
+tests; the Projects dialog now offers an explicit **Edit in Distribution Editor**
+path that opens `PersonalDraftEditSession`, hydrates its replayed visible model,
+enables MODEL capture and drains the durable queue through the fenced DVMDB
+writer. A periodic canonical-model guard blocks the session if a mutation
+escapes transaction capture. The editing session can be explicitly closed
+without clearing queued events. This is a limited VC-04 vertical slice: it
+requires real GUI acceptance over interrupted sessions, property mutations
+and network structure edits, and it does not enable local Commit. (3) verify capture/queue/flush of supported edits,
 including creation/deletion, over interrupted network and restart; (4) add
 local working-copy Commit with expected local HEAD and idempotent status;
 (5) integrate the Commit action and prove first unborn commit end to end.

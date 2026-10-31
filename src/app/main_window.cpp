@@ -7,16 +7,29 @@
 #include "config/map_server_client_configuration.h"
 #include "services/http_health_monitor.h"
 #include "map/render/map_render_diagnostics.h"
+#include "projects/dvmdb_identity.h"
+
+#include <aowis/model/serialization/model_codec.h>
+
+#include <QDir>
+#include <QStandardPaths>
+#include <QStatusBar>
 #include <QDebug>
 #include <QPushButton>
 #include <QShortcut>
 #include <qapplication.h>
 
+#include <limits>
 #include <optional>
 #include <utility>
 
 MainWindow::~MainWindow()
 {
+    this->hydraulic_data->setLogicalEditCaptureEnabled(false);
+    if (this->personal_edit_guard != nullptr)
+        this->personal_edit_guard->stop();
+    if (this->personal_edit_session != nullptr)
+        stopPersonalDraftEditing();
     // The tile and terrain repositories, GPS provider and hydraulic model
     // were created before the navigation page. QObject's default child
     // destruction order would dispose of those dependencies first, while
@@ -207,6 +220,80 @@ MainWindow::MainWindow(QWidget *parent)
     this->footer = new FooterStatusBar(this);
     setStatusBar(this->footer->statusBar());
     
+    // A private draft can be edited only through the fenced session. The status
+    // bar offers an explicit way to end editing without discarding queued edits.
+    this->personal_edit_session = new PersonalDraftEditSession(this);
+    this->personal_edit_guard = new QTimer(this);
+    this->personal_edit_guard->setInterval(250);
+    this->personal_edit_stop_button = new QPushButton(tr("Stop private editing"), this);
+    this->personal_edit_stop_button->setObjectName(QStringLiteral("personalDraftStopEditing"));
+    this->personal_edit_stop_button->hide();
+    statusBar()->addPermanentWidget(this->personal_edit_stop_button);
+    connect(this->personal_edit_stop_button, &QPushButton::clicked,
+            this, &MainWindow::stopPersonalDraftEditing);
+    connect(this->personal_edit_guard, &QTimer::timeout,
+            this, &MainWindow::checkPersonalDraftModel);
+    connect(this->hydraulic_data, &HydraulicData::signalLogicalEditRecorded,
+            this, [this](const QByteArray &transaction)
+    {
+        if (!this->personal_edit_active || !this->hydraulic_data->logicalEditCaptureEnabled())
+            return;
+        QString error;
+        if (!this->personal_edit_session->appendTransaction(transaction, &error))
+        {
+            blockPersonalDraftEditing(tr("The edit could not be durably queued: %1").arg(error));
+            return;
+        }
+        // Check immediately after staging; the model and staged candidate must
+        // describe exactly the same canonical network.
+        checkPersonalDraftModel();
+    });
+    connect(this->hydraulic_data, &HydraulicData::signalLogicalEditCaptureFailed,
+            this, [this](const QString &reason)
+    {
+        if (this->personal_edit_active)
+            blockPersonalDraftEditing(tr("Hydraulic transaction capture failed: %1").arg(reason));
+    });
+    connect(this->personal_edit_session, &PersonalDraftEditSession::ready, this, [this]
+    {
+        // Replay may include locally queued transactions not yet on the server.
+        // Never load the raw HTTP snapshot into an editable workspace.
+        this->hydraulic_data->replaceNetworkHydraulic(
+            this->personal_edit_session->visibleNetwork(), {});
+        this->map_workspace->setCurrentMode(MapWorkspaceWidget::DistributionEditor);
+        this->main_navigation->setCurrentIndex(this->map_workspace_page_index);
+        this->hydraulic_data->setLogicalEditCaptureEnabled(true);
+        this->personal_edit_last_checked_revision = std::numeric_limits<quint64>::max();
+        this->personal_edit_guard->start();
+        this->personal_edit_stop_button->setEnabled(true);
+        checkPersonalDraftModel();
+        statusBar()->showMessage(tr("Private draft editing active; changes are queued and saved to your DVMDB."), 10000);
+    });
+    connect(this->personal_edit_session, &PersonalDraftEditSession::pendingCountChanged,
+            this, [this](int count)
+    {
+        if (this->personal_edit_active && !this->personal_edit_blocked)
+            this->personal_edit_stop_button->setText(tr("Stop private editing (%1 pending)").arg(count));
+    });
+    connect(this->personal_edit_session, &PersonalDraftEditSession::saveConfirmed,
+            this, [this](const QString &, bool)
+    {
+        if (this->personal_edit_active && !this->personal_edit_blocked)
+            statusBar()->showMessage(tr("Private draft saved to DVMDB."), 5000);
+    });
+    connect(this->personal_edit_session, &PersonalDraftEditSession::blocked,
+            this, &MainWindow::blockPersonalDraftEditing);
+    connect(this->personal_edit_session, &PersonalDraftEditSession::stopped,
+            this, [this](const QString &error)
+    {
+        this->personal_edit_active = false;
+        this->personal_edit_blocked = false;
+        this->personal_edit_stop_button->hide();
+        this->personal_edit_stop_button->setText(tr("Stop private editing"));
+        if (!error.isEmpty())
+            QMessageBox::warning(this, tr("Private writer lease release"), error);
+    });
+
     // don't make it smaller, because that could lead to positioning issues on the canvas
     this->setMinimumHeight(700);
     this->setMinimumWidth(1222);
@@ -289,10 +376,25 @@ MainWindow::MainWindow(QWidget *parent)
         this->settings->focusUnits();
     });
 
+    connect(this->map_workspace, &MapWorkspaceWidget::currentModeChanged,
+            this, [this](int mode)
+    {
+        // Once a fenced session is blocked, do not let the shared UI switch
+        // straight back into its editor while the working copy is unverified.
+        if (this->personal_edit_active && this->personal_edit_blocked &&
+            mode == MapWorkspaceWidget::DistributionEditor)
+            this->map_workspace->setCurrentMode(MapWorkspaceWidget::DistributionMonitor);
+    });
     connect(this->projects_workspace, &ProjectsWidget::draftNetworkPreviewRequested,
             this, [this](NetworkHydraulic network, const QString &draft_id,
                          const QString &generation)
     {
+        if (this->personal_edit_active)
+        {
+            QMessageBox::warning(this, tr("Private draft editing active"),
+                tr("Stop the current editing session before replacing its hydraulic model."));
+            return;
+        }
         const QMessageBox::StandardButton decision = QMessageBox::question(this,
             tr("View private draft network"),
             tr("Replace the current in-memory hydraulic model with the verified private draft "
@@ -305,6 +407,47 @@ MainWindow::MainWindow(QWidget *parent)
         this->hydraulic_data->replaceNetworkHydraulic(std::move(network), {});
         this->map_workspace->setCurrentMode(MapWorkspaceWidget::DistributionMonitor);
         this->main_navigation->setCurrentIndex(this->map_workspace_page_index);
+    });
+    connect(this->projects_workspace, &ProjectsWidget::draftNetworkEditRequested,
+            this, [this](const QString &draft_id, const QString &network_id)
+    {
+        if (this->personal_edit_active)
+        {
+            QMessageBox::warning(this, tr("Private edit session already open"),
+                tr("Stop the current private draft editing session before opening another."));
+            return;
+        }
+        const PersonalRepositoryTarget target = resolvePersonalRepositoryTarget();
+        if (target.kind != PersonalRepositoryTarget::Kind::Http ||
+            !DvmdbIdentity::isUuidV7(draft_id) || !DvmdbIdentity::isUuidV7(network_id))
+        {
+            QMessageBox::warning(this, tr("Cannot edit private draft"),
+                tr("An HTTP private DVMDB and verified draft/network UUIDv7 identities are required."));
+            return;
+        }
+        const QString directory = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+        if (directory.isEmpty())
+        {
+            QMessageBox::warning(this, tr("Cannot edit private draft"),
+                tr("No durable local application-data directory is available for the edit queue."));
+            return;
+        }
+        const QMessageBox::StandardButton decision = QMessageBox::question(this,
+            tr("Edit private hydraulic draft"),
+            tr("Open draft %1 with a fenced private DVMDB writer?\n\n"
+               "The current in-memory model will be replaced. Only supported captured "
+               "hydraulic edits can be persisted; unsupported mutations will block this "
+               "session. Local Commit is not implemented yet.").arg(draft_id),
+            QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel);
+        if (decision != QMessageBox::Yes) return;
+        this->hydraulic_data->setLogicalEditCaptureEnabled(false);
+        this->personal_edit_active = true;
+        this->personal_edit_blocked = false;
+        this->personal_edit_stop_button->setEnabled(false);
+        this->personal_edit_stop_button->setText(tr("Opening private draft…"));
+        this->personal_edit_stop_button->show();
+        this->personal_edit_session->start(target, draft_id, network_id,
+            QDir(directory).filePath(QStringLiteral("personal-draft-edit-queues")));
     });
     connect(this->projects_workspace, &ProjectsWidget::projectContextChanged,
             this->top_control_bar, &TopControlBar::setProjectContext);
@@ -956,4 +1099,62 @@ void MainWindow::updateMapEdgePanning()
         && this->map_workspace->activeMap() == this->map_mon;
     // The same MapWidget handles edge panning in all four modes.
     this->map_mon->setEdgePanningEnabled(fullscreen && map_visible);
+}
+
+void MainWindow::stopPersonalDraftEditing()
+{
+    if (!this->personal_edit_active) return;
+    this->hydraulic_data->setLogicalEditCaptureEnabled(false);
+    this->personal_edit_guard->stop();
+    this->personal_edit_stop_button->setEnabled(false);
+    this->personal_edit_stop_button->setText(tr("Closing private draft…"));
+    // Other editing views must not remain active with an unbound writer.
+    if (this->map_workspace != nullptr && this->map_workspace->isDistributionEditorActive())
+        this->map_workspace->setCurrentMode(MapWorkspaceWidget::DistributionMonitor);
+    this->personal_edit_session->stop();
+}
+
+void MainWindow::blockPersonalDraftEditing(const QString &reason)
+{
+    if (!this->personal_edit_active || this->personal_edit_blocked)
+        return;
+    this->personal_edit_blocked = true;
+    this->hydraulic_data->setLogicalEditCaptureEnabled(false);
+    this->personal_edit_guard->stop();
+    this->personal_edit_stop_button->setEnabled(true);
+    this->personal_edit_stop_button->setText(tr("Close blocked private draft"));
+    if (this->map_workspace->isDistributionEditorActive())
+        this->map_workspace->setCurrentMode(MapWorkspaceWidget::DistributionMonitor);
+    this->personal_edit_session->blockEditing(reason);
+    statusBar()->showMessage(tr("Private draft editing blocked: %1").arg(reason));
+    // Defer the modal warning until the hydraulic edit call has unwound.
+    QTimer::singleShot(0, this, [this, reason]
+    {
+        QMessageBox::warning(this, tr("Private draft editing blocked"),
+            tr("Editing has been stopped. Queued events remain on disk. "
+               "An uncaptured mutation may still be present in memory; do not treat it as saved. "
+               "Close and reopen the private draft to recover a verified model.\n\n%1").arg(reason));
+    });
+}
+
+void MainWindow::checkPersonalDraftModel()
+{
+    if (!this->personal_edit_active || !this->hydraulic_data->logicalEditCaptureEnabled())
+        return;
+    if (!this->personal_edit_session->isReady())
+    {
+        blockPersonalDraftEditing(tr("Private draft writer is no longer ready."));
+        return;
+    }
+    const quint64 revision = this->hydraulic_data->visualRevision();
+    if (revision == this->personal_edit_last_checked_revision)
+        return;
+    const QByteArray live = aowis::model::ModelCodec<NetworkHydraulic>::encode(
+        this->hydraulic_data->networkHydraulic());
+    const QByteArray staged = aowis::model::ModelCodec<NetworkHydraulic>::encode(
+        this->personal_edit_session->visibleNetwork());
+    if (live.isEmpty() || staged.isEmpty() || live != staged)
+        blockPersonalDraftEditing(tr("Live model differs from durably staged MODEL transactions."));
+    else
+        this->personal_edit_last_checked_revision = revision;
 }

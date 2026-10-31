@@ -52,8 +52,9 @@ PersonalWorkingCopyDialog::PersonalWorkingCopyDialog(
     layout->addWidget(this->details);
     QLabel *scope = new QLabel(tr("Checkout and first-network initialization change only your personal DVMDB "
                                  "draft, never the committed branch. Verified networks can be viewed "
-                                 "in Distribution Monitor. Editor Save and local Commit are not yet connected; "
-                                 "changes made in other editing views are NOT autosaved to this draft."), this);
+                                 "in Distribution Monitor. Supported Distribution Editor transactions can "
+                                 "be saved through an explicitly opened fenced private session. "
+                                 "Local Commit and uncaptured model operations are not yet supported."), this);
     scope->setWordWrap(true);
     layout->addWidget(scope);
     QHBoxLayout *actions = new QHBoxLayout();
@@ -69,6 +70,8 @@ PersonalWorkingCopyDialog::PersonalWorkingCopyDialog(
     this->initialize_button->setObjectName(QStringLiteral("projectsWorkingCopiesInitializeNetwork"));
     this->view_button = new QPushButton(tr("View in Distribution Monitor"), this);
     this->view_button->setObjectName(QStringLiteral("projectsWorkingCopiesViewNetwork"));
+    this->edit_button = new QPushButton(tr("Edit in Distribution Editor"), this);
+    this->edit_button->setObjectName(QStringLiteral("projectsWorkingCopiesEditNetwork"));
     actions->addWidget(this->checkout_button);
     actions->addWidget(this->refresh_button);
     actions->addWidget(this->create_button);
@@ -77,6 +80,7 @@ PersonalWorkingCopyDialog::PersonalWorkingCopyDialog(
     QHBoxLayout *network_actions = new QHBoxLayout();
     network_actions->addWidget(this->initialize_button);
     network_actions->addWidget(this->view_button);
+    network_actions->addWidget(this->edit_button);
     layout->addLayout(network_actions);
     QDialogButtonBox *close = new QDialogButtonBox(QDialogButtonBox::Close, this);
     connect(close, &QDialogButtonBox::rejected, this, &QDialog::reject);
@@ -93,6 +97,8 @@ PersonalWorkingCopyDialog::PersonalWorkingCopyDialog(
             [this] { initializeNetwork(); });
     connect(this->view_button, &QPushButton::clicked, this,
             [this] { viewDraftNetwork(); });
+    connect(this->edit_button, &QPushButton::clicked, this,
+            [this] { editDraftNetwork(); });
     connect(this->drafts, &QListWidget::currentRowChanged, this, [this](int)
     {
         // A previously inspected network must never be opened after switching
@@ -131,10 +137,13 @@ void PersonalWorkingCopyDialog::setBusy(bool busy)
         && this->active_draft->base_revision.isEmpty()
         && this->active_draft->changes.isEmpty() && !this->active_draft->dirty
         && this->target.kind == PersonalRepositoryTarget::Kind::Http);
-    this->view_button->setEnabled(!busy && this->active_draft.has_value()
+    const bool verified_preview = !busy && this->active_draft.has_value()
         && this->preview_network.has_value()
         && this->preview_draft_id == this->active_draft->id
-        && this->preview_generation == this->active_draft->generation);
+        && this->preview_generation == this->active_draft->generation;
+    this->view_button->setEnabled(verified_preview);
+    this->edit_button->setEnabled(verified_preview
+        && this->target.kind == PersonalRepositoryTarget::Kind::Http);
 }
 
 void PersonalWorkingCopyDialog::refresh()
@@ -320,6 +329,27 @@ QString PersonalWorkingCopyDialog::selectedPreviewGeneration() const
     return this->accepted_generation;
 }
 
+QString PersonalWorkingCopyDialog::selectedEditNetworkId() const
+{
+    return this->accepted_network_id;
+}
+
+bool PersonalWorkingCopyDialog::selectedEditRequested() const
+{
+    return this->accepted_edit;
+}
+
+void PersonalWorkingCopyDialog::editDraftNetwork()
+{
+    if (!this->edit_button->isEnabled() || !this->preview_network.has_value())
+        return;
+    this->accepted_draft_id = this->preview_draft_id;
+    this->accepted_generation = this->preview_generation;
+    this->accepted_network_id = this->preview_network->uuid.toString(QUuid::WithoutBraces);
+    this->accepted_edit = true;
+    accept();
+}
+
 void PersonalWorkingCopyDialog::viewDraftNetwork()
 {
     if (this->busy || !this->active_draft.has_value() || !this->preview_network.has_value()
@@ -328,6 +358,7 @@ void PersonalWorkingCopyDialog::viewDraftNetwork()
         return;
     this->accepted_draft_id = this->preview_draft_id;
     this->accepted_generation = this->preview_generation;
+    this->accepted_edit = false;
     accept();
 }
 

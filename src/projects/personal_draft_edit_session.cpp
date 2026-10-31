@@ -191,11 +191,13 @@ void PersonalDraftEditSession::flush()
     const QList<PersonalEditQueue::Entry> pending = this->stage_.queue().pending();
     const QByteArray oldest = pending.first().encoded_transaction;
     this->state_ = State::Submitting;
+    this->request_in_flight_ = true;
     this->client_.saveEventsRecovering(this->target_, this->draft_id_, this->session_id_,
         this->fencing_token_, this->generation_, changes, {oldest}, membership,
         [this, oldest](const PersonalWorkingCopyEventSaveResult &result,
                        bool recovered, const QString &save_error)
     {
+        this->request_in_flight_ = false;
         if (!save_error.isEmpty() || result.draft_id != this->draft_id_)
         {
             fail(QStringLiteral("Draft Save not authoritatively confirmed: %1").arg(save_error));
@@ -211,6 +213,8 @@ void PersonalDraftEditSession::flush()
         this->generation_ = result.generation;
         emit saveConfirmed(this->generation_, recovered);
         emit pendingCountChanged(this->stage_.pendingCount());
+        if (this->state_ == State::Blocked && !this->stop_requested_)
+            return;
         if (this->stop_requested_)
         {
             releaseAndClose();
@@ -234,11 +238,13 @@ void PersonalDraftEditSession::renew()
     if (this->state_ != State::Ready || this->stop_requested_)
         return;
     this->state_ = State::Renewing;
+    this->request_in_flight_ = true;
     // DVMDB rotates fencing tokens even when renewing the same session.
     // Never issue this concurrently with a Save using the previous token.
     this->client_.acquireLease(this->target_, this->draft_id_, this->session_id_, 90,
         [this](const PersonalWorkingCopyLease &lease, const QString &error)
     {
+        this->request_in_flight_ = false;
         if (!error.isEmpty())
         {
             fail(QStringLiteral("Private draft writer lease renewal failed: %1").arg(error));
@@ -247,6 +253,8 @@ void PersonalDraftEditSession::renew()
         this->fencing_token_ = lease.token;
         this->lease_expiry_ = lease.expires_at_ms;
         this->renewal_due_ = false;
+        if (this->state_ == State::Blocked && !this->stop_requested_)
+            return;
         if (this->stop_requested_)
         {
             releaseAndClose();
@@ -262,12 +270,19 @@ void PersonalDraftEditSession::renew()
     });
 }
 
+void PersonalDraftEditSession::blockEditing(const QString &message)
+{
+    if (this->state_ == State::Ready || this->state_ == State::Submitting ||
+        this->state_ == State::Renewing)
+        fail(message);
+}
+
 void PersonalDraftEditSession::fail(const QString &message)
 {
     this->renew_timer_.stop();
     this->state_ = State::Blocked;
     emit blocked(message);
-    if (this->stop_requested_)
+    if (this->stop_requested_ && !this->request_in_flight_)
         releaseAndClose();
 }
 
@@ -276,8 +291,7 @@ void PersonalDraftEditSession::stop()
     if (this->state_ == State::Idle) return;
     this->stop_requested_ = true;
     this->renew_timer_.stop();
-    if (this->state_ == State::Submitting || this->state_ == State::Renewing ||
-        this->state_ == State::Starting)
+    if (this->request_in_flight_ || this->state_ == State::Starting)
         return;
     releaseAndClose();
 }
@@ -323,6 +337,7 @@ void PersonalDraftEditSession::resetLocal()
     this->stop_requested_ = false;
     this->renewal_due_ = false;
     this->flush_scheduled_ = false;
+    this->request_in_flight_ = false;
 }
 
 bool PersonalDraftEditSession::isReady() const

@@ -60,6 +60,7 @@
 #include "widgets/main_navigation_widget.h"
 
 #include "network/hydraulic_data.h"
+#include "projects/personal_draft_edit_session.h"
 
 #ifdef Q_OS_WASM
 #include <emscripten.h>
@@ -117,7 +118,17 @@ private:
     bool browser_fullscreen_active = false;
 #endif
     
+    void stopPersonalDraftEditing();
+    void blockPersonalDraftEditing(const QString &reason);
+    void checkPersonalDraftModel();
+
     HydraulicData *hydraulic_data = nullptr;
+    PersonalDraftEditSession *personal_edit_session = nullptr;
+    QPushButton *personal_edit_stop_button = nullptr;
+    QTimer *personal_edit_guard = nullptr;
+    bool personal_edit_active = false;
+    bool personal_edit_blocked = false;
+    quint64 personal_edit_last_checked_revision = 0;
     
     GpsProvider *gps = nullptr;
     

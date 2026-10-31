@@ -2708,8 +2708,14 @@ void ProjectsWidget::showWorkingCopies()
         branch_uuid, branch->name, branch->head,
         project->repository_id, source_endpoint, project->name, this);
     if (dialog.exec() == QDialog::Accepted && dialog.selectedPreviewNetwork().has_value())
-        emit draftNetworkPreviewRequested(*dialog.selectedPreviewNetwork(),
-            dialog.selectedPreviewDraftId(), dialog.selectedPreviewGeneration());
+    {
+        if (dialog.selectedEditRequested())
+            emit draftNetworkEditRequested(dialog.selectedPreviewDraftId(),
+                                           dialog.selectedEditNetworkId());
+        else
+            emit draftNetworkPreviewRequested(*dialog.selectedPreviewNetwork(),
+                dialog.selectedPreviewDraftId(), dialog.selectedPreviewGeneration());
+    }
 }
 
 void ProjectsWidget::createBranch()

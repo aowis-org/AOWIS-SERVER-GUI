@@ -30,6 +30,8 @@ public:
     // A false return means capture must be disabled immediately.
     bool appendTransaction(const QByteArray &encoded_event, QString *error = nullptr);
     void stop();
+    // Fail closed when the GUI detects an unrecorded or inconsistent mutation.
+    void blockEditing(const QString &message);
 
     bool isReady() const;
     bool isBlocked() const;
@@ -70,4 +72,5 @@ private:
     bool stop_requested_ = false;
     bool flush_scheduled_ = false;
     bool renewal_due_ = false;
+    bool request_in_flight_ = false;
 };

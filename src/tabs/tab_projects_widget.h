@@ -91,6 +91,7 @@ signals:
     // Canonical generation-verified preview; autosave is not attached.
     void draftNetworkPreviewRequested(NetworkHydraulic network, const QString &draft_id,
                                       const QString &generation);
+    void draftNetworkEditRequested(const QString &draft_id, const QString &network_id);
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;

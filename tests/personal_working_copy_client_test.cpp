@@ -526,6 +526,15 @@ bool testDraftEditSession(QCoreApplication &application)
                session.visibleNetwork().nodes_junctions.size() == 1,
                "lost acknowledgement did not confirm exactly one durable Save")) return false;
 
+    // A GUI-detected uncaptured mutation must fail closed even when the
+    // server acknowledged all earlier events. A blocked session never accepts
+    // additional edits and its already-confirmed model remains intact.
+    session.blockEditing(QStringLiteral("Uncaptured hydraulic mutation"));
+    if (!check(session.isBlocked() && !session.isReady() &&
+               !session.appendTransaction(*encoded, &append_error) &&
+               session.pendingCount() == 0 && stub.saved_events.size() == 1,
+               "unsafe live mutation did not block the draft writer")) return false;
+
     bool stopped = false;
     QString stop_error;
     QObject::connect(&session, &PersonalDraftEditSession::stopped,
