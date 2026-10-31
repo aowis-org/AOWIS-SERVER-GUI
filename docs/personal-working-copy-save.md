@@ -3,7 +3,8 @@
 This document describes the **implemented transport components** and the
 **remaining editor integration**. A durable Save is not a Commit or Publish.
 The relevant code is `src/projects/personal_working_copy_client.*`,
-`personal_edit_queue.*`, and `hydraulic_draft_event_adapter.*`.
+`personal_edit_queue.*`, `personal_draft_edit_stage.*`,
+`personal_draft_edit_session.*` and `hydraulic_draft_event_adapter.*`.
 
 ## Ownership and targets
 
@@ -65,9 +66,37 @@ references from today's potentially newer GUI network. `PersonalEditQueue`
 instance lifetime must cover asynchronous callbacks; wrong draft/repository
 targets are rejected.
 
+## Fenced HTTP editing controller (source-level implementation)
+
+`PersonalDraftEditSession` now provides the long-lived **HTTP-only** writer
+boundary. On start it reopens the authoritative draft, loads the canonical
+hydraulic candidate, obtains a fenced 90-second lease, checks the generation
+and opens the per-repository/per-draft local event queue. Replayed pending
+events are staged against that exact verified candidate. The controller then
+sends precisely the oldest event and its typed records plus membership intents,
+never rebuilding the request from the current GUI model.
+
+The controller renews the lease periodically, **serially** with Saves because
+DVMDB rotates fencing tokens on reacquisition; renewal while a Save is in
+flight is deferred. A new generation is accepted and the local event retired
+only after `saveEventsRecovering` has verified DVMDB's journal and records.
+Unconfirmed or conflicting responses block the session, disable further
+appends, and preserve local queue files until a new authoritative open. The
+caller must disable GUI capture immediately on a blocked signal or failed
+append, and must not discard a dirty live model. Explicit stop releases the
+current fenced lease; the server expires it if the process crashes.
+
+The HTTP fixture regression covers a lost Save acknowledgement recovered
+without a duplicate POST, rejected Save retaining the local queue, reopening
+and replaying its event, and eventual lease release. The controller does not
+claim **user-facing autosave**: it has not yet been bound to live
+`HydraulicData`, and its staged visible model must be compared with the editor
+model before enabling capture. The embedded Standalone writer remains a
+separate integration step.
+
 ## Remaining user-facing integration
 
-The transport components and corresponding targeted regressions exist, but
+The fenced transport controller and corresponding targeted regressions exist, but
 **the current Projects-tab hydraulic editor is not yet bound to an end-to-end
 autosaved working-copy session**. Remaining work is:
 load the pinned base and candidate overlay into `HydraulicData`; attach

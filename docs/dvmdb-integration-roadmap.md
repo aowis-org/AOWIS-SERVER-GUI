@@ -109,14 +109,21 @@ block further staging while retaining queue records for investigation. The
 hydraulic transaction test covers multi-event replay, a creation followed by a
 property update, restart after the first Save and out-of-order failure.
 
-This is a local state machine, **not** a GUI autosave implementation: the live
-Distribution Editor is deliberately still capture-disabled for private drafts.
-The next VC-04 change must establish the long-lived lease/renewal and session
-controller, load the authoritative draft plus journal tail, connect captured
-HydraulicData events to this stage, serialize `/save-events` calls and handle
-queue/lease failures visibly before enabling an editable mode. Do not wire
-capture directly to an HTTP call or reconstruct an old event using the current
-editor network.
+**VC-04 fenced HTTP writer controller (implemented, not yet editor-bound):**
+`PersonalDraftEditSession` now reopens the authoritative draft and hydrated
+candidate, acquires a writer lease, checks its generation, recovers the local
+queue and serially flushes MODEL events with atomic membership intents.
+Lease renewal rotates the DVMDB fencing token **only between Save requests**;
+unknown outcomes leave queued data intact and block subsequent operations.
+HTTP-fixture regressions exercise lost-acknowledgement recovery and replay of
+an event after a rejected Save and process-like session restart.
+
+This is **not yet end-to-end editor autosave**. The live Distribution Editor
+remains capture-disabled for private drafts. The next VC-04 change must bind
+`HydraulicData` capture to the session's durable append, check initial model
+equality, expose lease/queue failures visibly and prevent edit continuation
+after an append failure. Do not wire capture directly to HTTP or reconstruct
+an old event from the current editor network.
 
 **Read-only draft hydration:** The DVMDB `GET /working-copies/:draft/networks/:network`
 endpoint reconstitutes the saved candidate over the pinned immutable base,

@@ -188,6 +188,8 @@ qt_add_executable(aowis-server-gui
     src/projects/hydraulic_draft_event_adapter.h
     src/projects/personal_draft_edit_stage.cpp
     src/projects/personal_draft_edit_stage.h
+    src/projects/personal_draft_edit_session.cpp
+    src/projects/personal_draft_edit_session.h
     src/network/hydraulic_entity_table_widget.cpp
     src/network/hydraulic_entity_table_widget.h
     src/network/hydraulic_network_editor.cpp
@@ -729,6 +731,12 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
         src/projects/personal_working_copy_client.h
         src/projects/personal_edit_queue.cpp
         src/projects/personal_edit_queue.h
+        src/projects/hydraulic_draft_event_adapter.cpp
+        src/projects/hydraulic_draft_event_adapter.h
+        src/projects/personal_draft_edit_stage.cpp
+        src/projects/personal_draft_edit_stage.h
+        src/projects/personal_draft_edit_session.cpp
+        src/projects/personal_draft_edit_session.h
         src/config/personal_repository_storage.cpp
         src/config/personal_repository_storage.h
         src/config/project_server_profile_storage.cpp
@@ -737,7 +745,8 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
     target_include_directories(aowis-personal-working-copy-client-tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_link_libraries(aowis-personal-working-copy-client-tests PRIVATE
-        Qt6::Core Qt6::Gui Qt6::Network AOWIS::ServerModel)
+        Qt6::Core Qt6::Gui Qt6::Network AOWIS::ServerModel
+        aowis-hydraulic-test-support)
     add_test(NAME aowis-personal-working-copy-client
         COMMAND aowis-personal-working-copy-client-tests)
     set_tests_properties(aowis-personal-working-copy-client PROPERTIES LABELS "aowis")

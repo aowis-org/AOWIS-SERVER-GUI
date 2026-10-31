@@ -1,6 +1,9 @@
 #include "projects/personal_working_copy_client.h"
 #include "projects/dvmdb_identity.h"
 #include "projects/personal_edit_queue.h"
+#include "projects/personal_draft_edit_session.h"
+#include "network/hydraulic_network_editor.h"
+#include "network/hydraulic_edit_transaction_capture.h"
 
 #include <aowis/model/edit/model_edit_transaction.h>
 #include <aowis/model/serialization/model_codec.h>
@@ -462,9 +465,145 @@ public:
 };
 }
 
+// A real HTTP session/controller test, with the same private identity,
+// generation, writer fencing and event-save contracts as the existing fixture.
+// This does NOT assert that the Distribution Editor has been bound to autosave.
+bool testDraftEditSession(QCoreApplication &application)
+{
+    Stub stub;
+    if (!check(stub.listen(), "controller fixture could not listen")) return false;
+    QTemporaryDir root;
+    if (!check(root.isValid(), "controller fixture queue root invalid")) return false;
+    const QString network_id = PersonalWorkingCopyClient::newSessionUuidV7();
+    PersonalDraftEditSession session;
+    bool opened = false;
+    QString problem;
+    QObject::connect(&session, &PersonalDraftEditSession::ready,
+                     &session, [&] { opened = true; });
+    QObject::connect(&session, &PersonalDraftEditSession::blocked,
+                     &session, [&](const QString &message) { problem = message; });
+    session.start(stub.target(), draft_id, network_id, root.path());
+    if (!check(until(application, [&] { return opened || !problem.isEmpty(); }) &&
+               opened && problem.isEmpty() && session.isReady() &&
+               session.currentGeneration() == QStringLiteral("0") &&
+               session.pendingCount() == 0 &&
+               session.visibleNetwork().uuid == QUuid(network_id),
+               "session did not verify, hydrate and fence the private draft")) return false;
+
+    NetworkHydraulic live = session.visibleNetwork();
+    HydraulicNetworkEditor editor(live);
+    HydraulicEditTransactionCapture capture(QStringLiteral("hydraulic.junction.create"));
+    CoordinateWGS84 point;
+    point.latitude_deg = 50.1;
+    point.longitude_deg = 8.4;
+    const QUuid junction = editor.addJunction(point);
+    if (!check(!junction.isNull() && capture.watchCreated(junction),
+               "could not prepare a hydraulic edit for session")) return false;
+    const std::optional<QByteArray> encoded = capture.finish(live);
+    if (!check(encoded.has_value(), "could not encode hydraulic edit")) return false;
+
+    bool confirmed = false;
+    bool recovered = false;
+    QString accepted_generation;
+    QObject::connect(&session, &PersonalDraftEditSession::saveConfirmed,
+                     &session, [&](const QString &generation, bool was_recovered)
+    {
+        confirmed = true;
+        recovered = was_recovered;
+        accepted_generation = generation;
+    });
+    // DVMDB stores the event but the HTTP acknowledgement never reaches Qt.
+    // The controller must resolve it by authoritative reopen, NOT resend it.
+    stub.drop_next_event_acknowledgement = true;
+    QString append_error;
+    if (!check(session.appendTransaction(*encoded, &append_error) && append_error.isEmpty(),
+               "session failed to durably append the MODEL event")) return false;
+    if (!check(until(application, [&] { return confirmed || !problem.isEmpty(); }) &&
+               confirmed && problem.isEmpty() && recovered &&
+               accepted_generation == QStringLiteral("1") &&
+               session.pendingCount() == 0 &&
+               stub.event_save_count == 1 && stub.saved_events.size() == 1 &&
+               session.visibleNetwork().nodes_junctions.size() == 1,
+               "lost acknowledgement did not confirm exactly one durable Save")) return false;
+
+    bool stopped = false;
+    QString stop_error;
+    QObject::connect(&session, &PersonalDraftEditSession::stopped,
+                     &session, [&](const QString &failure)
+    {
+        stopped = true;
+        stop_error = failure;
+    });
+    session.stop();
+    if (!check(until(application, [&] { return stopped; }) && stop_error.isEmpty() &&
+               stub.release_count == 1 && !session.isReady(),
+               "session failed to release fenced writer on stop")) return false;
+
+    // A rejected Save cannot remove the pending local event. Restarting the
+    // session from the unchanged authoritative draft must replay and save it.
+    Stub rejected;
+    if (!check(rejected.listen(), "rejection fixture could not listen")) return false;
+    QTemporaryDir failed_root;
+    const QString failed_network = PersonalWorkingCopyClient::newSessionUuidV7();
+    PersonalDraftEditSession first_attempt;
+    bool failed_open = false;
+    QString failure;
+    QObject::connect(&first_attempt, &PersonalDraftEditSession::ready,
+                     &first_attempt, [&] { failed_open = true; });
+    QObject::connect(&first_attempt, &PersonalDraftEditSession::blocked,
+                     &first_attempt, [&](const QString &message) { failure = message; });
+    first_attempt.start(rejected.target(), draft_id, failed_network, failed_root.path());
+    if (!check(until(application, [&] { return failed_open || !failure.isEmpty(); }) &&
+               failed_open, "rejected Save fixture session did not start")) return false;
+    NetworkHydraulic retry_live = first_attempt.visibleNetwork();
+    HydraulicNetworkEditor retry_editor(retry_live);
+    HydraulicEditTransactionCapture retry_capture(QStringLiteral("hydraulic.junction.create"));
+    const QUuid retry_junction = retry_editor.addJunction(point);
+    retry_capture.watchCreated(retry_junction);
+    const std::optional<QByteArray> retry_event = retry_capture.finish(retry_live);
+    if (!check(retry_event.has_value(), "rejected Save fixture event missing")) return false;
+    rejected.reject_next_event_save = true;
+    if (!check(first_attempt.appendTransaction(*retry_event, &append_error),
+               "rejected Save fixture could not append event")) return false;
+    if (!check(until(application, [&] { return !failure.isEmpty(); }) &&
+               first_attempt.isBlocked() && first_attempt.pendingCount() == 1 &&
+               rejected.saved_events.isEmpty(),
+               "rejected Save incorrectly acknowledged or dropped queued event")) return false;
+    bool first_stopped = false;
+    QObject::connect(&first_attempt, &PersonalDraftEditSession::stopped,
+                     &first_attempt, [&](const QString &) { first_stopped = true; });
+    first_attempt.stop();
+    if (!check(until(application, [&] { return first_stopped; }),
+               "rejected writer failed to stop")) return false;
+
+    PersonalDraftEditSession restarted;
+    bool restart_ready = false;
+    bool restart_saved = false;
+    QString restart_failure;
+    QObject::connect(&restarted, &PersonalDraftEditSession::ready,
+                     &restarted, [&] { restart_ready = true; });
+    QObject::connect(&restarted, &PersonalDraftEditSession::blocked,
+                     &restarted, [&](const QString &message) { restart_failure = message; });
+    QObject::connect(&restarted, &PersonalDraftEditSession::saveConfirmed,
+                     &restarted, [&](const QString &, bool) { restart_saved = true; });
+    restarted.start(rejected.target(), draft_id, failed_network, failed_root.path());
+    if (!check(until(application, [&] { return restart_saved || !restart_failure.isEmpty(); }) &&
+               restart_ready && restart_saved && restart_failure.isEmpty() &&
+               restarted.pendingCount() == 0 && rejected.saved_events.size() == 1 &&
+               rejected.event_save_count == 2,
+               "session restart did not replay the same queued event exactly once")) return false;
+    bool restart_stopped = false;
+    QObject::connect(&restarted, &PersonalDraftEditSession::stopped,
+                     &restarted, [&](const QString &) { restart_stopped = true; });
+    restarted.stop();
+    return check(until(application, [&] { return restart_stopped; }),
+                 "restarted writer failed to stop");
+}
+
 int main(int argc, char **argv)
 {
     QCoreApplication application(argc, argv);
+    if (!testDraftEditSession(application)) return 1;
     Stub stub;
     if (!check(stub.listen(), "could not start private DVMDB fixture")) return 1;
     PersonalWorkingCopyClient client;
