@@ -74,6 +74,17 @@ QPushButton *compactButton(const QString &label, const QString &tip, QWidget *pa
     button->setMinimumHeight(28);
     return button;
 }
+// QLabel::setWordWrap() alone does not remove a long text size hint from
+// a QScrollArea's layout. Permit every explanatory label to shrink to the
+// available inspector width so Qt can actually compute its wrapped height.
+void wrapInspectorLabel(QLabel *label)
+{
+    label->setWordWrap(true);
+    label->setMinimumWidth(0);
+    QSizePolicy policy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    policy.setHeightForWidth(true);
+    label->setSizePolicy(policy);
+}
 QString keyFor(const QString &type, const QString &id)
 {
     return type + QLatin1Char(':') + id;
@@ -470,10 +481,16 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     splitter->addWidget(center);
 
     QScrollArea *right_scroll = new QScrollArea();
+    right_scroll->setObjectName(QStringLiteral("projectsInspectorScrollArea"));
     right_scroll->setWidgetResizable(true);
     right_scroll->setFrameShape(QFrame::NoFrame);
-    right_scroll->setMinimumWidth(250);
+    // The dock already has a standardized width; explanatory text must reflow
+    // vertically rather than make its scroll area horizontally scrollable.
+    right_scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    right_scroll->setMinimumWidth(0);
     QWidget *right = new QWidget(right_scroll);
+    right->setMinimumWidth(0);
+    right->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     QVBoxLayout *right_layout = new QVBoxLayout(right);
     right_layout->setContentsMargins(12, 12, 12, 12);
     right_layout->setSpacing(12);
@@ -482,13 +499,17 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     inspector_font.setBold(true);
     inspector_font.setPointSizeF(inspector_font.pointSizeF() + 2);
     this->inspector_heading->setFont(inspector_font);
+    wrapInspectorLabel(this->inspector_heading);
     right_layout->addWidget(this->inspector_heading);
     this->inspector_subtitle = new QLabel(right);
-    this->inspector_subtitle->setWordWrap(true);
+    wrapInspectorLabel(this->inspector_subtitle);
     right_layout->addWidget(this->inspector_subtitle);
     this->inspector_content_stack = new QStackedWidget(right);
     this->inspector_content_stack->setObjectName(QStringLiteral("projectsInspectorContentStack"));
+    this->inspector_content_stack->setMinimumWidth(0);
+    this->inspector_content_stack->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding);
     this->inspector_tabs = new QTabWidget(this->inspector_content_stack);
+    this->inspector_tabs->setMinimumWidth(0);
     this->inspector_tabs->setObjectName(QStringLiteral("projectsInspectorTabs"));
     this->inspector_tabs->setDocumentMode(true);
     this->inspector_content_stack->addWidget(this->inspector_tabs);
@@ -538,7 +559,7 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     QVBoxLayout *source_layout = new QVBoxLayout(this->server_options);
     this->source_status = new QLabel(this->server_options);
     this->source_status->setObjectName(QStringLiteral("serversPreviewStatus"));
-    this->source_status->setWordWrap(true);
+    wrapInspectorLabel(this->source_status);
     source_layout->addWidget(this->source_status);
     this->source_refresh_button = compactButton(tr("Refresh catalogue"),
         tr("Reload this database now; automatic loading and health checks continue in the background"),
@@ -562,6 +583,8 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
         model->item(1)->setEnabled(false);
 #endif
     QFormLayout *kind_form = new QFormLayout();
+    kind_form->setRowWrapPolicy(QFormLayout::WrapAllRows);
+    kind_form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
     kind_form->addRow(tr("Connection type"), this->source_kind_combo);
     source_layout->addLayout(kind_form);
     this->remote_options = new QWidget(this->server_options);
@@ -579,7 +602,7 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     server_form->addRow(tr("REST endpoint"), this->server_endpoint_edit);
     server_form->addRow(tr("Authentication (future)"), this->server_auth_combo);
     QLabel *server_warning = new QLabel(tr("Automatically monitored and loaded. REST authentication is not yet supported; credentials and tokens are not stored."), this->remote_options);
-    server_warning->setWordWrap(true);
+    wrapInspectorLabel(server_warning);
     server_form->addRow(server_warning);
     source_layout->addWidget(this->remote_options);
     this->local_options = new QWidget(this->server_options);
@@ -589,6 +612,7 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     this->local_path_edit = new QLineEdit(this->local_options);
     this->local_path_edit->setObjectName(QStringLiteral("projectLocalDvmdbPath"));
     this->local_path_edit->setPlaceholderText(defaultLocalDvmdbPath());
+    this->local_path_edit->setMinimumWidth(0);
     QPushButton *browse_path = compactButton(tr("Browse…"), tr("Choose a local DVMDB data directory"), this->local_options);
     browse_path->setObjectName(QStringLiteral("projectLocalBrowseButton"));
     QHBoxLayout *local_path_row = new QHBoxLayout();
@@ -596,18 +620,18 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     local_path_row->addWidget(browse_path);
     local_form->addRow(tr("Data directory"), local_path_row);
     QLabel *local_warning = new QLabel(tr("Local DVMDB uses the embedded C++ library. Choose a dedicated data directory, not a directory used by a running HTTP server."), this->local_options);
-    local_warning->setWordWrap(true);
+    wrapInspectorLabel(local_warning);
     local_form->addRow(local_warning);
     source_layout->addWidget(this->local_options);
     connection_layout->addWidget(this->server_options);
     connection_layout->addStretch(1);
     this->metadata_info = new QLabel(this->inspector_overview_page);
     this->metadata_info->setObjectName(QStringLiteral("projectInspectorMetadata"));
-    this->metadata_info->setWordWrap(true);
+    wrapInspectorLabel(this->metadata_info);
     this->metadata_info->setTextInteractionFlags(Qt::TextSelectableByMouse);
     overview_layout->addWidget(this->metadata_info);
     this->inspector_preview_note = new QLabel(this->inspector_overview_page);
-    this->inspector_preview_note->setWordWrap(true);
+    wrapInspectorLabel(this->inspector_preview_note);
     this->inspector_preview_note->setObjectName(QStringLiteral("inspectorPreviewNote"));
     overview_layout->addWidget(this->inspector_preview_note);
     overview_layout->addStretch(1);
@@ -622,18 +646,20 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     this->creation_name->setObjectName(QStringLiteral("projectsCreationName"));
     this->creation_source = new QComboBox(creation_page);
     this->creation_source->setObjectName(QStringLiteral("projectsCreationSource"));
+    this->creation_source->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+    this->creation_source->setMinimumWidth(0);
     creation_fields->addRow(tr("Name"), this->creation_name);
     this->creation_source_label = new QLabel(tr("Start from"), creation_page);
     creation_fields->addRow(this->creation_source_label, this->creation_source);
     creation_layout->addLayout(creation_fields);
     this->creation_summary = new QLabel(creation_page);
     this->creation_summary->setObjectName(QStringLiteral("projectsCreationSummary"));
-    this->creation_summary->setWordWrap(true);
+    wrapInspectorLabel(this->creation_summary);
     this->creation_summary->setTextInteractionFlags(Qt::TextSelectableByMouse);
     creation_layout->addWidget(this->creation_summary);
     this->creation_error = new QLabel(creation_page);
     this->creation_error->setObjectName(QStringLiteral("projectsCreationError"));
-    this->creation_error->setWordWrap(true);
+    wrapInspectorLabel(this->creation_error);
     creation_layout->addWidget(this->creation_error);
     creation_layout->addStretch(1);
     this->inspector_content_stack->addWidget(creation_page);

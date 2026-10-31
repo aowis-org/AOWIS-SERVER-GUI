@@ -337,6 +337,35 @@ int main(int argc, char **argv)
     if (!require(dock->isVisible(), "inspector should start open"))
         return 1;
 
+    // Inspector notes (including UUIDs, long source names and errors) must
+    // wrap within the standardized dock, never widen its scrollable content.
+    QScrollArea *inspector_scroll = qobject_cast<QScrollArea *>(dock->widget());
+    QLabel *inspector_metadata = projects.findChild<QLabel *>(
+        QStringLiteral("projectInspectorMetadata"));
+    if (!require(inspector_scroll != nullptr && inspector_metadata != nullptr
+                     && inspector_scroll->widgetResizable()
+                     && inspector_scroll->horizontalScrollBarPolicy() == Qt::ScrollBarAlwaysOff,
+                 "project inspector is not configured for vertical-only scrolling"))
+        return 1;
+    const QString saved_metadata = inspector_metadata->text();
+    const QString long_metadata = QStringLiteral(
+        "Canonical network metadata and repository identifiers need to remain "
+        "readable within the narrow Projects inspector. ").repeated(12);
+    inspector_metadata->setText(long_metadata);
+    app.processEvents();
+    if (!require(inspector_metadata->wordWrap()
+                     && inspector_metadata->sizePolicy().horizontalPolicy() == QSizePolicy::Ignored
+                     && inspector_metadata->sizePolicy().hasHeightForWidth()
+                     && inspector_metadata->text() == long_metadata
+                     && inspector_metadata->heightForWidth(inspector_metadata->width())
+                         > 2 * inspector_metadata->fontMetrics().lineSpacing()
+                     && inspector_scroll->widget()->width() <= inspector_scroll->viewport()->width()
+                     && inspector_scroll->horizontalScrollBar()->maximum() == 0,
+                 "long inspector metadata did not wrap without horizontal overflow"))
+        return 1;
+    inspector_metadata->setText(saved_metadata);
+    app.processEvents();
+
     // Servers are managed as GUI-only profiles. Selecting one scopes the
     // preview projects and reopens its inspector, without creating a session.
     GroupBoxCollapsible *server_section = projects.findChild<GroupBoxCollapsible *>(
@@ -370,6 +399,13 @@ int main(int argc, char **argv)
                  "server inspector is missing the Connection tab")) return 1;
     inspector_tabs->setCurrentIndex(1);
     app.processEvents();
+    QLabel *inspector_status = projects.findChild<QLabel *>(
+        QStringLiteral("serversPreviewStatus"));
+    if (!require(inspector_status != nullptr && inspector_status->wordWrap()
+                     && inspector_status->sizePolicy().horizontalPolicy() == QSizePolicy::Ignored
+                     && inspector_scroll->widget()->width() <= inspector_scroll->viewport()->width()
+                     && inspector_scroll->horizontalScrollBar()->maximum() == 0,
+                 "connection inspector labels force horizontal scrolling")) return 1;
     if (!require(dock->isVisible() && name->text() == QStringLiteral("Remote preview")
                      && server_options->isVisible() && endpoint->text().startsWith(QStringLiteral("https://")),
                  "remote server selection did not show its preview inspector"))
@@ -384,6 +420,14 @@ int main(int argc, char **argv)
         return 1;
     add_project->click();
     app.processEvents();
+    QLabel *inspector_creation_summary = projects.findChild<QLabel *>(
+        QStringLiteral("projectsCreationSummary"));
+    if (!require(inspector_creation_summary != nullptr
+                     && inspector_creation_summary->wordWrap()
+                     && inspector_creation_summary->sizePolicy().horizontalPolicy() == QSizePolicy::Ignored
+                     && inspector_scroll->widget()->width() <= inspector_scroll->viewport()->width()
+                     && inspector_scroll->horizontalScrollBar()->maximum() == 0,
+                 "creation inspector labels force horizontal scrolling")) return 1;
     QStackedWidget *project_draft_stack = projects.findChild<QStackedWidget *>(
         QStringLiteral("projectsInspectorContentStack"));
     QLineEdit *project_draft_name = projects.findChild<QLineEdit *>(
