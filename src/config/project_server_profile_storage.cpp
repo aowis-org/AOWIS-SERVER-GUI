@@ -66,7 +66,9 @@ QJsonObject serializeProfile(const ProjectServerProfile &profile)
         {QStringLiteral("auth_mode"), profile.auth_mode},
         {QStringLiteral("connection_type"), profile.connection_type},
         {QStringLiteral("local_path"), profile.local_path},
-        {QStringLiteral("visible"), profile.visible}
+        {QStringLiteral("visible"), profile.visible},
+        {QStringLiteral("personal"), profile.personal},
+        {QStringLiteral("personalRepositoryId"), profile.personal_repository_id}
     };
 }
 }
@@ -104,6 +106,7 @@ QList<ProjectServerProfile> loadProjectServerProfiles()
     QList<ProjectServerProfile> profiles;
     QSet<QString> seen_ids;
     QSet<QString> seen_names;
+    bool personal_found = false;
     for (const QJsonValue &value : document.array())
     {
         if (!value.isObject()) continue;
@@ -121,6 +124,12 @@ QList<ProjectServerProfile> loadProjectServerProfiles()
             profile.connection_type = QStringLiteral("remote");
         profile.local_path = record.value(QStringLiteral("local_path")).toString().trimmed();
         profile.visible = record.value(QStringLiteral("visible")).toBool(true);
+        profile.personal = record.value(QStringLiteral("personal")).toBool(false) && !personal_found;
+        if (profile.personal)
+        {
+            personal_found = true;
+            profile.personal_repository_id = record.value(QStringLiteral("personalRepositoryId")).toString();
+        }
         profile.description = record.value(QStringLiteral("description")).toString();
         for (const QJsonValue &tag : record.value(QStringLiteral("tags")).toArray())
             if (tag.isString()) profile.tags.append(tag.toString());
@@ -137,6 +146,14 @@ QList<ProjectServerProfile> loadProjectServerProfiles()
 
 bool saveProjectServerProfiles(const QList<ProjectServerProfile> &profiles)
 {
+    // A single personal database is an invariant of the server list.
+    bool seen_personal = false;
+    for (const ProjectServerProfile &profile : profiles)
+    {
+        if (!profile.personal) continue;
+        if (seen_personal) return false;
+        seen_personal = true;
+    }
     QJsonArray records;
     for (const ProjectServerProfile &profile : profiles)
         records.append(serializeProfile(profile));

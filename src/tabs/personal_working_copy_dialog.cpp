@@ -14,19 +14,23 @@ PersonalWorkingCopyDialog::PersonalWorkingCopyDialog(
         const QString &project_id, const QString &branch_id,
         const QString &branch_name, const QString &head,
         const QString &source_repository_id, const QString &source_endpoint,
-        const QString &project_name, QWidget *parent)
+        const QString &project_name, QWidget *parent, bool open_editor_directly)
     : QDialog(parent), target(resolvePersonalRepositoryTarget()), client(this),
       project_id(project_id), branch_id(branch_id), branch_name(branch_name),
       head(head), source_repository_id(source_repository_id),
-      source_endpoint(source_endpoint), project_name(project_name)
+      source_endpoint(source_endpoint), project_name(project_name),
+      direct_edit(open_editor_directly)
 {
     setObjectName(QStringLiteral("projectsWorkingCopiesDialog"));
-    setWindowTitle(tr("Personal working copies"));
+    setWindowTitle(this->direct_edit ? tr("Open hydraulic network in editor")
+                                      : tr("Personal working copies"));
     resize(580, 440);
     QVBoxLayout *layout = new QVBoxLayout(this);
-    QLabel *context = new QLabel(tr("Project: %1\nBranch: %2\nPinned base: %3")
-        .arg(this->project_id, this->branch_name,
-             this->head.isEmpty() ? tr("No commits yet") : this->head), this);
+    QLabel *context = new QLabel(this->direct_edit
+        ? tr("Project: %1\nBranch: %2").arg(this->project_name, this->branch_name)
+        : tr("Project: %1\nBranch: %2\nPinned base: %3")
+            .arg(this->project_id, this->branch_name,
+                 this->head.isEmpty() ? tr("No commits yet") : this->head), this);
     context->setWordWrap(true);
     context->setTextInteractionFlags(Qt::TextSelectableByMouse);
     layout->addWidget(context);
@@ -50,11 +54,14 @@ PersonalWorkingCopyDialog::PersonalWorkingCopyDialog(
     this->details->setWordWrap(true);
     this->details->setTextInteractionFlags(Qt::TextSelectableByMouse);
     layout->addWidget(this->details);
-    QLabel *scope = new QLabel(tr("Checkout and first-network initialization change only your personal DVMDB "
-                                 "draft, never the committed branch. Verified networks can be viewed "
-                                 "in Distribution Monitor. Supported Distribution Editor transactions can "
-                                 "be saved through an explicitly opened fenced private session. "
-                                 "Local Commit and uncaptured model operations are not yet supported."), this);
+    QLabel *scope = new QLabel(this->direct_edit
+        ? tr("Opening the project's working network. Supported changes will be "
+             "autosaved to a private DVMDB draft. This does not create a commit.")
+        : tr("Checkout and first-network initialization change only your personal DVMDB "
+             "draft, never the committed branch. Verified networks can be viewed "
+             "in Distribution Monitor. Supported Distribution Editor transactions can "
+             "be saved through an explicitly opened fenced private session. "
+             "Local Commit and uncaptured model operations are not yet supported."), this);
     scope->setWordWrap(true);
     layout->addWidget(scope);
     QHBoxLayout *actions = new QHBoxLayout();
@@ -82,6 +89,19 @@ PersonalWorkingCopyDialog::PersonalWorkingCopyDialog(
     network_actions->addWidget(this->view_button);
     network_actions->addWidget(this->edit_button);
     layout->addLayout(network_actions);
+    if (this->direct_edit)
+    {
+        // Normal project editing is one operation. The advanced working-copy
+        // controls remain available through the separate Inspector action.
+        this->checkout_button->hide();
+        this->refresh_button->hide();
+        this->create_button->hide();
+        this->reopen_button->hide();
+        this->initialize_button->hide();
+        this->view_button->hide();
+        this->edit_button->hide();
+        this->drafts->hide();
+    }
     QDialogButtonBox *close = new QDialogButtonBox(QDialogButtonBox::Close, this);
     connect(close, &QDialogButtonBox::rejected, this, &QDialog::reject);
     layout->addWidget(close);
@@ -112,7 +132,7 @@ PersonalWorkingCopyDialog::PersonalWorkingCopyDialog(
     {
         this->status->setText(this->target.kind == PersonalRepositoryTarget::Kind::Embedded
             ? tr("Embedded personal DVMDB draft operations are not connected to this GUI yet.")
-            : tr("Configure a personal DVMDB in Settings → Personal Repository first."));
+            : tr("Select a personal database in Projects → Server Inspector first."));
         this->create_button->setEnabled(false);
         this->refresh_button->setEnabled(false);
         this->checkout_button->setEnabled(false);
@@ -178,6 +198,35 @@ void PersonalWorkingCopyDialog::refresh()
                 "Create one only after this project and branch exist in the personal DVMDB."));
         this->reopen_button->setEnabled(false);
         setBusy(false);
+        if (!this->direct_edit) return;
+        if (this->drafts->count() > 1)
+        {
+            // Never guess which competing private draft contains the user's
+            // edits. The advanced working-copy action permits selecting one.
+            this->status->setText(tr("Multiple working drafts exist for this branch. "
+                "Open Personal working copies and select the draft to edit."));
+            return;
+        }
+        if (this->drafts->count() == 1)
+        {
+            this->drafts->setCurrentRow(0);
+            inspectDraft();
+            return;
+        }
+        if (this->source_repository_id == this->target.repository_id)
+        {
+            // Project already lives on the designated personal server.
+            // No clone, transfer or invented first commit is necessary.
+            createDraft();
+            return;
+        }
+        if (this->source_endpoint.isEmpty())
+        {
+            this->status->setText(tr("This project is not accessible through an HTTP "
+                "source for checkout into the selected personal database."));
+            return;
+        }
+        checkoutBranch();
     });
 }
 
@@ -281,7 +330,18 @@ void PersonalWorkingCopyDialog::showDraft(const PersonalWorkingCopyInfo &draft)
         }
         network_id = change.uuid;
     }
-    if (network_id.isEmpty()) return;
+    if (network_id.isEmpty())
+    {
+        if (this->direct_edit)
+        {
+            if (this->initialize_button->isEnabled())
+                initializeNetwork();
+            else
+                this->status->setText(tr("This draft has no discoverable hydraulic network. "
+                    "Open Personal working copies to inspect or repair it."));
+        }
+        return;
+    }
     this->client.loadDraftNetwork(this->target, draft.id, network_id,
         [this, draft](const NetworkHydraulic &network,
                       const QString &generation, const QString &error)
@@ -310,7 +370,9 @@ void PersonalWorkingCopyDialog::showDraft(const PersonalWorkingCopyInfo &draft)
                  QString::number(network.links_pipes.size()),
                  QString::number(network.nodes_reservoirs.size()),
                  QString::number(network.nodes_tanks.size())));
-        this->status->setText(tr("Hydraulic model verified. You can view it in Distribution Monitor; edits are not yet saved to this draft."));
+        this->status->setText(tr("Hydraulic model verified and ready for private editing."));
+        if (this->direct_edit)
+            editDraftNetwork();
     });
 }
 
@@ -368,9 +430,10 @@ void PersonalWorkingCopyDialog::initializeNetwork()
     const PersonalWorkingCopyInfo draft = *this->active_draft;
     if (!draft.base_revision.isEmpty() || draft.dirty || !draft.changes.isEmpty()
         || !DvmdbIdentity::isUuidV7(draft.session_id)) return;
-    bool accepted = false;
-    const QString name = QInputDialog::getText(this, tr("Initialize first hydraulic network"),
-        tr("Network name:"), QLineEdit::Normal, tr("Network"), &accepted).trimmed();
+    bool accepted = this->direct_edit;
+    const QString name = this->direct_edit ? this->project_name.trimmed()
+        : QInputDialog::getText(this, tr("Initialize first hydraulic network"),
+            tr("Network name:"), QLineEdit::Normal, tr("Network"), &accepted).trimmed();
     if (!accepted || name.isEmpty()) return;
     const QString network_id = DvmdbIdentity::newUuidV7();
     setBusy(true);
@@ -445,7 +508,8 @@ void PersonalWorkingCopyDialog::checkoutBranch()
             this->status->setText(tr("Checkout failed: %1").arg(error));
             return;
         }
-        this->status->setText(tr("Branch checked out to personal DVMDB. "
-                                 "You can now create a private draft at this HEAD."));
+        this->status->setText(tr("Branch checked out to personal DVMDB."));
+        if (this->direct_edit)
+            createDraft();
     });
 }

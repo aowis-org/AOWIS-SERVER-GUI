@@ -13,6 +13,10 @@
 #include <QAbstractItemView>
 #include <QButtonGroup>
 #include <QComboBox>
+#include <QCheckBox>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkRequest>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDockWidget>
@@ -540,6 +544,10 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
         this->server_options);
     this->source_refresh_button->setObjectName(QStringLiteral("projectsSourceRefreshButton"));
     source_layout->addWidget(this->source_refresh_button);
+    this->personal_server_checkbox = new QCheckBox(tr("Use as my personal working database"), this->server_options);
+    this->personal_server_checkbox->setObjectName(QStringLiteral("projectsPersonalServerCheckbox"));
+    this->personal_server_checkbox->setToolTip(tr("Only one database can be personal. Its identity is discovered automatically; no UUID input is needed."));
+    source_layout->addWidget(this->personal_server_checkbox);
 
     source_layout->setContentsMargins(0, 0, 0, 0);
     this->source_kind_combo = new QComboBox(this->server_options);
@@ -647,6 +655,10 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     this->working_copies_button = compactButton(tr("Personal working copies…"),
         tr("Create or reopen a durable private draft for this exact branch HEAD"), right);
     this->working_copies_button->setObjectName(QStringLiteral("projectsInspectorWorkingCopies"));
+    this->edit_network_button = compactButton(tr("Edit network"),
+        tr("Open this project's hydraulic network in Distribution Editor with durable "
+           "autosave to a private working draft"), right);
+    this->edit_network_button->setObjectName(QStringLiteral("projectsInspectorEditNetwork"));
     this->inspector_import_button = compactButton(tr("Import network…"),
         tr("Import a network into the selected project"), right);
     this->inspector_import_button->setObjectName(QStringLiteral("projectsInspectorImport"));
@@ -661,6 +673,7 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
     // Import is a separate project-scoped action so it never makes the
     // narrow dock's Create/Cancel row overflow.
     inspector_actions->addWidget(this->inspector_import_button);
+    inspector_actions->addWidget(this->edit_network_button);
     inspector_actions->addWidget(this->working_copies_button);
     QHBoxLayout *creation_actions = new QHBoxLayout();
     creation_actions->setSpacing(5);
@@ -769,6 +782,8 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
             this, [this] { beginCreation(true); });
     connect(this->working_copies_button, &QPushButton::clicked,
             this, &ProjectsWidget::showWorkingCopies);
+    connect(this->edit_network_button, &QPushButton::clicked,
+            this, &ProjectsWidget::editProjectNetwork);
     connect(this->inspector_import_button, &QPushButton::clicked,
             this, &ProjectsWidget::importProjectRequested);
     connect(this->creation_cancel_button, &QPushButton::clicked,
@@ -895,6 +910,8 @@ ProjectsWidget::ProjectsWidget(QWidget *parent)
                             }
         selectBranchByName(name);
     });
+    connect(this->personal_server_checkbox, &QCheckBox::toggled,
+            this, &ProjectsWidget::setPersonalServer);
     connect(this->server_endpoint_edit, &QLineEdit::editingFinished, this, &ProjectsWidget::applyInspectorEdits);
     connect(this->local_path_edit, &QLineEdit::editingFinished, this, &ProjectsWidget::applyInspectorEdits);
     connect(this->server_auth_combo, QOverload<int>::of(&QComboBox::currentIndexChanged),
@@ -1004,7 +1021,8 @@ void ProjectsWidget::populateServerTree()
     for (const ProjectServerProfile &server : this->servers)
     {
         const bool local = server.connection_type == QStringLiteral("local");
-        QTreeWidgetItem *item = newTreeItem(this->server_tree, server.name,
+        QTreeWidgetItem *item = newTreeItem(this->server_tree,
+            server.personal ? tr("♛ %1").arg(server.name) : server.name,
             keyFor(QStringLiteral("s"), server.id));
         item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
         item->setCheckState(0, server.visible ? Qt::Checked : Qt::Unchecked);
@@ -1039,8 +1057,9 @@ void ProjectsWidget::populateServerTree()
                 : session->state == SourceState::Loading ? tr("Loading…")
                 : session->state == SourceState::Error ? tr("Unavailable: %1").arg(session->error)
                 : tr("Checking…");
-        item->setToolTip(0, tr("%1\n%2\n%3\nCheckbox: show in explorer and graph")
-            .arg(server.name, local ? server.local_path : server.endpoint, status));
+        item->setToolTip(0, tr("%1%2\n%3\n%4\nCheckbox: show in explorer and graph")
+            .arg(server.name, server.personal ? tr(" (personal working database)") : QString(),
+                 local ? server.local_path : server.endpoint, status));
         if (session != nullptr && session->state == SourceState::Error)
             item->setForeground(0, palette().color(QPalette::Disabled, QPalette::Text));
     }
@@ -1379,6 +1398,8 @@ void ProjectsWidget::updateSourceFields()
         == QStringLiteral("local");
     this->remote_options->setVisible(!local);
     this->local_options->setVisible(local);
+    this->personal_server_checkbox->setVisible(!creating);
+    this->personal_server_checkbox->setEnabled(!this->source_writer->isBusy());
 }
 
 ProjectPreviewData *ProjectsWidget::currentProject()
@@ -2221,6 +2242,8 @@ void ProjectsWidget::updateInspector()
             const SourceSession *session = this->source_sessions.value(server->id, nullptr);
             if (session != nullptr && !session->repository_id.isEmpty())
                 metadata += tr("\nDVMDB repository UUIDv7: %1").arg(session->repository_id);
+            if (server->personal)
+                metadata += tr("\n♛ Personal working database");
         }
     }
     else if (this->selection_kind == SelectionKind::Project && project != nullptr)
@@ -2320,6 +2343,10 @@ void ProjectsWidget::updateInspector()
         const ProjectServerProfile *server = currentServer();
         const int kind_index = this->source_kind_combo->findData(server->connection_type);
         this->source_kind_combo->setCurrentIndex(kind_index < 0 ? 0 : kind_index);
+        {
+            const QSignalBlocker personal_blocker(this->personal_server_checkbox);
+            this->personal_server_checkbox->setChecked(server->personal);
+        }
         this->server_endpoint_edit->setText(server->endpoint);
         this->local_path_edit->setText(server->local_path);
         const int index = this->server_auth_combo->findData(server->auth_mode);
@@ -2391,6 +2418,11 @@ void ProjectsWidget::updateButtons()
         && this->selection_kind == SelectionKind::Branch
         && currentProject() != nullptr && currentProject()->database_backed);
     this->working_copies_button->setEnabled(!this->source_writer->isBusy());
+    this->edit_network_button->setVisible(!editing && !new_source
+        && (this->selection_kind == SelectionKind::Project
+            || this->selection_kind == SelectionKind::Branch)
+        && currentProject() != nullptr && currentProject()->database_backed);
+    this->edit_network_button->setEnabled(ready);
     this->inspector_import_button->setVisible(!editing && !new_source
         && this->selection_kind == SelectionKind::Project);
     this->inspector_import_button->setEnabled(!this->source_writer->isBusy());
@@ -2678,16 +2710,47 @@ void ProjectsWidget::createProject()
 
 void ProjectsWidget::showWorkingCopies()
 {
+    openWorkingCopy(false);
+}
+
+void ProjectsWidget::editProjectNetwork()
+{
+    openWorkingCopy(true);
+}
+
+void ProjectsWidget::openWorkingCopy(bool direct_edit)
+{
     const ProjectPreviewData *project = currentProject();
+    if (project == nullptr || !project->database_backed) return;
     const ProjectPreviewBranch *branch = currentBranch();
-    if (this->selection_kind != SelectionKind::Branch || project == nullptr
-        || !project->database_backed || branch == nullptr) return;
+    if (!direct_edit && (this->selection_kind != SelectionKind::Branch || branch == nullptr))
+        return;
+    if (direct_edit && this->selection_kind == SelectionKind::Project)
+    {
+        // A project selection does not imply a branch selection, even if the
+        // tree retained a previously highlighted branch internally.
+        branch = nullptr;
+    }
+    if (branch == nullptr && direct_edit)
+    {
+        // A newly created project has a single unborn main branch. For a
+        // multi-branch project, require an explicit choice rather than writing
+        // to an arbitrary branch.
+        if (project->branches.size() == 1)
+            branch = &project->branches.first();
+        else
+        {
+            QMessageBox::information(this, tr("Select a branch"),
+                tr("Select the branch to edit under this project in the Projects tree."));
+            return;
+        }
+    }
+    if (branch == nullptr) return;
     const PersonalRepositoryTarget target = resolvePersonalRepositoryTarget();
     if (target.kind == PersonalRepositoryTarget::Kind::Unavailable)
     {
-        QMessageBox::information(this, tr("Personal working repository unavailable"),
-            tr("Configure a separate personal DVMDB in Settings first. "
-               "The selected project database will not be used as a fallback."));
+        QMessageBox::information(this, tr("Personal database not selected"),
+            tr("Mark your DVMDB server as personal in Projects → Server Inspector first."));
         return;
     }
     const QString branch_uuid = branch->id.mid(project->id.size() + 1);
@@ -2706,7 +2769,7 @@ void ProjectsWidget::showWorkingCopies()
         source->connection_type == QStringLiteral("remote") ? source->endpoint : QString();
     PersonalWorkingCopyDialog dialog(project->backend_id,
         branch_uuid, branch->name, branch->head,
-        project->repository_id, source_endpoint, project->name, this);
+        project->repository_id, source_endpoint, project->name, this, direct_edit);
     if (dialog.exec() == QDialog::Accepted && dialog.selectedPreviewNetwork().has_value())
     {
         if (dialog.selectedEditRequested())
@@ -3102,6 +3165,166 @@ void ProjectsWidget::createProjectFromExample(const BuiltinExampleRevision &exam
     select(SelectionKind::Project, id);
 }
 
+void ProjectsWidget::setPersonalServer(bool enabled)
+{
+    if (this->updating_ui || this->selection_kind != SelectionKind::Server) return;
+    ProjectServerProfile *server = currentServer();
+    if (server == nullptr) return;
+    const QString selected_id = server->id;
+    const QString selected_endpoint = server->endpoint;
+    const int request_id = ++this->personal_designation_request;
+    const std::function<void(const QString &, bool)> persistSelection = [this, selected_id](const QString &repository_id, bool select)
+    {
+        const QList<ProjectServerProfile> previous = this->servers;
+        for (ProjectServerProfile &candidate : this->servers)
+        {
+            if (select || candidate.id == selected_id)
+            {
+                candidate.personal = select && candidate.id == selected_id;
+                candidate.personal_repository_id = candidate.personal ? repository_id : QString();
+            }
+        }
+        if (!saveProjectServerProfiles(this->servers))
+        {
+            this->servers = previous;
+            reportServerSaveFailure();
+        }
+        populateServerTree();
+        if (this->selection_kind == SelectionKind::Server) updateInspector();
+    };
+    if (!enabled)
+    {
+        persistSelection(QString(), false);
+        return;
+    }
+    if (server->connection_type == QStringLiteral("local"))
+    {
+        persistSelection(QString(), true);
+        return;
+    }
+    // The checkbox is an explicit deployment-role choice. Discover identity first,
+    // configure an unconfigured repository once, then pin its UUID locally.
+    // Never silently change a server that is already marked as shared.
+    QString endpoint = selected_endpoint;
+    while (endpoint.endsWith(QLatin1Char('/'))) endpoint.chop(1);
+    if (!endpoint.endsWith(QStringLiteral("/dvmdb/v1")))
+        endpoint += QStringLiteral("/dvmdb/v1");
+    this->personal_server_checkbox->setEnabled(false);
+    QNetworkAccessManager *manager = new QNetworkAccessManager(this);
+    const std::function<bool()> stillSelected = [this, selected_id, selected_endpoint, request_id]()
+    {
+        if (request_id != this->personal_designation_request) return false;
+        for (const ProjectServerProfile &candidate : this->servers)
+            if (candidate.id == selected_id && candidate.endpoint == selected_endpoint)
+                return true;
+        return false;
+    };
+    const std::function<void(const QString &)> rejectSelection = [this, stillSelected](const QString &reason)
+    {
+        if (!stillSelected()) return;
+        QMessageBox::warning(this, tr("Cannot select personal database"), reason);
+        if (this->selection_kind == SelectionKind::Server) updateInspector();
+    };
+    const std::function<void(const QString &, const QString &)> acceptRole =
+        [this, persistSelection, stillSelected, rejectSelection](const QString &id, const QString &role)
+    {
+        if (!stillSelected()) return;
+        if (!DvmdbIdentity::isUuidV7(id) || role != QStringLiteral("private"))
+        {
+            rejectSelection(tr("The server did not confirm its private role and UUIDv7 identity."));
+            return;
+        }
+        persistSelection(id, true);
+    };
+    QNetworkRequest request(QUrl(endpoint + QStringLiteral("/repository/tracking")));
+    request.setTransferTimeout(8000);
+    QNetworkReply *reply = manager->get(request);
+    connect(reply, &QNetworkReply::finished, this,
+            [this, manager, reply, endpoint, stillSelected, rejectSelection, acceptRole]()
+    {
+        const QByteArray body = reply->readAll();
+        const QString networkError = reply->errorString();
+        const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        const bool success = reply->error() == QNetworkReply::NoError && status == 200;
+        reply->deleteLater();
+        if (!stillSelected()) { manager->deleteLater(); return; }
+        if (!success)
+        {
+            manager->deleteLater();
+            rejectSelection(tr("Could not read DVMDB repository identity (%1, HTTP %2). "
+                               "Check the selected server URL and whether DVMDB is running.")
+                            .arg(networkError).arg(status));
+            return;
+        }
+        const QJsonDocument document = QJsonDocument::fromJson(body);
+        const QJsonObject data = document.isObject() ? document.object() : QJsonObject();
+        const QString id = data.value(QStringLiteral("repositoryId")).toString();
+        const QString role = data.value(QStringLiteral("role")).toString();
+        if (!DvmdbIdentity::isUuidV7(id))
+        {
+            manager->deleteLater();
+            rejectSelection(tr("DVMDB returned an invalid repository UUIDv7."));
+            return;
+        }
+        if (role == QStringLiteral("private"))
+        {
+            manager->deleteLater();
+            acceptRole(id, role);
+            return;
+        }
+        if (role == QStringLiteral("shared"))
+        {
+            manager->deleteLater();
+            rejectSelection(tr("This DVMDB is already configured as a shared repository. "
+                               "Its role cannot be changed to private. Select a different server."));
+            return;
+        }
+        if (role != QStringLiteral("unconfigured"))
+        {
+            manager->deleteLater();
+            rejectSelection(tr("DVMDB returned an unknown repository role: %1.").arg(role));
+            return;
+        }
+        // Configure the role on the server itself, bound to the UUID we just
+        // discovered. This is idempotent, including lost response retries.
+        QNetworkRequest configure(QUrl(endpoint + QStringLiteral("/repository/role")));
+        configure.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
+        configure.setTransferTimeout(8000);
+        const QByteArray payload = QJsonDocument(QJsonObject{
+            {QStringLiteral("expectedRepositoryId"), id},
+            {QStringLiteral("role"), QStringLiteral("private")}
+        }).toJson(QJsonDocument::Compact);
+        QNetworkReply *configured = manager->post(configure, payload);
+        connect(configured, &QNetworkReply::finished, this,
+                [this, manager, configured, id, stillSelected, rejectSelection, acceptRole]()
+        {
+            const QByteArray response = configured->readAll();
+            const QString networkError = configured->errorString();
+            const int status = configured->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+            const bool success = configured->error() == QNetworkReply::NoError && status == 200;
+            configured->deleteLater();
+            manager->deleteLater();
+            if (!stillSelected()) return;
+            if (!success)
+            {
+                rejectSelection(tr("Could not configure this DVMDB as private (HTTP %1: %2). "
+                                   "The server may need the updated DVMDB build or may already "
+                                   "have a conflicting repository role.")
+                                .arg(status).arg(networkError));
+                return;
+            }
+            const QJsonDocument document = QJsonDocument::fromJson(response);
+            const QJsonObject result = document.isObject() ? document.object() : QJsonObject();
+            if (result.value(QStringLiteral("repositoryId")).toString() != id)
+            {
+                rejectSelection(tr("DVMDB repository identity changed while configuring its role."));
+                return;
+            }
+            acceptRole(id, result.value(QStringLiteral("role")).toString());
+        });
+    });
+}
+
 void ProjectsWidget::applyInspectorEdits()
 {
     if (this->updating_ui || this->source_writer->isBusy()) return;
@@ -3163,11 +3386,25 @@ void ProjectsWidget::applyInspectorEdits()
                 {
                     QMessageBox::warning(this, tr("Invalid server URL"),
                         tr("Use an http:// or https:// URL with a host, without embedded credentials, query or fragment."));
-                    this->server_endpoint_edit->setText(server->endpoint);
+                    {
+            const QSignalBlocker personal_blocker(this->personal_server_checkbox);
+            this->personal_server_checkbox->setChecked(server->personal);
+        }
+        this->server_endpoint_edit->setText(server->endpoint);
                 }
             }
             else server->endpoint = endpoint;
             server->auth_mode = this->server_auth_combo->currentData().toString();
+        }
+        if (server->personal && (server->endpoint != previous.endpoint
+                                 || server->local_path != previous.local_path))
+        {
+            *server = previous;
+            this->server_endpoint_edit->setText(previous.endpoint);
+            this->local_path_edit->setText(previous.local_path);
+            QMessageBox::information(this, tr("Personal database"),
+                tr("Uncheck 'Use as my personal working database' before changing its endpoint or data directory."));
+            return;
         }
         server->description = description;
         server->tags = tags;

@@ -18,6 +18,7 @@ class GroupBoxCollapsible;
 struct BuiltinExampleRevision;
 class QDockWidget;
 class QComboBox;
+class QCheckBox;
 class QLabel;
 class QLineEdit;
 class QPushButton;
@@ -132,6 +133,8 @@ private:
     void createProject();
     void createBranch();
     void showWorkingCopies();
+    void editProjectNetwork();
+    void openWorkingCopy(bool direct_edit);
     void beginCreation(bool branch);
     void cancelCreation();
     void submitCreation();
@@ -143,6 +146,7 @@ private:
     void createProjectFromExample(const BuiltinExampleRevision &example);
     void applyInspectorEdits();
     void reportServerSaveFailure();
+    void setPersonalServer(bool enabled);
     ProjectServerProfile *currentServer();
     ProjectPreviewData *currentProject();
     const ProjectPreviewData *currentProject() const;
@@ -162,6 +166,7 @@ private:
     QLineEdit *server_endpoint_edit = nullptr;
     QLineEdit *source_name_edit = nullptr;
     QComboBox *server_auth_combo = nullptr;
+    QCheckBox *personal_server_checkbox = nullptr;
     QComboBox *source_kind_combo = nullptr;
     QLineEdit *local_path_edit = nullptr;
     QWidget *server_options = nullptr;
@@ -205,6 +210,7 @@ private:
     QPushButton *source_cancel_button = nullptr;
     QPushButton *create_branch_button = nullptr;
     QPushButton *working_copies_button = nullptr;
+    QPushButton *edit_network_button = nullptr;
     QHash<QString, SourceSession *> source_sessions;
     QHash<QString, QPair<QString, QString>> graph_revision_lookup;
     ProjectSourceWriter *source_writer = nullptr;
@@ -217,5 +223,6 @@ private:
     QLabel *preview_banner = nullptr;
     QLabel *inspector_preview_note = nullptr;
     enum class SourceState { Checking, Loading, Connected, Error };
+    int personal_designation_request = 0;
     bool updating_ui = false;
 };

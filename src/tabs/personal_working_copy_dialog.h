@@ -20,7 +20,7 @@ public:
                               const QString &branch_name, const QString &head,
                               const QString &source_repository_id,
                               const QString &source_endpoint, const QString &project_name,
-                              QWidget *parent = nullptr);
+                              QWidget *parent = nullptr, bool open_editor_directly = false);
 
     // Available only after a generation-checked canonical network load.
     // The caller may display it, but editing is NOT bound to autosave yet.
@@ -68,5 +68,6 @@ private:
     QString accepted_generation;
     QString accepted_network_id;
     bool accepted_edit = false;
+    bool direct_edit = false;
     bool busy = false;
 };

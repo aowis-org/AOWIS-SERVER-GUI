@@ -8,6 +8,7 @@
 #include <QApplication>
 #include <QDockWidget>
 #include <QComboBox>
+#include <QCheckBox>
 #include <QDialog>
 #include <QListWidget>
 #include <QLabel>
@@ -21,6 +22,12 @@
 #include <QSettings>
 #include <QMainWindow>
 #include <QMessageBox>
+#include <QHostAddress>
+#include <QTcpServer>
+#include <QTcpSocket>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QSplitter>
 #include <QStackedWidget>
 #include <QTabWidget>
@@ -82,6 +89,23 @@ int main(int argc, char **argv)
                          && dialog.selectedEditNetworkId().isEmpty()
                          && !dialog.selectedPreviewNetwork().has_value(),
                      "private draft network actions enabled without a verified draft"))
+            return 1;
+    }
+
+    // The direct project-to-editor action must never open an unverified
+    // repository or expose manual wizard operations as a replacement.
+    {
+        PersonalWorkingCopyDialog direct(QStringLiteral("019a47b1-2041-7af9-8d1c-2670badb6371"),
+            QStringLiteral("019a47b1-2042-7af9-8d1c-2670badb6371"),
+            QStringLiteral("main"), {}, {}, {}, QStringLiteral("Test"), nullptr, true);
+        QPushButton *checkout = direct.findChild<QPushButton *>(
+            QStringLiteral("projectsWorkingCopiesCheckout"));
+        QPushButton *create = direct.findChild<QPushButton *>(
+            QStringLiteral("projectsWorkingCopiesCreate"));
+        if (!require(checkout != nullptr && create != nullptr
+                         && checkout->isHidden() && create->isHidden()
+                         && !direct.selectedEditRequested(),
+                     "direct project edit exposed a manual checkout or opened an unverified writer"))
             return 1;
     }
 
@@ -184,6 +208,24 @@ int main(int argc, char **argv)
                          && endpoint != nullptr && !endpoint->isVisible(),
                      "embedded profile did not use the local inspector fields"))
             return 1;
+        QCheckBox *personal = embedded_profiles.findChild<QCheckBox *>(
+            QStringLiteral("projectsPersonalServerCheckbox"));
+        if (!require(personal != nullptr && personal->isVisible() && !personal->isChecked(),
+                     "server inspector missing personal database designation")) return 1;
+        personal->setChecked(true);
+        app.processEvents();
+        QList<ProjectServerProfile> designated = loadProjectServerProfiles();
+        if (!require(!designated.isEmpty() && designated.first().personal,
+                     "personal server designation was not persisted")) return 1;
+        bool crown_found = false;
+        for (int i = 0; i < embedded_servers->topLevelItemCount(); ++i)
+            if (embedded_servers->topLevelItem(i)->text(0).contains(QStringLiteral("♛")))
+                crown_found = true;
+        if (!require(crown_found, "personal database crown is missing from server list")) return 1;
+        personal->setChecked(false);
+        app.processEvents();
+        if (!require(!loadProjectServerProfiles().first().personal,
+                     "clearing personal designation was not persisted")) return 1;
         path->setText(configuration_dir.path() + QStringLiteral("/updated-embedded"));
         QMetaObject::invokeMethod(path, "editingFinished", Qt::DirectConnection);
         if (!require(loadProjectServerProfiles().first().local_path == path->text(),
@@ -242,8 +284,11 @@ int main(int argc, char **argv)
         return 1;
     QPushButton *working_copies = projects.findChild<QPushButton *>(
         QStringLiteral("projectsInspectorWorkingCopies"));
-    if (!require(working_copies != nullptr && !working_copies->isVisible(),
-                 "preview-only branch must not expose private DVMDB working copies")) return 1;
+    QPushButton *edit_network = projects.findChild<QPushButton *>(
+        QStringLiteral("projectsInspectorEditNetwork"));
+    if (!require(working_copies != nullptr && !working_copies->isVisible()
+                     && edit_network != nullptr && !edit_network->isVisible(),
+                 "preview-only branch must not expose persistent network editing")) return 1;
     if (!require(projects.findChild<QPushButton *>(QStringLiteral("serversRenameButton")) == nullptr
                      && projects.findChild<QPushButton *>(QStringLiteral("serversDeleteButton")) == nullptr,
                  "redundant server rename/delete controls remain in the sidebar"))
@@ -1168,6 +1213,121 @@ int main(int argc, char **argv)
                      && !added_server_remains,
                  "server deletion was not persisted"))
         return 1;
+
+    // An unconfigured HTTP DVMDB must become the personal database directly
+    // from Projects Inspector. It must not require an out-of-band UUID input.
+    {
+        const QString repositoryId = QStringLiteral("019a47b1-2041-7af9-8d1c-2670badb6371");
+        QTcpServer roleServer;
+        if (!require(roleServer.listen(QHostAddress::LocalHost, 0),
+                     "could not start local role-configuration test server")) return 1;
+        bool isPrivate = false;
+        int rolePosts = 0;
+        QObject::connect(&roleServer, &QTcpServer::newConnection, &app, [&]()
+        {
+            while (QTcpSocket *socket = roleServer.nextPendingConnection())
+            {
+                QByteArray *buffer = new QByteArray();
+                QObject::connect(socket, &QTcpSocket::readyRead, socket,
+                                 [&, socket, buffer, repositoryId]()
+                {
+                    buffer->append(socket->readAll());
+                    const int separator = buffer->indexOf("\r\n\r\n");
+                    if (separator < 0) return;
+                    const QByteArray headers = buffer->left(separator + 4);
+                    int expectedBodyLength = 0;
+                    for (const QByteArray &line : headers.split('\n'))
+                    {
+                        if (line.trimmed().toLower().startsWith("content-length:"))
+                            expectedBodyLength = line.mid(line.indexOf(':') + 1).trimmed().toInt();
+                    }
+                    if (buffer->size() < separator + 4 + expectedBodyLength) return;
+                    const QByteArray payload = buffer->mid(separator + 4, expectedBodyLength);
+                    const bool tracking = headers.startsWith("GET /dvmdb/v1/repository/tracking ");
+                    const bool configure = headers.startsWith("POST /dvmdb/v1/repository/role ");
+                    int status = 200;
+                    QJsonObject answer;
+                    if (tracking)
+                    {
+                        answer = QJsonObject{{"repositoryId", repositoryId},
+                            {"role", isPrivate ? QStringLiteral("private") : QStringLiteral("unconfigured")},
+                            {"remotes", QJsonArray()}, {"tracking", QJsonArray()}};
+                    }
+                    else if (configure)
+                    {
+                        ++rolePosts;
+                        const QJsonObject body = QJsonDocument::fromJson(payload).object();
+                        if (body.value("expectedRepositoryId").toString() != repositoryId ||
+                            body.value("role").toString() != QStringLiteral("private"))
+                            status = 400;
+                        else
+                            isPrivate = true;
+                        answer = QJsonObject{{"repositoryId", repositoryId},
+                                             {"role", QStringLiteral("private")}};
+                    }
+                    else
+                    {
+                        status = 404;
+                        answer = QJsonObject{{"error", QStringLiteral("not found")}};
+                    }
+                    const QByteArray reply = QJsonDocument(answer).toJson(QJsonDocument::Compact);
+                    socket->write("HTTP/1.1 " + QByteArray::number(status) +
+                        (status == 200 ? " OK\r\n" : " Not Found\r\n") +
+                        "Content-Type: application/json\r\nContent-Length: " +
+                        QByteArray::number(reply.size()) + "\r\nConnection: close\r\n\r\n" + reply);
+                    socket->flush();
+                    socket->disconnectFromHost();
+                    delete buffer;
+                });
+            }
+        });
+        ProjectServerProfile profile;
+        profile.id = QStringLiteral("role-configured-test");
+        profile.name = QStringLiteral("Personal HTTP DVMDB");
+        profile.endpoint = QStringLiteral("http://127.0.0.1:%1").arg(roleServer.serverPort());
+        profile.connection_type = QStringLiteral("remote");
+        if (!require(saveProjectServerProfiles({profile}),
+                     "could not save HTTP personal-role fixture")) return 1;
+        ProjectsWidget roleProjects;
+        QTreeWidget *tree = roleProjects.findChild<QTreeWidget *>(QStringLiteral("serversTree"));
+        QCheckBox *personal = roleProjects.findChild<QCheckBox *>(
+            QStringLiteral("projectsPersonalServerCheckbox"));
+        if (!require(tree != nullptr && tree->topLevelItemCount() > 0 && personal != nullptr,
+                     "could not find HTTP role fixture in Projects")) return 1;
+        roleProjects.show();
+        QTreeWidgetItem *roleItem = nullptr;
+        for (int i = 0; i < tree->topLevelItemCount(); ++i)
+            if (tree->topLevelItem(i)->data(0, Qt::UserRole).toString() ==
+                QStringLiteral("s:role-configured-test")) roleItem = tree->topLevelItem(i);
+        if (!require(roleItem != nullptr, "role test server not visible")) return 1;
+        tree->setCurrentItem(roleItem);
+        app.processEvents();
+        personal->setChecked(true);
+        bool designatedRole = false;
+        for (int i = 0; i < 120 && !designatedRole; ++i)
+        {
+            waitFor(10);
+            for (const ProjectServerProfile &candidate : loadProjectServerProfiles())
+                if (candidate.id == profile.id && candidate.personal) designatedRole = true;
+        }
+        const QList<ProjectServerProfile> configured = loadProjectServerProfiles();
+        bool pinnedIdentity = false;
+        int designatedCount = 0;
+        for (const ProjectServerProfile &candidate : configured)
+        {
+            if (candidate.personal) ++designatedCount;
+            if (candidate.id == profile.id && candidate.personal &&
+                candidate.personal_repository_id == repositoryId) pinnedIdentity = true;
+        }
+        bool hasCrown = false;
+        for (int i = 0; i < tree->topLevelItemCount(); ++i)
+            if (tree->topLevelItem(i)->data(0, Qt::UserRole).toString() ==
+                QStringLiteral("s:role-configured-test") &&
+                tree->topLevelItem(i)->text(0).contains(QStringLiteral("♛"))) hasCrown = true;
+        if (!require(isPrivate && rolePosts == 1 && designatedCount == 1 &&
+                     pinnedIdentity && hasCrown,
+                     "personal HTTP checkbox did not configure role and pin discovered UUID")) return 1;
+    }
 
     std::puts("Projects inspector dock tests passed");
     return 0;

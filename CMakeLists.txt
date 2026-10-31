@@ -216,9 +216,6 @@ qt_add_executable(aowis-server-gui
     src/settings/map_settings_widget.h
     src/settings/units_settings_widget.cpp
     src/settings/units_settings_widget.h
-    src/settings/personal_repository_settings_widget.cpp
-    src/settings/personal_repository_settings_widget.h
-    src/services/personal_repository_monitor.h
 
     # Tabs
     src/tabs/tab_alarms_widget.cpp
@@ -703,13 +700,10 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
     add_test(NAME aowis-project-source-writer COMMAND aowis-project-source-writer-tests)
     set_tests_properties(aowis-project-source-writer PROPERTIES LABELS "aowis")
 
-    # VC-03: private working repository is independently configured and must
-    # verify its UUID and private role, never inherit the active shared source.
+    # VC-03: personal repository is selected in the Projects Server Inspector.
+    # UUIDs are discovered and pinned automatically; no separate settings page.
     add_executable(aowis-personal-repository-settings-tests
         tests/personal_repository_settings_test.cpp
-        src/settings/personal_repository_settings_widget.cpp
-        src/settings/personal_repository_settings_widget.h
-        src/services/personal_repository_monitor.h
         src/config/personal_repository_storage.cpp
         src/config/personal_repository_storage.h
         src/config/project_server_profile_storage.cpp

@@ -18,6 +18,8 @@ struct ProjectServerProfile
     QString connection_type = QStringLiteral("remote"); // "remote" or "local"
     QString local_path;
     bool visible = true; // include this source in the navigator and graph
+    bool personal = false; // one personal working database, selected in Projects Inspector
+    QString personal_repository_id; // HTTP UUIDv7 discovered automatically, never user-entered
 };
 
 QList<ProjectServerProfile> loadProjectServerProfiles();

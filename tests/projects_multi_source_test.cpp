@@ -174,6 +174,11 @@ int main(int argc, char **argv)
                  "second database UUID was not shown separately")) return 1;
     tree->setCurrentItem(tree->topLevelItem(1)->child(0));
     app.processEvents();
+    QPushButton *edit_network = projects.findChild<QPushButton *>(
+        QStringLiteral("projectsInspectorEditNetwork"));
+    if (!require(edit_network != nullptr && edit_network->isVisible()
+                     && edit_network->isEnabled(),
+                 "database project does not expose its hydraulic editor action")) return 1;
     QLabel *metadata = projects.findChild<QLabel *>(QStringLiteral("projectInspectorMetadata"));
     if (!require(metadata != nullptr
                  && metadata->text().contains(QStringLiteral("Repository UUIDv7: ") + second.repository_id),

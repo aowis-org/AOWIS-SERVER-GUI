@@ -73,6 +73,15 @@ and is not an acceptance dependency** for the database/graph implementation.
 Any operational exposure risks are described separately in the
 [security backlog](deferred-security-considerations.md).
 
+**Projects personal database designation:** In the Projects Server Inspector,
+selecting an HTTP database as personal discovers its UUIDv7 and checks its
+repository role. If still `unconfigured`, the GUI explicitly configures it as
+`private` using `POST /repository/role` with the discovered identity, then
+stores the personal designation and crown in its server profile. Existing
+`shared` repositories are never silently changed, and a remote whose identity
+changes is never accepted. No UUID needs manual entry. This designation does
+not yet connect the embedded Standalone draft editing backend.
+
 ## Current implementation state and immediate delivery priority
 
 This section records the **source-level checkpoint**, not a claim that the full
@@ -87,6 +96,19 @@ an end-to-end checkout/edit/reopen/commit test against a real personal DVMDB.
 | Local Commit (VC-05) | Immutable revision and model persistence primitives | Working-copy-to-revision CAS, recoverable operation ID/status, usable Projects-tab Commit |
 | Collaboration (VC-06–08) | History transfer, import, revision DAG and domain merge primitives | Unified user-facing Fetch/Publish/reconciliation acceptance using independent private repositories |
 | Presentation and qualification (VC-09–11) | Graph and inspector regression coverage; extensive DVMDB durability/sync tests | Integrated GUI/Standalone/browser scenarios and complete release evidence |
+
+**Project-to-editor entry point (HTTP personal DVMDB):** For a new database-backed
+project on the selected personal server, **Projects → Project Inspector → Edit
+network** directly opens the project's single branch, creates or reuses its
+private draft, initializes the first empty hydraulic network if needed, and
+loads it into Distribution Editor with the fenced autosave session. This is
+working-copy persistence, **not** an implicit Commit or an advance of the
+branch HEAD. For a multi-branch project, select the exact branch first. If
+more than one draft exists, the GUI requires explicit selection via the
+advanced Personal working copies action to avoid choosing the wrong edits.
+Cross-server checkout still requires a verifiable HTTP source, and embedded
+Standalone's native working-copy adapter remains pending. This user-visible
+path needs real GUI/DVMDB acceptance, including restart and loss-of-network.
 
 **GUI VC-04 network preview:** The personal working-copy dialog can now
 initialize the first network through a fenced lease and server-owned draft
@@ -253,29 +275,32 @@ round-trip reload is accurate and the creation UI does not invent R0.
 **Exit:** correct provenance after rename/restart, no extra commit on branch
 creation, UTF-8 labels with spaces, native/REST parity.
 
-### VC-03 — Personal repository configuration and tracking identity
+### VC-03 — Projects server designation and tracking identity
 
-**Needs:** backend VC-03, DG-01 and DG-06. **GUI work:**
+**Needs:** backend VC-03, DG-01 and DG-06. **GUI contract:**
 
-1. Add one explicit *personal working repository* profile per active user,
-   configured separately from read-only/shared source profiles. Standalone
-   uses the persistent built-in DVMDB; desktop/basic and browser/web need a
-   configured, reachable private HTTP DVMDB endpoint and repository UUID.
-2. Verify expected working-repository identity on connection and reconnect,
-   reject mismatched endpoints or projects; never silently use the currently
-   checked shared server as the personal working repo.
-3. Store source identity and local/remote branch tracking relationships
-   without treating project UUID, branch names or source label as a global
-   mutable-HEAD identifier.
-4. Make missing/failed private HTTP repo a visible **read-only editing
-   disabled** state; do not save drafts to browser memory or shared DVMDB as
-   a fallback. Credentials and account features are explicitly outside this
-   milestone; the future security backlog remains separate.
-5. Add settings/restart/connection-state tests, including multiple shared
-   sources with one personal working DVMDB.
+1. The Projects **Server Inspector** is the only configuration surface for
+   choosing a personal working database. An existing server can be marked
+   **Use as my personal working database**, and exactly one profile may be
+   marked at a time. The Servers navigator shows a crown (♛) for it.
+2. No manual UUID entry or separate Personal Repository settings page exists.
+   For REST servers, designation obtains `repositoryId` from
+   `GET /dvmdb/v1/repository/tracking`, requires UUIDv7 and `role=private`,
+   then pins that identity within the selected server profile. All draft
+   requests recheck UUID and role and fail closed on mismatch.
+3. For local Standalone profiles, designation records the selected embedded
+   store path; it does not create an additional hidden personal directory.
+   Native embedded draft operations still require their own VC-04 integration;
+   selecting the profile does not imply autosave is active.
+4. Branch tracking and local/remote commit identities remain distinct.
+   A missing, disconnected or mismatched personal server must never silently
+   fall back to whichever source is being viewed.
+5. Keep credentials and accounts out of this phase. Verify designation,
+   persistence, reconnect handling and single-personal-server invariants.
 
-**Exit:** every editor path knows exactly which persistent private DVMDB it
-will use, and no read-only navigation operation changes that selection.
+**Exit:** a single obvious personal-server choice in Projects, with pinned
+backend identity and no user-entered UUIDs. Editing only becomes available
+when the selected backend actually supports its draft lifecycle.
 
 ### VC-04 — Private checkout, draft editing and crash recovery
 
